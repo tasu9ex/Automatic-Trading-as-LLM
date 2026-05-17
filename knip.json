@@ -1,0 +1,12 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/app/**/{page,layout,route,loading,not-found,error}.{ts,tsx}",
+    "src/db/client.ts",
+    "src/db/schema/index.ts",
+    "scripts/**/*.ts"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.ts"],
+  "ignore": ["src/components/ui/**"],
+  "ignoreDependencies": ["lucide-react", "shadcn", "tw-animate-css", "postcss", "tailwindcss"]
+}
