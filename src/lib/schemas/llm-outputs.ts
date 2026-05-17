@@ -50,11 +50,27 @@ export const AnalystOutputSchema = z.object({
 });
 export type AnalystOutput = z.infer<typeof AnalystOutputSchema>;
 
-/** Entry Decision の出力 (DECISION_RESULTS の部分集合) */
+/**
+ * Entry Decision の出力 (DECISION_RESULTS の部分集合)。
+ *
+ * Entry 仮説 3 つ (`expected_*`, `target_price_jpy`, `exit_condition`) は
+ * **緩い参考値** として記録される。Exit 側で anchor 化を避けるため、
+ * Exit プロンプトは「reference のみ、anchor 禁止」と明示する。
+ *
+ * "no" 判定時は仮説フィールドは null。
+ */
 export const EntryDecisionOutputSchema = z.object({
   decision: z.enum(ENTRY_DECISIONS),
   confidence: z.number().min(0).max(1),
   reasoning: z.string(),
+  expected_holding_days: z
+    .object({
+      min: z.number().int().min(1),
+      max: z.number().int().min(1),
+    })
+    .nullable(),
+  target_price_jpy: z.number().positive().nullable(),
+  exit_condition: z.string().max(300).nullable(),
 });
 export type EntryDecisionOutput = z.infer<typeof EntryDecisionOutputSchema>;
 

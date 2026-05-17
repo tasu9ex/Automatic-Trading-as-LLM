@@ -18,6 +18,12 @@ export interface PositionState {
   /** 保有中の最大含み益・含み損 (JPY) */
   peakPnlJpy: number;
   troughPnlJpy: number;
+  /** Entry 時の仮説 (参考のみ、anchor 禁止) */
+  entryExpectation: {
+    expectedHoldingDays: { min: number; max: number } | null;
+    targetPriceJpy: number | null;
+    exitCondition: string | null;
+  };
 }
 
 export interface ExitDecisionResult {
@@ -30,6 +36,20 @@ export async function runExitDecision(
   position: PositionState,
   analyst: AnalystResult,
 ): Promise<ExitDecisionResult> {
+  const exp = position.entryExpectation;
+  const entryExpectationDesc = JSON.stringify(
+    {
+      _参考のみ_anchor禁止: true,
+      予想保有期間: exp.expectedHoldingDays
+        ? `${exp.expectedHoldingDays.min}-${exp.expectedHoldingDays.max} 日 (現在 ${position.holdingDays.toFixed(1)} 日経過)`
+        : "(なし)",
+      緩い目標価格: exp.targetPriceJpy ? `¥${exp.targetPriceJpy.toLocaleString()}` : "(なし)",
+      Exit条件仮説: exp.exitCondition ?? "(なし)",
+    },
+    null,
+    2,
+  );
+
   const resolved = await getPrompt("exit-decision", {
     symbol: position.symbol,
     position_state: JSON.stringify(
@@ -45,6 +65,7 @@ export async function runExitDecision(
       null,
       2,
     ),
+    entry_expectation: entryExpectationDesc,
     analyst_synthesis: JSON.stringify(analyst.output.synthesis, null, 2),
     analyst_full: JSON.stringify(analyst.output, null, 2),
   });

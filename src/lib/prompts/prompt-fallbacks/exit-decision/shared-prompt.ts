@@ -32,10 +32,24 @@ Hold / Close の二択で判定してください。部分決済は不可、Clos
   - 想定外の長期保有(機会コストが他銘柄より高い)
 - **hold**: シナリオが継続している時 / 短期の含み損益で揺れない時
 
+# Entry 時の仮説について — anchor 禁止
+入力に Entry 時の仮説 (expected_holding_days / target_price / exit_condition)
+が含まれる場合があります。これは **緩い参考値** であり、以下のように扱ってください:
+
+- ✗ target_price に anchor して「まだ届いてないから Hold」とは判断しない
+- ✗ expected_holding_days を絶対基準として「期間内だから Hold」とも判断しない
+- ✓ 「Entry 時の仮説が現実と乖離しているか」を評価する材料として使う
+  - 例: 予想 3-7 日で 12 日経過 → シナリオ崩れた可能性ありと評価
+  - 例: 目標 ¥18M、現在 ¥10M で下落トレンド → シナリオ崩れ、Close 候補
+
+最終判断は **現在の市場状況と Analyst の見解** をフレッシュに評価して行う。
+Entry 時の仮説は二次情報。
+
 # 注意
-- **コードが個別緊急 SL (建値比 -35% / ピーク比 -50%) と Kill Switch (-50%) を別途実行**
-  します。あなたは「異常事態」ではなく「通常運用の判断」を担当してください
-- 通常の損切り(-5〜-15%程度)はあなたが判断する領域です
+- **コードが個別緊急 SL (-25% Stop-Limit / -35% Stop-Market / -50% trailing) と
+  Kill Switch (-50%) を別途実行**します。あなたは「異常事態」ではなく
+  「通常運用の判断」を担当してください
+- 通常の損切り(-5〜-20%程度)はあなたが判断する領域です
 - 利確タイミング(+X% で逃げる)もあなたの判断
 
 # confidence について
@@ -52,6 +66,9 @@ export const EXIT_DECISION_USER_PROMPT = `# 銘柄
 
 # 現在のポジション状態
 {{position_state}}
+
+# Entry 時の仮説 (参考のみ、anchor 禁止)
+{{entry_expectation}}
 
 # Analyst Synthesis
 {{analyst_synthesis}}

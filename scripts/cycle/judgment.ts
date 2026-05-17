@@ -179,6 +179,13 @@ async function main() {
         const pnl = (lastPrice - avg) * qty;
         const holdingDays = Math.max(0, (Date.now() - openPos.openedAt.getTime()) / 86_400_000);
 
+        const expHoldingDays =
+          openPos.entryExpectedHoldingDaysMin && openPos.entryExpectedHoldingDaysMax
+            ? {
+                min: openPos.entryExpectedHoldingDaysMin,
+                max: openPos.entryExpectedHoldingDaysMax,
+              }
+            : null;
         exit = await runExitDecision(
           {
             symbol: coin.symbol,
@@ -190,6 +197,13 @@ async function main() {
             entryReason: openPos.entryReason,
             peakPnlJpy: (Number(openPos.peakPrice) - avg) * qty,
             troughPnlJpy: (Number(openPos.troughPrice) - avg) * qty,
+            entryExpectation: {
+              expectedHoldingDays: expHoldingDays,
+              targetPriceJpy: openPos.entryTargetPriceJpy
+                ? Number(openPos.entryTargetPriceJpy)
+                : null,
+              exitCondition: openPos.entryExitCondition,
+            },
           },
           analystRes,
         );
@@ -388,6 +402,9 @@ async function main() {
         budgetJpy: budget,
         takerFeeRate: Number(r.coin.takerFeeRate),
         entryReason: r.entry?.output.reasoning ?? null,
+        expectedHoldingDays: r.entry?.output.expected_holding_days ?? null,
+        targetPriceJpy: r.entry?.output.target_price_jpy ?? null,
+        exitCondition: r.entry?.output.exit_condition ?? null,
       });
     } catch (err) {
       logger.error({ err, symbol: r.coin.symbol }, "executeEntry failed");

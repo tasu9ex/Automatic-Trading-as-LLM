@@ -30,6 +30,10 @@ export interface ExecuteEntryInput {
   budgetJpy: number;
   takerFeeRate: number;
   entryReason: string | null;
+  /** Entry 時の仮説 (Exit で reference として参照、ピラミ時は最新で上書き) */
+  expectedHoldingDays?: { min: number; max: number } | null;
+  targetPriceJpy?: number | null;
+  exitCondition?: string | null;
 }
 
 /**
@@ -91,7 +95,7 @@ export async function executeEntry(input: ExecuteEntryInput): Promise<void> {
     let positionId: string;
     let newAvgPrice: number;
     if (existing) {
-      // ピラミッディング: 加重平均で建値更新
+      // ピラミッディング: 加重平均で建値更新、Entry 仮説も最新で上書き
       const prevQty = Number(existing.quantity);
       const prevAvg = Number(existing.avgEntryPrice);
       const newQty = prevQty + fill.quantity;
@@ -103,6 +107,11 @@ export async function executeEntry(input: ExecuteEntryInput): Promise<void> {
           quantity: newQty.toFixed(10),
           avgEntryPrice: newAvgPrice.toFixed(4),
           peakPrice: Math.max(Number(existing.peakPrice), fill.executedPrice).toFixed(4),
+          entryReason: input.entryReason,
+          entryExpectedHoldingDaysMin: input.expectedHoldingDays?.min ?? null,
+          entryExpectedHoldingDaysMax: input.expectedHoldingDays?.max ?? null,
+          entryTargetPriceJpy: input.targetPriceJpy?.toFixed(4) ?? null,
+          entryExitCondition: input.exitCondition ?? null,
           updatedAt: new Date(),
         })
         .where(eq(positions.id, existing.id));
@@ -120,6 +129,10 @@ export async function executeEntry(input: ExecuteEntryInput): Promise<void> {
           peakPrice: fill.executedPrice.toFixed(4),
           troughPrice: fill.executedPrice.toFixed(4),
           entryReason: input.entryReason,
+          entryExpectedHoldingDaysMin: input.expectedHoldingDays?.min ?? null,
+          entryExpectedHoldingDaysMax: input.expectedHoldingDays?.max ?? null,
+          entryTargetPriceJpy: input.targetPriceJpy?.toFixed(4) ?? null,
+          entryExitCondition: input.exitCondition ?? null,
           openedAt: new Date(),
         })
         .returning();
