@@ -14,3 +14,15 @@ pre-commit:
     db-check:
       glob: "drizzle/migrations/**"
       run: pnpm db:check
+    test:
+      glob: "*.{ts,tsx}"
+      run: pnpm vitest run --passWithNoTests
+
+# 重い検証は push 直前に集約。
+# build はサーバーコンポーネント・CSS パイプライン等、typecheck では拾えない問題を検出。
+pre-push:
+  parallel: false
+  commands:
+    build:
+      glob: "*"
+      run: pnpm build
