@@ -1,12 +1,8 @@
+import { SYSTEM_STATES } from "@/lib/constants/enums";
 import { sql } from "drizzle-orm";
 import { integer, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
-export const systemStateEnum = pgEnum("system_state_value", [
-  "stopped",
-  "running",
-  "paused",
-  "killed",
-]);
+export const systemStateEnum = pgEnum("system_state_value", SYSTEM_STATES);
 
 /**
  * シングルトン的に 1 行だけ持つ。id="singleton" で固定。

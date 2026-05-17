@@ -1,40 +1,33 @@
+import {
+  CRITIC_DECISIONS,
+  DECISION_KINDS,
+  DECISION_RESULTS,
+  ORDER_SIDES,
+  ORDER_STATUSES,
+  PENDING_ORDER_ACTORS,
+  PENDING_ORDER_KINDS,
+  POSITION_STATUSES,
+  SYSTEM_EVENT_KINDS,
+  SYSTEM_EVENT_SEVERITIES,
+} from "@/lib/constants/enums";
 import { pgEnum } from "drizzle-orm/pg-core";
 
-export const decisionKindEnum = pgEnum("decision_kind", ["entry", "exit"]);
+export const decisionKindEnum = pgEnum("decision_kind", DECISION_KINDS);
 
-export const decisionResultEnum = pgEnum("decision_result", ["buy", "no", "hold", "close"]);
+export const decisionResultEnum = pgEnum("decision_result", DECISION_RESULTS);
 
-export const orderSideEnum = pgEnum("order_side", ["buy", "sell"]);
+export const orderSideEnum = pgEnum("order_side", ORDER_SIDES);
 
-export const orderStatusEnum = pgEnum("order_status", ["filled", "rejected", "clipped"]);
+export const orderStatusEnum = pgEnum("order_status", ORDER_STATUSES);
 
-export const pendingOrderKindEnum = pgEnum("pending_order_kind", [
-  "stop_loss_entry_based",
-  "stop_loss_peak_based",
-]);
+export const pendingOrderKindEnum = pgEnum("pending_order_kind", PENDING_ORDER_KINDS);
 
-export const pendingOrderActorEnum = pgEnum("pending_order_actor", ["code", "llm", "human"]);
+export const pendingOrderActorEnum = pgEnum("pending_order_actor", PENDING_ORDER_ACTORS);
 
-export const positionStatusEnum = pgEnum("position_status", ["open", "closed"]);
+export const positionStatusEnum = pgEnum("position_status", POSITION_STATUSES);
 
-export const systemEventKindEnum = pgEnum("system_event_kind", [
-  "system_started",
-  "system_paused",
-  "system_resumed",
-  "kill_switch_triggered",
-  "critic_veto",
-  "critic_modify",
-  "llm_failure",
-  "human_intervention",
-  "price_monitor_triggered",
-  "data_fetch_failed",
-]);
+export const systemEventKindEnum = pgEnum("system_event_kind", SYSTEM_EVENT_KINDS);
 
-export const systemEventSeverityEnum = pgEnum("system_event_severity", [
-  "info",
-  "warning",
-  "error",
-  "critical",
-]);
+export const systemEventSeverityEnum = pgEnum("system_event_severity", SYSTEM_EVENT_SEVERITIES);
 
-export const criticDecisionEnum = pgEnum("critic_decision", ["approve", "veto", "modify"]);
+export const criticDecisionEnum = pgEnum("critic_decision", CRITIC_DECISIONS);

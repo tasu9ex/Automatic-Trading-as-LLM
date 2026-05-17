@@ -10,6 +10,7 @@
     "src/lib/logging/index.ts",
     "src/lib/telemetry/index.ts",
     "src/lib/rate-limit/index.ts",
+    "src/lib/constants/enums.ts",
     "src/lib/drizzle/detect-transaction-control.ts",
     "scripts/**/*.ts"
   ],

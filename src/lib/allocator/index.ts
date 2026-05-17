@@ -1,6 +1,7 @@
+import type { SizingMethod } from "@/lib/constants/enums";
 import type { AllocationProposal } from "@/lib/schemas/llm-outputs";
 
-export type SizingMethod = "equal" | "confidence";
+export type { SizingMethod };
 
 export interface BuySignal {
   symbol: string;
