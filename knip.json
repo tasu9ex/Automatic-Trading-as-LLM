@@ -5,6 +5,8 @@
     "src/db/client.ts",
     "src/db/schema/index.ts",
     "src/lib/prompts/index.ts",
+    "src/lib/prompts/prompt-fallbacks/**/shared-prompt.ts",
+    "src/lib/prompts/prompt-fallbacks/**/shared-prompt.config.ts",
     "scripts/**/*.ts"
   ],
   "project": ["src/**/*.{ts,tsx}", "scripts/**/*.ts"],

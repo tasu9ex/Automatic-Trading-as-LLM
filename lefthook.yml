@@ -11,3 +11,6 @@ pre-commit:
     knip:
       glob: "src/**/*"
       run: pnpm knip
+    db-check:
+      glob: "drizzle/migrations/**"
+      run: pnpm db:check
