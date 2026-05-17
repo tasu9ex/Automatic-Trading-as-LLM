@@ -17,6 +17,8 @@ export const pendingOrders = pgTable(
     model: text("model").notNull(),
     kind: pendingOrderKindEnum("kind").notNull(),
     triggerPrice: numeric("trigger_price", { precision: 20, scale: 4 }).notNull(),
+    /** Stop-Limit の指値価格 (stop_limit_primary でのみ非 null) */
+    limitPrice: numeric("limit_price", { precision: 20, scale: 4 }),
     createdBy: pendingOrderActorEnum("created_by").notNull().default("code"),
     active: boolean("active").notNull().default(true),
     triggeredAt: timestamp("triggered_at", { withTimezone: true }),

@@ -20,7 +20,20 @@ export type OrderSide = (typeof ORDER_SIDES)[number];
 export const ORDER_STATUSES = ["filled", "rejected", "clipped"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
-export const PENDING_ORDER_KINDS = ["stop_loss_entry_based", "stop_loss_peak_based"] as const;
+/**
+ * 2 段階 SL 設計:
+ *   - stop_limit_primary:    緩い損切り、limit 約定でスリッページなし
+ *   - stop_market_entry:     建値ベース最終防衛 (深い)、必ず約定するがスリッページ被弾
+ *   - stop_market_peak:      ピーク追従 trailing、必ず約定するがスリッページ被弾
+ * 旧名は backward compat のため残存(未使用、新規 insert なし)。
+ */
+export const PENDING_ORDER_KINDS = [
+  "stop_loss_entry_based",
+  "stop_loss_peak_based",
+  "stop_limit_primary",
+  "stop_market_entry",
+  "stop_market_peak",
+] as const;
 export type PendingOrderKind = (typeof PENDING_ORDER_KINDS)[number];
 
 export const PENDING_ORDER_ACTORS = ["code", "llm", "human"] as const;

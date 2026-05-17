@@ -15,6 +15,13 @@
       "when": 1779003161066,
       "tag": "0001_enable_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779023788272,
+      "tag": "0002_solid_white_queen",
+      "breakpoints": true
     }
   ]
 }

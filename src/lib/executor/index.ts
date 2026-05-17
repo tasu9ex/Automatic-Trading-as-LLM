@@ -7,9 +7,20 @@ import { calculateFill } from "./fees";
 
 const logger = createLogger("executor");
 
-/** 個別緊急 SL の閾値 (アグレ設定) */
-const STOP_LOSS_ENTRY_RATIO = 0.65; // 建値比 -35%
-const STOP_LOSS_PEAK_RATIO = 0.5; // ピーク比 -50% (peak_price 監視は別経路)
+/**
+ * 2 段階 SL 設計 (アグレ設定):
+ *   [1] stop_limit_primary  通常損切り、約定品質重視
+ *       trigger = 建値 × 0.75 (-25%)
+ *       limit   = 建値 × 0.73 (-27%)
+ *   [2] stop_market_entry   最終防衛 (深い)、必ず約定
+ *       trigger = 建値 × 0.65 (-35%)、スリッページ 0.3%
+ *   [3] stop_market_peak    trailing、ピーク追従
+ *       trigger = peak × 0.5 (-50%)、スリッページ 0.3%
+ */
+const STOP_LIMIT_TRIGGER_RATIO = 0.75; // -25%
+const STOP_LIMIT_LIMIT_RATIO = 0.73; // -27%
+const STOP_MARKET_ENTRY_RATIO = 0.65; // -35%
+const STOP_MARKET_PEAK_RATIO = 0.5; // -50%
 
 export interface ExecuteEntryInput {
   model: string;
@@ -128,33 +139,46 @@ export async function executeEntry(input: ExecuteEntryInput): Promise<void> {
       executedAt: new Date(),
     });
 
-    // 建値ベース逆指値を新規/更新で配置 (-35%)
-    const triggerEntry = newAvgPrice * STOP_LOSS_ENTRY_RATIO;
-    await tx
-      .insert(pendingOrders)
-      .values({
-        positionId,
-        coinId: coin.id,
-        model: input.model,
-        kind: "stop_loss_entry_based",
-        triggerPrice: triggerEntry.toFixed(4),
-        createdBy: "code",
-      })
-      .onConflictDoNothing();
+    // ピラミッディング時は既存の SL を全部無効化してから再配置(建値が変わるため)
+    if (existing) {
+      await tx
+        .update(pendingOrders)
+        .set({ active: false, updatedAt: new Date() })
+        .where(and(eq(pendingOrders.positionId, positionId), eq(pendingOrders.active, true)));
+    }
 
-    // ピーク比逆指値 (-50%) も同様 (peak は別途 price-monitor で更新される)
-    const triggerPeak = Number(existing?.peakPrice ?? fill.executedPrice) * STOP_LOSS_PEAK_RATIO;
-    await tx
-      .insert(pendingOrders)
-      .values({
-        positionId,
-        coinId: coin.id,
-        model: input.model,
-        kind: "stop_loss_peak_based",
-        triggerPrice: triggerPeak.toFixed(4),
-        createdBy: "code",
-      })
-      .onConflictDoNothing();
+    const currentPeak = Math.max(Number(existing?.peakPrice ?? 0), fill.executedPrice);
+
+    // [1] Stop-Limit primary (-25% trigger, -27% limit)
+    await tx.insert(pendingOrders).values({
+      positionId,
+      coinId: coin.id,
+      model: input.model,
+      kind: "stop_limit_primary",
+      triggerPrice: (newAvgPrice * STOP_LIMIT_TRIGGER_RATIO).toFixed(4),
+      limitPrice: (newAvgPrice * STOP_LIMIT_LIMIT_RATIO).toFixed(4),
+      createdBy: "code",
+    });
+
+    // [2] Stop-Market entry (-35% market, 最終防衛)
+    await tx.insert(pendingOrders).values({
+      positionId,
+      coinId: coin.id,
+      model: input.model,
+      kind: "stop_market_entry",
+      triggerPrice: (newAvgPrice * STOP_MARKET_ENTRY_RATIO).toFixed(4),
+      createdBy: "code",
+    });
+
+    // [3] Stop-Market peak (-50% trailing、peak は price-monitor が動的更新)
+    await tx.insert(pendingOrders).values({
+      positionId,
+      coinId: coin.id,
+      model: input.model,
+      kind: "stop_market_peak",
+      triggerPrice: (currentPeak * STOP_MARKET_PEAK_RATIO).toFixed(4),
+      createdBy: "code",
+    });
 
     // 現金控除
     const newCash = Number(portfolio.cashJpy) - fill.netCashJpy;
