@@ -16,6 +16,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import {
+  detectTransactionControlViolations,
+  formatTransactionControlViolations,
+} from "@/lib/drizzle/detect-transaction-control";
 
 interface JournalEntry {
   idx: number;
@@ -78,6 +82,18 @@ function main() {
   for (const f of sqlFiles) {
     if (!tagged.has(f)) {
       errors.push(`[orphan] ${f}: no journal entry`);
+    }
+  }
+
+  // 4. transaction control violations (BEGIN/COMMIT/ROLLBACK/SAVEPOINT)
+  for (const f of sqlFiles) {
+    const fullPath = path.join(MIGRATIONS_DIR, f);
+    const sql = fs.readFileSync(fullPath, "utf8");
+    const violations = detectTransactionControlViolations(sql);
+    if (violations.length > 0) {
+      errors.push(
+        `[transaction] ${f}: ${violations.length} forbidden keyword(s):\n${formatTransactionControlViolations(f, violations)}`,
+      );
     }
   }
 

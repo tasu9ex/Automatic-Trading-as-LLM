@@ -7,9 +7,23 @@
     "src/lib/prompts/index.ts",
     "src/lib/prompts/prompt-fallbacks/**/shared-prompt.ts",
     "src/lib/prompts/prompt-fallbacks/**/shared-prompt.config.ts",
+    "src/lib/logging/index.ts",
+    "src/lib/telemetry/index.ts",
+    "src/lib/rate-limit/index.ts",
+    "src/lib/drizzle/detect-transaction-control.ts",
     "scripts/**/*.ts"
   ],
   "project": ["src/**/*.{ts,tsx}", "scripts/**/*.ts"],
   "ignore": ["src/components/ui/**"],
-  "ignoreDependencies": ["lucide-react", "shadcn", "tw-animate-css", "postcss", "tailwindcss"]
+  "ignoreDependencies": [
+    "lucide-react",
+    "shadcn",
+    "tw-animate-css",
+    "postcss",
+    "tailwindcss",
+    "ai",
+    "@ai-sdk/anthropic",
+    "@ai-sdk/google",
+    "pino-pretty"
+  ]
 }
