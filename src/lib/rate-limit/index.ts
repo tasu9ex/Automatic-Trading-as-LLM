@@ -20,7 +20,7 @@ import PQueue from "p-queue";
 
 const logger = createLogger("rate-limit");
 
-export type ServiceName = "anthropic" | "perplexity" | "grok" | "gmo";
+export type ServiceName = "anthropic" | "google" | "perplexity" | "grok" | "gmo";
 
 interface QueueConfig {
   concurrency: number;
@@ -30,6 +30,7 @@ interface QueueConfig {
 
 const CONFIGS: Record<ServiceName, QueueConfig> = {
   anthropic: { concurrency: 5, intervalCap: 600, interval: 60_000 },
+  google: { concurrency: 5, intervalCap: 60, interval: 60_000 }, // Free tier 1500/day, 安全側で 60/min
   perplexity: { concurrency: 3, intervalCap: 50, interval: 60_000 },
   grok: { concurrency: 3, intervalCap: 60, interval: 60_000 },
   gmo: { concurrency: 1, intervalCap: 10, interval: 1_000 },

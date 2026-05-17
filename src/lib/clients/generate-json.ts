@@ -1,6 +1,7 @@
 import { anthropic } from "@/lib/clients/anthropic";
+import { google } from "@/lib/clients/google";
 import { createLogger } from "@/lib/logging";
-import { runWith } from "@/lib/rate-limit";
+import { type ServiceName, runWith } from "@/lib/rate-limit";
 import { recordLLMCall } from "@/lib/telemetry";
 import { generateObject } from "ai";
 import type { z } from "zod";
@@ -8,30 +9,43 @@ import type { z } from "zod";
 const logger = createLogger("clients.generate-json");
 
 export interface GenerateJsonInput<T> {
-  modelId: string; // 例: "claude-opus-4-7"
+  /** モデル ID。プレフィックスでプロバイダーを自動判定: */
+  /**   "claude-*" → Anthropic / "gemini-*" → Google */
+  modelId: string;
   system: string;
   prompt: string;
   schema: z.ZodType<T>;
   temperature?: number;
   maxOutputTokens?: number;
-  /** トレース用ラベル */
   feature: string;
-  /** メタデータ (銘柄など) */
   metadata?: Record<string, string | number | boolean>;
 }
 
+function pickProvider(modelId: string): {
+  model: ReturnType<typeof anthropic> | ReturnType<typeof google>;
+  service: ServiceName;
+} {
+  if (modelId.startsWith("claude-")) {
+    return { model: anthropic(modelId), service: "anthropic" };
+  }
+  if (modelId.startsWith("gemini-")) {
+    return { model: google(modelId), service: "google" };
+  }
+  throw new Error(`Unknown model provider for: ${modelId}`);
+}
+
 /**
- * Vercel AI SDK の generateObject で JSON 出力を取得。
- * Zod スキーマで型安全に、失敗時はリトライ 1 回。
- * usage は telemetry.recordLLMCall に渡してコスト集計。
- *
- * 現状は Anthropic 専用 (Opus / Sonnet / Haiku)。Gemini は Phase 5c で追加。
+ * AI SDK の generateObject で型安全 JSON 出力。
+ * Anthropic (Claude) と Google (Gemini) 両対応。
+ * パース失敗時は 1 回リトライ。usage は telemetry.recordLLMCall に集計。
  */
 export async function generateJson<T>(input: GenerateJsonInput<T>): Promise<T> {
-  return runWith("anthropic", async () => {
+  const { model, service } = pickProvider(input.modelId);
+
+  return runWith(service, async () => {
     try {
       const result = await generateObject({
-        model: anthropic(input.modelId),
+        model,
         system: input.system,
         prompt: input.prompt,
         schema: input.schema,
@@ -47,7 +61,7 @@ export async function generateJson<T>(input: GenerateJsonInput<T>): Promise<T> {
     } catch (err) {
       logger.warn({ err, feature: input.feature }, "First generation failed, retrying once");
       const result = await generateObject({
-        model: anthropic(input.modelId),
+        model,
         system: input.system,
         prompt: input.prompt,
         schema: input.schema,

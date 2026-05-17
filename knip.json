@@ -22,7 +22,6 @@
     "tw-animate-css",
     "postcss",
     "tailwindcss",
-    "@ai-sdk/google",
     "pino-pretty"
   ],
   "ignoreExportsUsedInFile": true

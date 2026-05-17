@@ -15,7 +15,7 @@ import type { PromptConfig } from "@/lib/prompts/prompt-types";
  * ```
  */
 export const LANGFUSE_PROMPT_CONFIG: PromptConfig = {
-  model: "claude-opus-4-7",
+  model: "gemini-2.5-pro",
   temperature: 0.2,
   maxTokens: 500,
   responseFormat: "json",
