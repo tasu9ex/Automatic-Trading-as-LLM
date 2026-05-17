@@ -1,6 +1,7 @@
 import { db } from "@/db/client";
 import { coins, orders, pendingOrders, portfolios, positions, trades } from "@/db/schema";
 import { createLogger } from "@/lib/logging";
+import { notify } from "@/lib/notifications";
 import { and, eq } from "drizzle-orm";
 import { calculateFill } from "./fees";
 
@@ -175,6 +176,19 @@ export async function executeEntry(input: ExecuteEntryInput): Promise<void> {
       },
       "executeEntry done",
     );
+
+    await notify({
+      level: "success",
+      title: `🟢 BUY ${input.symbol}`,
+      fields: {
+        model: input.model,
+        budget: `¥${input.budgetJpy.toLocaleString()}`,
+        qty: fill.quantity.toFixed(8),
+        price: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
+        fee: `¥${fill.feeJpy.toFixed(0)}`,
+        cash: `¥${Math.round(newCash).toLocaleString()}`,
+      },
+    });
   });
 }
 
@@ -301,5 +315,21 @@ export async function executeExit(input: ExecuteExitInput): Promise<void> {
       },
       "executeExit done",
     );
+
+    const isProfit = pnlJpy >= 0;
+    await notify({
+      level: input.forced ? "warning" : isProfit ? "success" : "info",
+      title: `${isProfit ? "🔵" : "🔴"} SELL ${input.symbol}${input.forced ? " (FORCED)" : ""}`,
+      body: input.reason ?? undefined,
+      fields: {
+        model: input.model,
+        qty: qty.toFixed(8),
+        price: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
+        pnl: `${isProfit ? "+" : ""}¥${Math.round(pnlJpy).toLocaleString()}`,
+        fee: `¥${fill.feeJpy.toFixed(0)}`,
+        slippage: input.forced ? `¥${fill.slippageJpy.toFixed(0)}` : "0",
+        cash: `¥${Math.round(newCash).toLocaleString()}`,
+      },
+    });
   });
 }

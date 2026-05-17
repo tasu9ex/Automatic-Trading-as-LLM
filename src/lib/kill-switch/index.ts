@@ -3,6 +3,7 @@ import { coins, portfolios, positions, systemEvents, systemState } from "@/db/sc
 import { getTicker } from "@/lib/clients/gmo";
 import { executeExit } from "@/lib/executor";
 import { createLogger } from "@/lib/logging";
+import { notify } from "@/lib/notifications";
 import { and, eq } from "drizzle-orm";
 
 const logger = createLogger("kill-switch");
@@ -108,6 +109,18 @@ export async function checkAndTriggerKillSwitch(input: KillSwitchCheckInput): Pr
     severity: "critical",
     message: `Kill Switch: ${reason}`,
     payload: { totalValue, ddRatio, initialCash: initial },
+  });
+
+  await notify({
+    level: "critical",
+    title: "🚨 KILL SWITCH TRIGGERED",
+    body: `**${reason}**\nAll positions force-closed. System paused. Manual restart required.`,
+    fields: {
+      model: input.model,
+      initial: `¥${Math.round(initial).toLocaleString()}`,
+      current: `¥${Math.round(totalValue).toLocaleString()}`,
+      dd: `${(ddRatio * 100).toFixed(1)}%`,
+    },
   });
 
   return true;

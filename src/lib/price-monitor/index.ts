@@ -3,6 +3,7 @@ import { coins, pendingOrders, positions, systemEvents } from "@/db/schema";
 import { getKlines } from "@/lib/clients/gmo";
 import { executeExit } from "@/lib/executor";
 import { createLogger } from "@/lib/logging";
+import { notify } from "@/lib/notifications";
 import { and, eq } from "drizzle-orm";
 
 const logger = createLogger("price-monitor");
@@ -115,6 +116,18 @@ export async function runPriceMonitor(): Promise<void> {
           severity: "warning",
           message: `${coin.symbol} stop loss (${order.kind})`,
           payload: { triggerPrice: liveTrigger, recentLow, recentHigh },
+        });
+
+        await notify({
+          level: "warning",
+          title: `⚠️ Stop Loss Triggered: ${coin.symbol}`,
+          body: `Kind: \`${order.kind}\``,
+          fields: {
+            model: position.model,
+            trigger: `¥${Math.round(liveTrigger).toLocaleString()}`,
+            recentLow: `¥${Math.round(recentLow).toLocaleString()}`,
+            peak: `¥${Math.round(peak).toLocaleString()}`,
+          },
         });
 
         break; // このポジションは決済済み

@@ -36,6 +36,7 @@ import { runExitDecision } from "@/lib/decision/exit";
 import { executeEntry, executeExit } from "@/lib/executor";
 import { checkAndTriggerKillSwitch } from "@/lib/kill-switch";
 import { createLogger } from "@/lib/logging";
+import { notify } from "@/lib/notifications";
 import { applyRiskClipper } from "@/lib/risk/clipper";
 import { type Snapshot, fetchSnapshot } from "@/lib/tier0/fetch-snapshot";
 import { runPreAnalyst } from "@/lib/tier1/pre-analyst";
@@ -331,6 +332,12 @@ async function main() {
       message: `Critic veto: ${critic.output.reasoning.slice(0, 200)}`,
       payload: { cycleId, proposal },
     });
+    await notify({
+      level: "warning",
+      title: "🛑 Critic VETO",
+      body: critic.output.reasoning.slice(0, 1000),
+      fields: { model: args.model, signals: Object.keys(proposal).length },
+    });
     finalProposal = {};
   } else if (critic.output.decision === "modify" && critic.output.adjustments) {
     finalProposal = { ...proposal, ...critic.output.adjustments };
@@ -340,6 +347,16 @@ async function main() {
       severity: "info",
       message: `Critic modified: ${critic.output.reasoning.slice(0, 200)}`,
       payload: { cycleId, before: proposal, after: finalProposal },
+    });
+    await notify({
+      level: "info",
+      title: "✏️ Critic MODIFY",
+      body: critic.output.reasoning.slice(0, 1000),
+      fields: {
+        model: args.model,
+        before: JSON.stringify(proposal).slice(0, 200),
+        after: JSON.stringify(finalProposal).slice(0, 200),
+      },
     });
   }
 
@@ -404,6 +421,8 @@ async function main() {
   await checkAndTriggerKillSwitch({ model: args.model });
 
   const elapsedMs = Date.now() - startedAt;
+  const exitsTriggered = results.filter((r) => r.exit?.output.decision === "close").length;
+  const entriesExecuted = Object.keys(clipped.proposal).length;
   logger.info(
     {
       cycleId,
@@ -411,16 +430,37 @@ async function main() {
       symbolsProcessed: results.length,
       symbolsFailed: failures.length,
       buySignals: buySignals.length,
-      exitsTriggered: results.filter((r) => r.exit?.output.decision === "close").length,
+      exitsTriggered,
+      entriesExecuted,
       proposal: clipped.proposal,
       criticDecision: critic.output.decision,
     },
     "Cycle done",
   );
+
+  await notify({
+    level: failures.length > 0 ? "warning" : "info",
+    title: `🔁 Cycle done · ${args.model}`,
+    fields: {
+      processed: `${results.length}/${enabledCoins.length}`,
+      failed: failures.length,
+      buySignals: buySignals.length,
+      entries: entriesExecuted,
+      exits: exitsTriggered,
+      critic: critic.output.decision,
+      elapsed: `${(elapsedMs / 1000).toFixed(1)}s`,
+    },
+  });
+
   process.exit(0);
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   logger.error({ err }, "Cycle failed");
+  await notify({
+    level: "error",
+    title: "❌ Cycle CRASHED",
+    body: `\`\`\`${(err as Error)?.stack?.slice(0, 1500) ?? String(err)}\`\`\``,
+  });
   process.exit(1);
 });
