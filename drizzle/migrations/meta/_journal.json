@@ -8,6 +8,13 @@
       "when": 1778998938621,
       "tag": "0000_rainy_the_renegades",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779003161066,
+      "tag": "0001_enable_rls",
+      "breakpoints": true
     }
   ]
 }
