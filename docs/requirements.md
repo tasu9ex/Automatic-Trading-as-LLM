@@ -383,7 +383,9 @@ Allocator 出力 → Critic LLM
 スマートフォンからの閲覧・操作を想定し、**Web サービスとして公開**:
 
 - **デプロイ**: Vercel
-- **認証**: Supabase Auth(個人用、自分のみアクセス可)
+- **認証**: **Supabase Auth + GitHub OAuth + Middleware で GitHub ID チェック**
+  - サインアップは GitHub のみ許可、Middleware で許可リストの GitHub user ID/login と照合
+  - Phase C で実装(MVP では未実装)
 - **レスポンシブ対応**: モバイルファースト
 - **機能**:
   - ダッシュボード: 損益・ポジション・取引履歴・モデル別パフォーマンス
@@ -478,7 +480,7 @@ UI メイン、CLI も用意(UI 不調時のバックアップ)。
 
 - API 鍵は Supabase Vault に保管、ワーカーのみ取得
 - ペーパー期間は `.env` で十分、本番移行時に Vault に移す
-- UI 認証は Supabase Auth
+- UI 認証は Supabase Auth + GitHub OAuth、Middleware で許可 GitHub ID 照合
 
 ### 5.3 コスト
 
@@ -492,7 +494,7 @@ UI メイン、CLI も用意(UI 不調時のバックアップ)。
 | 層 | 技術 | プラン |
 |----|------|--------|
 | Frontend | Next.js (App Router), TypeScript、Vercel デプロイ | **Vercel Hobby (無料)** |
-| 認証 | Supabase Auth (個人用、自分のメールのみ許可) | Free |
+| 認証 | Supabase Auth + GitHub OAuth + Middleware (個人用、許可 GitHub ID のみ) | Free |
 | DB | Supabase (Postgres) | Free (500MB) |
 | ORM | Drizzle | OSS |
 | 軽量定期実行 | Supabase pg_cron | Free |
@@ -626,7 +628,7 @@ UI メイン、CLI も用意(UI 不調時のバックアップ)。
 
 ### 10.3 個人用なので簡素化
 
-- UI 認証: Supabase Auth + 自分のメールアドレスのみ許可
+- UI 認証: Supabase Auth + **GitHub OAuth** + Middleware で許可 GitHub ID 照合 (env: `AUTHORIZED_GITHUB_LOGINS`)
 - 環境分離: 単一環境 (dev/prod 分けない)
 - データバックアップ: Supabase 標準機能で十分
 - インフラ IaC: 不要 (手動セットアップで OK)

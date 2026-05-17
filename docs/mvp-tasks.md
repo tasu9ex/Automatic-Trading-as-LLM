@@ -178,11 +178,17 @@
 - [ ] **起動・再開ボタン**: state 切替
 - [ ] **pending_orders 編集**: 逆指値手動変更
 
-### C-2. 認証 (Supabase Auth)
+### C-2. 認証 (Supabase Auth + GitHub OAuth)
 
-- [ ] Supabase Auth セットアップ
-- [ ] 自分のメール 1 つだけ許可するロジック
-- [ ] Middleware で全ページ保護
+- [ ] Supabase Auth で GitHub プロバイダー有効化
+- [ ] GitHub OAuth App 作成 (Settings → Developer settings → OAuth Apps)
+  - Callback URL: `https://<project>.supabase.co/auth/v1/callback`
+- [ ] `AUTHORIZED_GITHUB_LOGINS` env (カンマ区切り、例: `tasu9ex`)
+- [ ] Middleware で全ページ保護:
+  - 未ログイン → `/login` リダイレクト
+  - ログイン済みだが `user_metadata.user_name` が許可リストにない → 403
+- [ ] `/login` ページ (GitHub ログインボタンのみ)
+- [ ] サインアップ無効化 (Magic Link / Email/Password を Supabase Dashboard で OFF)
 
 ### C-3. Inngest 統合
 
