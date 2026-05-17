@@ -35,7 +35,10 @@ const FORBIDDEN_KEYWORDS = [
 /**
  * コメント・文字列・dollar quote を空白に置換。
  * keyword 検出を素直な regex で行うため。
+ *
+ * SQL レキシカル状態機械なので、cognitive complexity が高くなる(構造的に分解できない)。
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: SQL state machine, structurally indivisible
 function maskHiddenRegions(body: string): string {
   let state: MaskState = { kind: "plain" };
   const out: string[] = [];

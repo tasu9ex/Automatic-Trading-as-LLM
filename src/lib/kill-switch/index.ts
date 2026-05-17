@@ -68,7 +68,7 @@ export async function checkAndTriggerKillSwitch(input: KillSwitchCheckInput): Pr
   logger.error({ model: input.model, totalValue, ddRatio, reason }, "Kill Switch triggered");
 
   // 全クローズ
-  for (const { position, coin } of open) {
+  for (const { coin } of open) {
     try {
       const ticker = await getTicker(`${coin.symbol}_JPY`);
       const lastPrice = Number(ticker[0]?.last ?? 0);
