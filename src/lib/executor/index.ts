@@ -216,14 +216,14 @@ export async function executeEntry(input: ExecuteEntryInput): Promise<void> {
 
     await notify({
       level: "success",
-      title: `🟢 BUY ${input.symbol}`,
+      title: `🟢 買い ${input.symbol}`,
       fields: {
-        model: input.model,
-        budget: `¥${input.budgetJpy.toLocaleString()}`,
-        qty: fill.quantity.toFixed(8),
-        price: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
-        fee: `¥${fill.feeJpy.toFixed(0)}`,
-        cash: `¥${Math.round(newCash).toLocaleString()}`,
+        モデル: input.model,
+        投入額: `¥${input.budgetJpy.toLocaleString()}`,
+        数量: fill.quantity.toFixed(8),
+        価格: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
+        手数料: `¥${fill.feeJpy.toFixed(0)}`,
+        残現金: `¥${Math.round(newCash).toLocaleString()}`,
       },
     });
   });
@@ -356,16 +356,16 @@ export async function executeExit(input: ExecuteExitInput): Promise<void> {
     const isProfit = pnlJpy >= 0;
     await notify({
       level: input.forced ? "warning" : isProfit ? "success" : "info",
-      title: `${isProfit ? "🔵" : "🔴"} SELL ${input.symbol}${input.forced ? " (FORCED)" : ""}`,
+      title: `${isProfit ? "🔵" : "🔴"} 売り ${input.symbol}${input.forced ? " (強制)" : ""}`,
       body: input.reason ?? undefined,
       fields: {
-        model: input.model,
-        qty: qty.toFixed(8),
-        price: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
-        pnl: `${isProfit ? "+" : ""}¥${Math.round(pnlJpy).toLocaleString()}`,
-        fee: `¥${fill.feeJpy.toFixed(0)}`,
-        slippage: input.forced ? `¥${fill.slippageJpy.toFixed(0)}` : "0",
-        cash: `¥${Math.round(newCash).toLocaleString()}`,
+        モデル: input.model,
+        数量: qty.toFixed(8),
+        価格: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
+        損益: `${isProfit ? "+" : ""}¥${Math.round(pnlJpy).toLocaleString()}`,
+        手数料: `¥${fill.feeJpy.toFixed(0)}`,
+        スリッページ: input.forced ? `¥${fill.slippageJpy.toFixed(0)}` : "0",
+        残現金: `¥${Math.round(newCash).toLocaleString()}`,
       },
     });
   });

@@ -216,13 +216,13 @@ export async function runPriceMonitor(input: PriceMonitorInput = {}): Promise<vo
 
     await notify({
       level: "warning",
-      title: `⚠️ Stop Loss Fired: ${coin.symbol}`,
-      body: `Kind: \`${fired.kind}\`${fired.forced ? " (forced market, 0.3% slippage)" : " (limit, no slippage)"}`,
+      title: `⚠️ 逆指値発火: ${coin.symbol}`,
+      body: `種別: \`${fired.kind}\`${fired.forced ? " (成行強制、スリッページ 0.3%)" : " (指値、スリッページなし)"}`,
       fields: {
-        model: position.model,
-        marketPrice: `¥${Math.round(fired.marketPrice).toLocaleString()}`,
-        recentLow: `¥${Math.round(recentLow).toLocaleString()}`,
-        peak: `¥${Math.round(peak).toLocaleString()}`,
+        モデル: position.model,
+        約定価格: `¥${Math.round(fired.marketPrice).toLocaleString()}`,
+        直近安値: `¥${Math.round(recentLow).toLocaleString()}`,
+        ピーク: `¥${Math.round(peak).toLocaleString()}`,
       },
     });
   }

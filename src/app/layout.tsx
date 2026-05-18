@@ -6,8 +6,8 @@ import { Geist } from "next/font/google";
 const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
-  title: "LLM Trading",
-  description: "LLM-driven crypto trading dashboard",
+  title: "LLM 自動売買ダッシュボード",
+  description: "LLM が判断する仮想通貨自動売買のダッシュボード",
 };
 
 export default function RootLayout({

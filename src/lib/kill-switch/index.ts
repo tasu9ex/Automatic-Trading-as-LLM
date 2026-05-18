@@ -113,13 +113,13 @@ export async function checkAndTriggerKillSwitch(input: KillSwitchCheckInput): Pr
 
   await notify({
     level: "critical",
-    title: "🚨 KILL SWITCH TRIGGERED",
-    body: `**${reason}**\nAll positions force-closed. System paused. Manual restart required.`,
+    title: "🚨 緊急停止 (Kill Switch) 発動",
+    body: `**${reason}**\n全ポジションを強制クローズしました。システムは停止状態です。手動で再開してください。`,
     fields: {
-      model: input.model,
-      initial: `¥${Math.round(initial).toLocaleString()}`,
-      current: `¥${Math.round(totalValue).toLocaleString()}`,
-      dd: `${(ddRatio * 100).toFixed(1)}%`,
+      モデル: input.model,
+      元本: `¥${Math.round(initial).toLocaleString()}`,
+      現在資産: `¥${Math.round(totalValue).toLocaleString()}`,
+      ドローダウン: `${(ddRatio * 100).toFixed(1)}%`,
     },
   });
 

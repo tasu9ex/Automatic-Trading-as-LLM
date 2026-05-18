@@ -29,7 +29,7 @@ function LoginInner() {
           onClick={signIn}
           className="w-full rounded-md bg-foreground py-2 font-medium text-background text-sm transition hover:opacity-90"
         >
-          Sign in with GitHub
+          GitHub でサインイン
         </button>
 
         {error && <p className="text-center text-red-500 text-xs">ログイン失敗: {error}</p>}

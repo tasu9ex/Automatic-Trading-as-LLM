@@ -43,13 +43,13 @@ export default async function Home() {
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Cash</CardDescription>
+            <CardDescription>現金</CardDescription>
             <CardTitle className="font-mono text-lg">{jpy(stats.cashJpy)}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Realized P/L</CardDescription>
+            <CardDescription>実現損益</CardDescription>
             <CardTitle
               className={`font-mono text-lg ${
                 stats.realizedPnlJpy >= 0 ? "text-emerald-500" : "text-red-500"
@@ -61,7 +61,7 @@ export default async function Home() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Total P/L</CardDescription>
+            <CardDescription>累計損益</CardDescription>
             <CardTitle
               className={`font-mono text-lg ${totalPnl >= 0 ? "text-emerald-500" : "text-red-500"}`}
             >
@@ -71,7 +71,7 @@ export default async function Home() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Cycles today</CardDescription>
+            <CardDescription>本日のサイクル数</CardDescription>
             <CardTitle className="font-mono text-lg">{stats.cyclesToday}</CardTitle>
           </CardHeader>
         </Card>
@@ -79,10 +79,10 @@ export default async function Home() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Open Positions ({openPositions.length})</CardTitle>
+          <CardTitle>保有ポジション ({openPositions.length})</CardTitle>
           {stats.lastCycleAt && (
             <CardDescription>
-              Last cycle: {new Date(stats.lastCycleAt).toLocaleString("ja-JP")}
+              直近サイクル: {new Date(stats.lastCycleAt).toLocaleString("ja-JP")}
             </CardDescription>
           )}
         </CardHeader>
@@ -95,7 +95,7 @@ export default async function Home() {
                 <li key={p.positionId} className="flex items-center justify-between">
                   <span className="font-medium">{p.symbol}</span>
                   <span className="font-mono text-muted-foreground text-xs">
-                    {p.quantity} @ {jpy(p.avgEntryPrice)} since{" "}
+                    {p.quantity} @ {jpy(p.avgEntryPrice)}・建玉日{" "}
                     {new Date(p.openedAt).toLocaleDateString("ja-JP")}
                   </span>
                 </li>
@@ -107,7 +107,7 @@ export default async function Home() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent Cycles</CardTitle>
+          <CardTitle>最近のサイクル</CardTitle>
           <CardDescription>直近 {recentCycles.length} サイクル</CardDescription>
         </CardHeader>
         <CardContent>

@@ -98,8 +98,8 @@ export async function runJudgmentCycle(
       logger.warn({ exchangeStatus }, "Exchange not OPEN, skipping cycle");
       await notify({
         level: "info",
-        title: `⏸ GMO ${exchangeStatus}, cycle skipped`,
-        fields: { status: exchangeStatus },
+        title: `⏸ GMO 取引所 ${exchangeStatus} のためサイクルスキップ`,
+        fields: { ステータス: exchangeStatus },
       });
       return {
         cycleId,
@@ -390,9 +390,9 @@ export async function runJudgmentCycle(
     });
     await notify({
       level: "warning",
-      title: "🛑 Critic VETO",
+      title: "🛑 Critic 拒否 (VETO)",
       body: critic.output.reasoning.slice(0, 1000),
-      fields: { model, signals: Object.keys(proposal).length },
+      fields: { モデル: model, シグナル数: Object.keys(proposal).length },
     });
     finalProposal = {};
   } else if (critic.output.decision === "modify" && critic.output.adjustments) {
@@ -406,12 +406,12 @@ export async function runJudgmentCycle(
     });
     await notify({
       level: "info",
-      title: "✏️ Critic MODIFY",
+      title: "✏️ Critic 修正 (MODIFY)",
       body: critic.output.reasoning.slice(0, 1000),
       fields: {
-        model,
-        before: JSON.stringify(proposal).slice(0, 200),
-        after: JSON.stringify(finalProposal).slice(0, 200),
+        モデル: model,
+        修正前: JSON.stringify(proposal).slice(0, 200),
+        修正後: JSON.stringify(finalProposal).slice(0, 200),
       },
     });
   }
@@ -497,15 +497,15 @@ export async function runJudgmentCycle(
 
   await notify({
     level: failures.length > 0 ? "warning" : "info",
-    title: `🔁 Cycle done · ${model}`,
+    title: `🔁 サイクル完了 · ${model}`,
     fields: {
-      processed: `${results.length}/${enabledCoins.length}`,
-      failed: failures.length,
-      buySignals: buySignals.length,
-      entries: entriesExecuted,
-      exits: exitsTriggered,
-      critic: critic.output.decision,
-      elapsed: `${(elapsedMs / 1000).toFixed(1)}s`,
+      処理銘柄: `${results.length}/${enabledCoins.length}`,
+      失敗: failures.length,
+      買いシグナル: buySignals.length,
+      新規約定: entriesExecuted,
+      決済: exitsTriggered,
+      Critic判定: critic.output.decision,
+      所要時間: `${(elapsedMs / 1000).toFixed(1)}秒`,
     },
   });
 
