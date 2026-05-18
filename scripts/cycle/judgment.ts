@@ -39,7 +39,13 @@ import { checkAndTriggerKillSwitch } from "@/lib/kill-switch";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { applyRiskClipper } from "@/lib/risk/clipper";
-import { initTelemetry, shutdownTelemetry } from "@/lib/telemetry";
+import {
+  captureError,
+  initSentry,
+  initTelemetry,
+  shutdownSentry,
+  shutdownTelemetry,
+} from "@/lib/telemetry";
 import { type Snapshot, fetchSnapshot } from "@/lib/tier0/fetch-snapshot";
 import { runPreAnalyst } from "@/lib/tier1/pre-analyst";
 import { runAnalyst } from "@/lib/tier2/analyst";
@@ -89,6 +95,7 @@ async function recordSnapshot(cycleId: string, coinId: string, snap: Snapshot) {
 }
 
 async function main() {
+  initSentry();
   initTelemetry();
   const args = parseArgs(process.argv.slice(2));
   const cycleId = randomUUID();
@@ -490,16 +497,19 @@ async function main() {
   });
 
   await shutdownTelemetry();
+  await shutdownSentry();
   process.exit(0);
 }
 
 main().catch(async (err) => {
   logger.error({ err }, "Cycle failed");
+  captureError(err, { tags: { script: "cycle.judgment" } });
   await notify({
     level: "error",
     title: "❌ Cycle CRASHED",
     body: `\`\`\`${(err as Error)?.stack?.slice(0, 1500) ?? String(err)}\`\`\``,
   });
   await shutdownTelemetry();
+  await shutdownSentry();
   process.exit(1);
 });

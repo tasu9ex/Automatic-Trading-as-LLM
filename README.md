@@ -58,3 +58,26 @@ tests/          Vitest テスト
 
 Next.js 15 (App Router) / TypeScript / Tailwind + shadcn/ui / Supabase /
 Drizzle / Inngest / Langfuse / Sentry / Biome / Knip / Vitest
+
+## 通知設計
+
+Discord 1 チャンネル垂れ流し:
+
+| 種別 | 経路 |
+|------|------|
+| 取引・サイクル系 (BUY/SELL/Critic/Kill Switch) | `notify()` → Discord webhook |
+| 未補足エラー・例外 | Sentry → Discord (Sentry Dashboard で連携) |
+
+### Sentry → Discord 連携手順 (Sentry Dashboard 側、5 分)
+
+1. Sentry にログイン → 対象プロジェクト選択
+2. **Settings → Integrations → Discord** で `Add to Project`
+3. Discord OAuth で自分のサーバー・チャンネルを許可
+4. **Alerts → Create Alert Rule**
+   - Condition: `An issue is first seen` (新規エラー時)
+   - Action: `Send a notification via Discord` → 通知先チャンネルを選択
+5. 必要なら `Issue is frequent` (繰り返しエラー閾値) ルールも追加
+
+これで:
+- `notify()` → 業務イベント (取引・判定結果) を Discord に直接送信
+- Sentry → 未補足エラーの詳細を保存、サマリを Discord に転送(stack trace は Sentry リンクで)

@@ -7,3 +7,4 @@ export {
   type LLMUsage,
 } from "./cost-tracking";
 export { initTelemetry, shutdownTelemetry } from "./otel-setup";
+export { initSentry, shutdownSentry, captureError } from "./sentry-setup";
