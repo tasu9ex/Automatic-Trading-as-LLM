@@ -16,6 +16,43 @@ function decisionVariant(result: string): "default" | "destructive" | "outline" 
   return "destructive";
 }
 
+function isAllocationMap(v: unknown): v is Record<string, number> {
+  return (
+    v !== null &&
+    typeof v === "object" &&
+    !Array.isArray(v) &&
+    Object.values(v).every((x) => typeof x === "number")
+  );
+}
+
+function AllocationView({ data, emptyLabel }: { data: unknown; emptyLabel: string }) {
+  if (data === null || data === undefined) {
+    return <p className="text-muted-foreground">{emptyLabel}</p>;
+  }
+  if (isAllocationMap(data)) {
+    const entries = Object.entries(data);
+    if (entries.length === 0) {
+      return <p className="text-muted-foreground">配分なし</p>;
+    }
+    return (
+      <ul className="space-y-1">
+        {entries.map(([symbol, amount]) => (
+          <li key={symbol} className="flex justify-between font-mono">
+            <span>{symbol}</span>
+            <span>¥{Math.round(amount).toLocaleString("ja-JP")}</span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  // 想定外の形なら fallback で JSON
+  return (
+    <pre className="overflow-x-auto whitespace-pre-wrap font-mono">
+      {JSON.stringify(data, null, 2)}
+    </pre>
+  );
+}
+
 export default async function CycleDetailPage({ params }: PageProps) {
   const { id } = await params;
   const detail = await getCycleDetail(id);
@@ -63,16 +100,19 @@ export default async function CycleDetailPage({ params }: PageProps) {
             )}
             <div className="grid grid-cols-2 gap-3 pt-2 text-xs">
               <div>
-                <div className="text-muted-foreground">配分案</div>
-                <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 font-mono">
-                  {JSON.stringify(detail.critic.allocationProposal, null, 2)}
-                </pre>
+                <div className="mb-1 text-muted-foreground">配分案</div>
+                <div className="rounded bg-muted p-2">
+                  <AllocationView data={detail.critic.allocationProposal} emptyLabel="配分なし" />
+                </div>
               </div>
               <div>
-                <div className="text-muted-foreground">修正内容</div>
-                <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 font-mono">
-                  {JSON.stringify(detail.critic.adjustments, null, 2)}
-                </pre>
+                <div className="mb-1 text-muted-foreground">修正内容</div>
+                <div className="rounded bg-muted p-2">
+                  <AllocationView
+                    data={detail.critic.adjustments}
+                    emptyLabel="修正なし (そのまま承認)"
+                  />
+                </div>
               </div>
             </div>
           </CardContent>
@@ -137,7 +177,17 @@ export default async function CycleDetailPage({ params }: PageProps) {
                 <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
                   Analyst (市場見解)
                 </h3>
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded border border-foreground/40 bg-muted/40 p-3 text-xs">
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className="font-semibold">統合見解 (Synthesis)</span>
+                    <Badge>{c.analyst.synthesis.direction}</Badge>
+                    <span className="text-muted-foreground">
+                      確信度 {c.analyst.synthesis.confidence.toFixed(2)}
+                    </span>
+                  </div>
+                  <p className="whitespace-pre-wrap">{c.analyst.synthesis.reasoning}</p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
                   <div className="rounded border border-border p-3 text-xs">
                     <div className="mb-1 flex items-center gap-2">
                       <span className="font-semibold">ファンダメンタル</span>
@@ -181,12 +231,6 @@ export default async function CycleDetailPage({ params }: PageProps) {
                     </div>
                     <p className="mt-1 whitespace-pre-wrap">{c.analyst.technical.notes}</p>
                   </div>
-                  <div className="rounded border border-foreground/40 bg-muted/40 p-3 text-xs">
-                    <div className="mb-1 font-semibold">統合見解 (Synthesis)</div>
-                    <pre className="overflow-x-auto whitespace-pre-wrap font-mono">
-                      {JSON.stringify(c.analyst.synthesis, null, 2)}
-                    </pre>
-                  </div>
                 </div>
               </section>
             )}
@@ -196,7 +240,7 @@ export default async function CycleDetailPage({ params }: PageProps) {
                 Decision (売買判断)
               </h3>
               <div className="grid gap-3 md:grid-cols-2">
-                {c.entryDecision && (
+                {c.entryDecision ? (
                   <div className="rounded border border-border p-3">
                     <div className="mb-1 flex items-center gap-2">
                       <h4 className="font-semibold text-xs">Entry (新規)</h4>
@@ -211,8 +255,16 @@ export default async function CycleDetailPage({ params }: PageProps) {
                       <p className="whitespace-pre-wrap text-xs">{c.entryDecision.reasoning}</p>
                     )}
                   </div>
+                ) : (
+                  <div className="rounded border border-border border-dashed p-3">
+                    <div className="mb-1 flex items-center gap-2">
+                      <h4 className="font-semibold text-muted-foreground text-xs">Entry (新規)</h4>
+                      <Badge variant="outline">未実行</Badge>
+                    </div>
+                    <p className="text-muted-foreground text-xs">判定が記録されていません</p>
+                  </div>
                 )}
-                {c.exitDecision && (
+                {c.exitDecision ? (
                   <div className="rounded border border-border p-3">
                     <div className="mb-1 flex items-center gap-2">
                       <h4 className="font-semibold text-xs">Exit (決済)</h4>
@@ -226,6 +278,14 @@ export default async function CycleDetailPage({ params }: PageProps) {
                     {c.exitDecision.reasoning && (
                       <p className="whitespace-pre-wrap text-xs">{c.exitDecision.reasoning}</p>
                     )}
+                  </div>
+                ) : (
+                  <div className="rounded border border-border border-dashed p-3">
+                    <div className="mb-1 flex items-center gap-2">
+                      <h4 className="font-semibold text-muted-foreground text-xs">Exit (決済)</h4>
+                      <Badge variant="outline">スキップ</Badge>
+                    </div>
+                    <p className="text-muted-foreground text-xs">保有ポジションなし、判定対象外</p>
                   </div>
                 )}
               </div>
