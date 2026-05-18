@@ -2,7 +2,7 @@
 
 **プロジェクト名**: Automatic-Trading-as-LLM
 
-最終更新: 2026-05-17
+最終更新: 2026-05-18
 
 ## 1. 目的
 
@@ -38,15 +38,17 @@ MVP は人間介入を許容するが、設計判断は以下の原則に従う:
 ### 2.1 In Scope (MVP)
 
 - GMO コイン **取引所形式の全銘柄(20+)** を対象とするペーパートレード
-- スイングトレード(意思決定間隔: **1 日 1 回、JST 朝 9:00**)
+- 意思決定間隔は段階的に切り替える:
+  - **Phase 5a (検証期、現状)**: **1 時間ごと UTC 0 分 × 2 銘柄 (BTC/ETH)**。データ取得速度を優先、無料枠 (Vercel Hobby 60s timeout + Gemini RPM/RPD) に収まる範囲
+  - **Phase 5b/5c (本格運用期)**: **1 日 1 回 JST 朝 9:00 × 20+ 銘柄** (要件本来のスイングトレード設計)
 - 銘柄ごとに専用プロンプト/閾値を持つ LLM 判断エージェント
-- **Tier 1 (Haiku) で全銘柄スクリーニング → Tier 2 (Opus) は通過分のみ**
+- **Tier 1 で全銘柄スクリーニング → Tier 2 は通過分のみ**
 - 複数 LLM モデルの **shadow trading 並列比較** (Phase 5c)
 - ダッシュボード(損益・ポジション・取引履歴閲覧)
 - 手動介入(緊急停止、ポジションクローズ)
 - Langfuse による LLM コール観測・評価
 
-#### 2.1.1 1日1回 × 多銘柄を採用する根拠
+#### 2.1.1 Phase 5b 以降で 1日1回 × 多銘柄を採用する根拠
 
 LLM の構造的優位を最大限活かす設計:
 - **「多銘柄から選ぶ」が LLM 得意領域**: 人間が時間的にできない仕事
@@ -55,6 +57,12 @@ LLM の構造的優位を最大限活かす設計:
 - **Tier 1 スクリーニングが本質的に機能**: 20+ 銘柄を Haiku が要約、上位だけ Opus
 - **「機会なし」デッドロック回避**: 少銘柄だと「ずっと Entry/Exit できない」リスクあり、多銘柄なら常に機会あり
 - **コスト効率**: 1d × 20銘柄 のほうが 1h × 2銘柄 より安い
+
+#### 2.1.2 Phase 5a で 1h × 少数銘柄に絞る理由
+
+- パイプライン全体のバグ早期発見のためサイクル回数を稼ぐ
+- Gemini 無料枠 (15 RPM、約 500 RPD) と Vercel Hobby (60秒 function timeout) に収まる範囲が **1h × 2-4銘柄**
+- 2 週間程度回したら戦略を Phase 5b に切り替え (cron を `0 0 * * *` UTC、銘柄を `enabled = true` 全件)
 
 ### 2.2 Out of Scope (MVP)
 
@@ -76,7 +84,7 @@ LLM の構造的優位を最大限活かす設計:
 └──────────────────────────────────────────────────────────┘
                               ↓
 ┌──────────────────────────────────────────────────────────┐
-│ Tier 1: Pre-Analyst (軽量 LLM, 例: Haiku 4.5)             │
+│ Tier 1: Pre-Analyst (軽量 LLM, MVP: gemini-3.1-flash-lite) │
 │   役割: 要約・ノイズ除去・関連度スコア                    │
 │        + Tier 2 呼び出し要否フラグ (skip_flag, reason)    │
 │   出力: 構造化サマリ                                      │
@@ -125,14 +133,14 @@ LLM の構造的優位を最大限活かす設計:
 
 ### 3.1.1 Tier 1 Skip 判定の運用ポリシー
 
-20+ 銘柄を全て Tier 2 (Opus) に通すとコスト過大。**Tier 1 (Haiku) が銘柄スクリーニング** として
+20+ 銘柄を全て Tier 2 (重量モデル) に通すとコスト過大。**Tier 1 (軽量モデル) が銘柄スクリーニング** として
 本質的に機能する。
 
 運用ポリシー:
-- **MVP 初期 (〜2 週間)**: Tier 1 の `skip_flag` は **記録のみ、Tier 2 は全銘柄実行**
+- **MVP 初期 (Phase 5a, 〜2 週間)**: Tier 1 の `skip_flag` は **記録のみ、Tier 2 は全銘柄実行**
   - 理由: skip 判定の精度を反事実 (Tier 2 を呼んでいたらどうだったか) で検証するため
-  - コスト試算: 20銘柄 × 30日 × Opus = 600 req ≈ ¥12,000/月、許容範囲
-- **検証期**: オフラインで「Skip 推奨 → 実際に Tier 2 が No-Op だったか」を集計
+  - 現状は Tier 1/Tier 2 とも `gemini-3.1-flash-lite` (無料枠で全て賄うため一時的に同一モデル)
+- **Phase 5b**: Tier 1 = `gemini-3.1-flash-lite`, Tier 2 = `gemini-2.5-flash` or `gemini-2.5-pro` (有料枠で品質差テスト)
 - **適用期**: Skip 判定が信頼できると確認できたら実際にスキップし、Tier 2 通過は上位 5-10 銘柄程度に絞る
 
 ### 3.1.2 Analyst の多層化方針
@@ -403,9 +411,11 @@ LUNA / FTX 級フラッシュクラッシュでも最終防衛線 (-35%, -50%) �
 スマートフォンからの閲覧・操作を想定し、**Web サービスとして公開**:
 
 - **デプロイ**: Vercel
-- **認証**: **Supabase Auth + GitHub OAuth + Middleware で GitHub ID チェック**
-  - サインアップは GitHub のみ許可、Middleware で許可リストの GitHub user ID/login と照合
-  - Phase C で実装(MVP では未実装)
+- **認証**: **Supabase Auth + GitHub OAuth + 事前 seed allowlist**
+  - サインアップは GitHub のみ。Supabase Admin API で許可メールを事前 seed → 新規 signup を Disable
+  - OAuth ログイン時、Supabase が email 一致で seed 済みユーザーに identity をリンク
+  - 他人がアクセスしても「既存ユーザーなし + signup 無効」で拒否
+  - middleware は `/`, `/cycles/*` を保護、未ログインなら `/login` リダイレクト
 - **レスポンシブ対応**: モバイルファースト
 - **機能**:
   - ダッシュボード: 損益・ポジション・取引履歴・モデル別パフォーマンス
@@ -500,7 +510,7 @@ UI メイン、CLI も用意(UI 不調時のバックアップ)。
 
 - API 鍵は Supabase Vault に保管、ワーカーのみ取得
 - ペーパー期間は `.env` で十分、本番移行時に Vault に移す
-- UI 認証は Supabase Auth + GitHub OAuth、Middleware で許可 GitHub ID 照合
+- UI 認証は Supabase Auth + GitHub OAuth、Admin API での事前 seed allowlist でアクセス制限
 
 ### 5.3 コスト
 
@@ -517,49 +527,57 @@ UI メイン、CLI も用意(UI 不調時のバックアップ)。
 | 認証 | Supabase Auth + GitHub OAuth + Middleware (個人用、許可 GitHub ID のみ) | Free |
 | DB | Supabase (Postgres) | Free (500MB) |
 | ORM | Drizzle | OSS |
-| 軽量定期実行 | Supabase pg_cron | Free |
-| 判定オーケストレーション | **Inngest** (ジョブ可視化、自動リトライ、並列度制御) | **Inngest Free (50k steps/月)** |
+| 定期実行 + 判定オーケストレーション | **Inngest** (cron + ジョブ可視化、自動リトライ、並列度制御) | **Inngest Free (50k steps/月)** |
 | LLM 観測 | Langfuse | Cloud Free (50k events/月) |
 | エラー監視 | **Sentry** | Developer Free (5k errors/月) |
 | Lint/Format | Biome | OSS |
 | Dead code | Knip | OSS |
 | CI | GitHub Actions | Public Free |
 | 通知 | Discord / Slack Webhook | Free |
-| LLM (Tier 1) | Claude Haiku 4.5 (要約・スコア専用) | 課金 |
-| LLM (Tier 2) | Phase 5a/5b は Opus 4.7 一本、Phase 5c から Opus/Sonnet/Gemini Pro 並走 | 課金 |
-| LLM (Critic) | Tier 2 と同じモデル | 課金 |
-| 情報収集 | Perplexity Sonar / Grok API | 課金 |
+| LLM (Tier 1 / Tier 2 / Critic) | Phase 5a: `gemini-3.1-flash-lite` (無料枠で全段共用)、Phase 5b 以降: Tier 2 を Gemini Pro/Claude Sonnet/Opus に分岐、Phase 5c で並走 | Phase 5a 無料、以降課金 |
+| 情報収集 | Phase 5a: 取得失敗フォールバック (キー未設定で「情報なし」)、Phase 5b 以降: Perplexity Sonar / Grok API | Phase 5a 無料、以降課金 |
 
 ### 6.1 スケジューラ・実行構成
 
 ```
 [トリガー]
-  Supabase pg_cron (Free):
-    - 1h ごとに判定サイクルの Inngest event を発火
-    - 1min ごとに価格監視 Edge Function を直接呼ぶ
-    - 週次レポート
+  Inngest cron (Free 50k steps/月):
+    - cron 設定で判定サイクルを直接発火 (Phase 5a: "0 * * * *" 毎時, Phase 5b: "0 0 * * *" UTC = JST 9時)
+    - 月 720 steps (1h)、Free 枠 1.4%
+    - 別途 pg_cron は使わない (Inngest cron で完結)
 
 [判定パイプライン]
-  Inngest (Free 50k steps/月):
-    - 1cycle = ~10 steps、月 ~14k steps、Free 枠余裕
-    - 各 step は小さく分割 → Vercel Hobby 10秒制限内に収まる
+  runJudgmentCycle (Vercel /api/inngest):
+    - 1cycle = 1 step.run、30〜60秒で完走 (Vercel Hobby 60秒 timeout 内)
+    - パイプライン構成:
+        1. GMO 取引所メンテチェック
+        2. Kill switch チェック (killed なら早期 return)
+        3. Price-monitor (前回サイクル以降の 1m バーで逆指値タッチ判定、ペーパー専用)
+        4. 銘柄並列: Tier 0 → Tier 1 → Tier 2 → Entry/Exit Decision
+        5. Allocator → Critic → Risk Clipper
+        6. Executor (仮想約定: Exit 優先 → Entry)
+        7. system_state 更新 + Kill switch 再チェック
     - ジョブダッシュボードで可視化、自動リトライ標準
 
-[価格監視 (1min)]
-  Supabase Edge Functions (Free):
-    - Inngest を介さず pg_cron 直叩き(step 数節約)
-    - 1cycle ~2 秒、150秒タイムアウト余裕
+[価格監視]
+  judgment cycle 内に統合 (旧設計の独立 price-monitor は廃止):
+    - 前回 cycle 時刻から現在までの 1m バーを全て replay
+    - 逆指値タッチ判定 → SL 発火 → executor 強制クローズ
+    - 実マネー運用時 (Phase E) は GMO 取引所側で動くのでこの処理は不要
 
 [フロント]
   Vercel Hobby (Free):
-    - Next.js ダッシュボード、Inngest endpoint も hosting
+    - Next.js ダッシュボード、/api/inngest endpoint hosting
+    - middleware で Supabase Auth (GitHub OAuth) ガード
 ```
 
 ### 6.2 採用見送りツール (Free Tier 制約で MVP には不向き)
 
 - **GitHub Actions cron**: 遅延常態化、本番スケジューラ不適 (CI/CD のみ使用)
 - **Trigger.dev Free**: 1k runs/月で MVP 規模に届かない
-- **Vercel Pro**: 不要、Inngest で step 分割すれば Hobby で十分
+- **Vercel Pro**: 不要、Inngest cron + Vercel Hobby 60秒 timeout で十分
+- **Supabase pg_cron**: Inngest cron で全て完結するため未使用
+- **Supabase Edge Functions**: 価格監視を judgment cycle に統合したため未使用
 
 ## 7. データモデル(最低限)
 
@@ -648,7 +666,7 @@ UI メイン、CLI も用意(UI 不調時のバックアップ)。
 
 ### 10.3 個人用なので簡素化
 
-- UI 認証: Supabase Auth + **GitHub OAuth** + Middleware で許可 GitHub ID 照合 (env: `AUTHORIZED_GITHUB_LOGINS`)
+- UI 認証: Supabase Auth + **GitHub OAuth** + 事前 seed allowlist (Admin API でユーザー seed → signup 無効化)
 - 環境分離: 単一環境 (dev/prod 分けない)
 - データバックアップ: Supabase 標準機能で十分
 - インフラ IaC: 不要 (手動セットアップで OK)
