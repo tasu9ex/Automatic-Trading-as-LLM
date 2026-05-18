@@ -12,13 +12,24 @@ const logger = createLogger("price-monitor");
 const STOP_MARKET_PEAK_RATIO = 0.5;
 
 interface Bar {
+  openTime: number;
   low: number;
   high: number;
   close: number;
 }
 
-function toBar(raw: { low: string; high: string; close: string }): Bar {
-  return { low: Number(raw.low), high: Number(raw.high), close: Number(raw.close) };
+function toBar(raw: {
+  openTime: number | string;
+  low: string;
+  high: string;
+  close: string;
+}): Bar {
+  return {
+    openTime: Number(raw.openTime),
+    low: Number(raw.low),
+    high: Number(raw.high),
+    close: Number(raw.close),
+  };
 }
 
 interface FiredSignal {
@@ -70,25 +81,53 @@ function decideFiredOrder(
   return null;
 }
 
-function todayYyyymmdd(): string {
-  const now = new Date();
-  const jst = new Date(now.getTime() + 9 * 3600_000);
+function yyyymmdd(d: Date): string {
+  const jst = new Date(d.getTime() + 9 * 3600_000);
   return `${jst.getUTCFullYear()}${String(jst.getUTCMonth() + 1).padStart(2, "0")}${String(jst.getUTCDate()).padStart(2, "0")}`;
 }
 
 /**
- * 全 open ポジションの 1 分足を取得 → ピーク更新 + 逆指値タッチ判定。
+ * since から now までの 1分足バーを取得 (JST 日跨ぎ対応)。
+ */
+async function fetchBarsSince(symbolJpy: string, since: Date): Promise<Bar[]> {
+  const now = new Date();
+  const dates = new Set<string>([yyyymmdd(since), yyyymmdd(now)]);
+  const all: Bar[] = [];
+  for (const date of dates) {
+    try {
+      const klines = await getKlines(symbolJpy, "1min", date);
+      for (const k of klines) all.push(toBar(k));
+    } catch (err) {
+      logger.warn({ err, symbol: symbolJpy, date }, "kline fetch failed");
+    }
+  }
+  return all
+    .filter((b) => b.openTime > since.getTime() && b.openTime <= now.getTime())
+    .sort((a, b) => a.openTime - b.openTime);
+}
+
+export interface PriceMonitorInput {
+  /** この時刻以降の 1m バーを処理対象にする。未指定なら直近 1時間。 */
+  since?: Date;
+}
+
+/**
+ * since 以降の 1分足を全て確認し、逆指値タッチ判定 + ピーク/トラフ更新。
  *
  * 約定判定 (1m bar):
- *   - stop_limit_primary: bar.low <= trigger AND bar.high >= limit
+ *   - stop_limit_primary: bar.low <= trigger AND 同 bar 以降の bar.high >= limit
  *     → limit_price で約定、スリッページなし
  *   - stop_market_entry / stop_market_peak: bar.low <= trigger
- *     → trigger × (1 - 0.003) で約定、スリッページ 0.3% 控除
+ *     → trigger × (1 - 0.003) で約定、スリッページ 0.3% 控除 (executor 側で計算)
  *
- * 同一バー内で複数発火可能なら Stop-Limit を優先 (約定価格が良い)。
- * 1 ポジション 1 約定で他はキャンセル(executeExit が pending_orders を inactive 化)。
+ * judgment cycle の冒頭で呼ぶ用途を想定。
+ * 前回サイクル時刻 (system_state.lastCycleAt) を since として渡す。
+ *
+ * 実マネー運用時 (Phase E) は GMO 取引所側で逆指値が動くので、この処理は不要。
  */
-export async function runPriceMonitor(): Promise<void> {
+export async function runPriceMonitor(input: PriceMonitorInput = {}): Promise<void> {
+  const since = input.since ?? new Date(Date.now() - 60 * 60_000);
+
   const openPositions = await db
     .select({ position: positions, coin: coins })
     .from(positions)
@@ -102,14 +141,7 @@ export async function runPriceMonitor(): Promise<void> {
 
   for (const { position, coin } of openPositions) {
     const symbolJpy = `${coin.symbol}_JPY`;
-    let bars: Bar[] = [];
-    try {
-      const klines = await getKlines(symbolJpy, "1min", todayYyyymmdd());
-      bars = klines.slice(-5).map(toBar);
-    } catch (err) {
-      logger.warn({ err, symbol: coin.symbol }, "Failed to fetch 1m kline");
-      continue;
-    }
+    const bars = await fetchBarsSince(symbolJpy, since);
     if (bars.length === 0) continue;
 
     const recentHigh = Math.max(...bars.map((b) => b.high));
@@ -148,7 +180,13 @@ export async function runPriceMonitor(): Promise<void> {
     if (!fired) continue;
 
     logger.warn(
-      { symbol: coin.symbol, kind: fired.kind, marketPrice: fired.marketPrice, recentLow },
+      {
+        symbol: coin.symbol,
+        kind: fired.kind,
+        marketPrice: fired.marketPrice,
+        recentLow,
+        barsScanned: bars.length,
+      },
       "Stop loss fired",
     );
 
@@ -172,6 +210,7 @@ export async function runPriceMonitor(): Promise<void> {
         recentLow,
         recentHigh,
         slippageApplied: fired.forced,
+        barsScanned: bars.length,
       },
     });
 

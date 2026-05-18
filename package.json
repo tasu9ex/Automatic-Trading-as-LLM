@@ -23,7 +23,6 @@
     "langfuse:register": "tsx --env-file=.env.local scripts/langfuse/register-prompt.ts",
     "langfuse:verify": "tsx --env-file=.env.local scripts/langfuse/verify-prompts.ts",
     "cycle:judgment": "tsx --env-file=.env.local scripts/cycle/judgment.ts",
-    "cycle:price-monitor": "tsx --env-file=.env.local scripts/cycle/price-monitor.ts",
     "smoke:sentry": "tsx --env-file=.env.local scripts/smoke/sentry.ts",
     "smoke:gmo": "tsx --env-file=.env.local scripts/smoke/gmo.ts",
     "smoke:discord": "tsx --env-file=.env.local scripts/smoke/discord.ts",

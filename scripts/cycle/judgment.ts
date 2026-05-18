@@ -38,6 +38,7 @@ import { executeEntry, executeExit } from "@/lib/executor";
 import { checkAndTriggerKillSwitch } from "@/lib/kill-switch";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
+import { runPriceMonitor } from "@/lib/price-monitor";
 import { applyRiskClipper } from "@/lib/risk/clipper";
 import {
   captureError,
@@ -129,6 +130,15 @@ async function main() {
   if (state?.state === "killed") {
     logger.error("System is killed, skipping cycle");
     process.exit(2);
+  }
+
+  // Price-monitor: 前回サイクル以降の 1m バーを全部見て、逆指値が touch されてたら
+  // クローズを確定させる (ペーパー運用中のシミュレーション。実マネー時は GMO 側で動く)。
+  const priceMonitorSince = state?.lastCycleAt ?? new Date(Date.now() - 60 * 60_000);
+  try {
+    await runPriceMonitor({ since: priceMonitorSince });
+  } catch (err) {
+    logger.error({ err }, "Price monitor failed (continuing cycle)");
   }
 
   const portfolio = (
