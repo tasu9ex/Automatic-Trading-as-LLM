@@ -8,10 +8,16 @@
  *   pnpm tsx --env-file=.env.local scripts/dev/seed-positions-from-gmo.ts
  */
 import { db } from "@/db/client";
-import { coins, positions } from "@/db/schema";
+import { coins, pendingOrders, positions } from "@/db/schema";
 import { getTicker } from "@/lib/clients/gmo";
 import { getAssets } from "@/lib/clients/gmo-private";
 import { and, eq, inArray } from "drizzle-orm";
+
+// executor と同じ比率
+const STOP_LIMIT_TRIGGER_RATIO = 0.75;
+const STOP_LIMIT_LIMIT_RATIO = 0.73;
+const STOP_MARKET_ENTRY_RATIO = 0.65;
+const STOP_MARKET_PEAK_RATIO = 0.5;
 
 /** ユーザー申告の元本合計 (¥) */
 const TOTAL_COST_JPY = 98370;
@@ -82,21 +88,57 @@ async function main() {
     const estimatedEntryPrice = currentPrice / lossFactor;
     const estimatedCost = heldAmount * estimatedEntryPrice;
 
-    await db.insert(positions).values({
-      model: MODEL,
-      coinId,
-      status: "open",
-      quantity: a.amount,
-      avgEntryPrice: estimatedEntryPrice.toFixed(4),
-      peakPrice: Math.max(currentPrice, estimatedEntryPrice).toFixed(4),
-      troughPrice: Math.min(currentPrice, estimatedEntryPrice).toFixed(4),
-      entryReason: `Seed from GMO holdings (estimated cost ¥${estimatedCost.toFixed(0)}, opened 2y ago,均等損益率法)`,
-      openedAt: OPENED_AT,
-      realizedPnlJpy: "0",
-    });
+    const peakInit = Math.max(currentPrice, estimatedEntryPrice);
+    const [inserted] = await db
+      .insert(positions)
+      .values({
+        model: MODEL,
+        coinId,
+        status: "open",
+        quantity: a.amount,
+        avgEntryPrice: estimatedEntryPrice.toFixed(4),
+        peakPrice: peakInit.toFixed(4),
+        troughPrice: Math.min(currentPrice, estimatedEntryPrice).toFixed(4),
+        entryReason: `Seed from GMO holdings (estimated cost ¥${estimatedCost.toFixed(0)}, opened 2y ago,均等損益率法)`,
+        openedAt: OPENED_AT,
+        realizedPnlJpy: "0",
+      })
+      .returning({ id: positions.id });
+
+    if (!inserted) throw new Error(`Failed to insert position for ${a.symbol}`);
+    const positionId = inserted.id;
+
+    // executor と同じ 3 種の逆指値を配置
+    await db.insert(pendingOrders).values([
+      {
+        positionId,
+        coinId,
+        model: MODEL,
+        kind: "stop_limit_primary",
+        triggerPrice: (estimatedEntryPrice * STOP_LIMIT_TRIGGER_RATIO).toFixed(4),
+        limitPrice: (estimatedEntryPrice * STOP_LIMIT_LIMIT_RATIO).toFixed(4),
+        createdBy: "code",
+      },
+      {
+        positionId,
+        coinId,
+        model: MODEL,
+        kind: "stop_market_entry",
+        triggerPrice: (estimatedEntryPrice * STOP_MARKET_ENTRY_RATIO).toFixed(4),
+        createdBy: "code",
+      },
+      {
+        positionId,
+        coinId,
+        model: MODEL,
+        kind: "stop_market_peak",
+        triggerPrice: (peakInit * STOP_MARKET_PEAK_RATIO).toFixed(4),
+        createdBy: "code",
+      },
+    ]);
 
     console.log(
-      `✓ ${a.symbol}  qty=${a.amount}  avg=¥${estimatedEntryPrice.toLocaleString("ja-JP", { maximumFractionDigits: 2 })}  cost≈¥${estimatedCost.toLocaleString("ja-JP", { maximumFractionDigits: 0 })}`,
+      `✓ ${a.symbol}  qty=${a.amount}  avg=¥${estimatedEntryPrice.toLocaleString("ja-JP", { maximumFractionDigits: 2 })}  cost≈¥${estimatedCost.toLocaleString("ja-JP", { maximumFractionDigits: 0 })}  + 3 stops`,
     );
   }
 }
