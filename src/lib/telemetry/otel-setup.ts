@@ -16,6 +16,9 @@ const logger = createLogger("telemetry.otel-setup");
  *   LANGFUSE_BASE_URL (optional, default https://cloud.langfuse.com)
  *
  * 未設定なら no-op。
+ *
+ * 注意: @sentry/node 等の他 OTel 初期化より先に呼ぶ必要がある。
+ *       後だとグローバル TracerProvider を握られて AI SDK のスパンが届かない。
  */
 
 let sdk: NodeSDK | null = null;
@@ -38,6 +41,8 @@ export function initTelemetry(): void {
         publicKey,
         secretKey,
         baseUrl: process.env.LANGFUSE_BASE_URL ?? "https://cloud.langfuse.com",
+        // 短命 CLI スクリプト / serverless で span flush 前に終了するのを防ぐ
+        exportMode: "immediate",
       }),
     ],
   });

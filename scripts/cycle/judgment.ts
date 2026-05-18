@@ -95,8 +95,10 @@ async function recordSnapshot(cycleId: string, coinId: string, snap: Snapshot) {
 }
 
 async function main() {
-  initSentry();
+  // 順序重要: Telemetry を先に初期化しないと @sentry/node 内部の OTel が
+  // グローバル TracerProvider を握ってしまい、AI SDK のスパンが Langfuse に届かない
   initTelemetry();
+  initSentry();
   const args = parseArgs(process.argv.slice(2));
   const cycleId = randomUUID();
   const startedAt = Date.now();
