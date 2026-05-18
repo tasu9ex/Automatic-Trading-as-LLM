@@ -30,6 +30,7 @@ const PRICING: Record<string, ModelPricing> = {
   // Google
   "gemini-2.5-pro": { inputPerMTokens: 1.25, outputPerMTokens: 10 },
   "gemini-2.5-flash": { inputPerMTokens: 0.3, outputPerMTokens: 2.5 },
+  "gemini-3.1-flash-lite": { inputPerMTokens: 0.25, outputPerMTokens: 1.5 },
 };
 
 export interface CostBreakdown {

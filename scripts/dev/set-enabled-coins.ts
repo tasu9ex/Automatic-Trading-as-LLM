@@ -2,7 +2,7 @@ import { db } from "@/db/client";
 import { coins } from "@/db/schema";
 import { inArray, notInArray } from "drizzle-orm";
 
-const ENABLED = ["BTC", "ETH"];
+const ENABLED = ["BTC", "ETH", "SOL", "DOT"];
 
 async function main() {
   await db.update(coins).set({ enabled: false }).where(notInArray(coins.symbol, ENABLED));
