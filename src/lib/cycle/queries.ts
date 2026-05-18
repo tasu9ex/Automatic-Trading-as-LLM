@@ -49,10 +49,12 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       .from(positions)
       .where(and(eq(positions.model, MODEL), eq(positions.status, "closed")))
       .then((r) => Number(r[0]?.sum ?? 0)),
+    // critic_outputs.model は LLM モデル名なので portfolio モデルではフィルタしない
+    // (現状 portfolio は1つなので全 critic = 全 cycle)
     db
       .select({ count: sql<string>`COUNT(*)` })
       .from(criticOutputs)
-      .where(and(eq(criticOutputs.model, MODEL), gte(criticOutputs.createdAt, todayStart)))
+      .where(gte(criticOutputs.createdAt, todayStart))
       .then((r) => Number(r[0]?.count ?? 0)),
   ]);
 
@@ -100,10 +102,10 @@ export interface RecentCycleRow {
 }
 
 export async function getRecentCycles(limit = 15): Promise<RecentCycleRow[]> {
+  // critic_outputs.model は LLM モデル名なのでフィルタしない
   const critics = await db
     .select()
     .from(criticOutputs)
-    .where(eq(criticOutputs.model, MODEL))
     .orderBy(desc(criticOutputs.createdAt))
     .limit(limit);
 

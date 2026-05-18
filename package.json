@@ -26,7 +26,9 @@
     "smoke:sentry": "tsx --env-file=.env.local scripts/smoke/sentry.ts",
     "smoke:gmo": "tsx --env-file=.env.local scripts/smoke/gmo.ts",
     "smoke:discord": "tsx --env-file=.env.local scripts/smoke/discord.ts",
-    "smoke:gemini": "tsx --env-file=.env.local scripts/smoke/gemini.ts"
+    "smoke:gemini": "tsx --env-file=.env.local scripts/smoke/gemini.ts",
+    "status": "tsx --env-file=.env.production.local scripts/dev/status.ts",
+    "status:local": "tsx --env-file=.env.local scripts/dev/status.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",
