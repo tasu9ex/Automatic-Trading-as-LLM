@@ -14,6 +14,8 @@
     "src/lib/rate-limit/index.ts",
     "src/lib/constants/enums.ts",
     "src/lib/drizzle/detect-transaction-control.ts",
+    "src/lib/inngest/functions.ts",
+    "src/lib/cycle/judgment.ts",
     "scripts/**/*.ts"
   ],
   "project": ["src/**/*.{ts,tsx}", "scripts/**/*.ts"],
