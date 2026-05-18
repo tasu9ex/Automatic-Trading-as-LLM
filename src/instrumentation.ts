@@ -11,3 +11,10 @@ export async function register() {
     init(sentryOptions);
   }
 }
+
+export const onRequestError = async (
+  ...args: Parameters<typeof import("@sentry/nextjs").captureRequestError>
+) => {
+  const { captureRequestError } = await import("@sentry/nextjs");
+  captureRequestError(...args);
+};
