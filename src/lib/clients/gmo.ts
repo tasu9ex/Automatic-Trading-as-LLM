@@ -3,7 +3,7 @@ import { runWith } from "@/lib/rate-limit";
 
 const logger = createLogger("clients.gmo");
 
-/** GMO コイン Public API ベース URL (認証不要、価格取得用) */
+/** GMO コイン Public API ベース URL (認証不要、市場情報取得用) */
 const PUBLIC_BASE = "https://api.coin.z.com/public";
 
 export interface OHLCBar {
@@ -24,6 +24,32 @@ export interface Ticker {
   low: string;
   volume: string;
   timestamp: string;
+}
+
+export interface OrderbookEntry {
+  price: string;
+  size: string;
+}
+
+export interface Orderbook {
+  symbol: string;
+  asks: OrderbookEntry[]; // 売り注文 (price asc)
+  bids: OrderbookEntry[]; // 買い注文 (price desc)
+}
+
+export interface PublicTrade {
+  price: string;
+  size: string;
+  side: "BUY" | "SELL";
+  timestamp: string;
+}
+
+export interface SymbolInfo {
+  symbol: string;
+  minOrderSize: string;
+  maxOrderSize: string;
+  sizeStep: string;
+  /** 取引所形式の最小注文サイズ等 */
 }
 
 interface GmoPublicResponse<T> {
@@ -49,11 +75,41 @@ async function gmoGet<T>(path: string): Promise<T> {
 }
 
 /**
+ * 取引所稼働状況。
+ * status: "OPEN" / "MAINTENANCE" / "PREOPEN"
+ */
+export async function getExchangeStatus(): Promise<"OPEN" | "MAINTENANCE" | "PREOPEN"> {
+  const data = await gmoGet<{ status: "OPEN" | "MAINTENANCE" | "PREOPEN" }>("/v1/status");
+  return data.status;
+}
+
+/**
  * 現在のティッカー (現物 BTC, ETH 等)。
  */
 export async function getTicker(symbol?: string): Promise<Ticker[]> {
   const path = symbol ? `/v1/ticker?symbol=${symbol}` : "/v1/ticker";
   return gmoGet<Ticker[]>(path);
+}
+
+/**
+ * 板情報 (bid/ask 各 20 階層程度)。流動性スコア・スプレッド計算に使う。
+ */
+export async function getOrderbook(symbol: string): Promise<Orderbook> {
+  return gmoGet<Orderbook>(`/v1/orderbooks?symbol=${symbol}`);
+}
+
+/**
+ * 直近の約定一覧。買い/売り方向比率からマイクロセンチメントを取れる。
+ * page: 1-based, count: 1-100
+ */
+export async function getRecentTrades(
+  symbol: string,
+  page = 1,
+  count = 100,
+): Promise<{ list: PublicTrade[]; pagination: { currentPage: number; count: number } }> {
+  return gmoGet<{ list: PublicTrade[]; pagination: { currentPage: number; count: number } }>(
+    `/v1/trades?symbol=${symbol}&page=${page}&count=${count}`,
+  );
 }
 
 /**
@@ -65,8 +121,13 @@ export async function getKlines(
   interval: "1min" | "5min" | "15min" | "30min" | "1hour" | "4hour" | "1day",
   date: string,
 ): Promise<OHLCBar[]> {
-  const data = await gmoGet<OHLCBar[]>(
-    `/v1/klines?symbol=${symbol}&interval=${interval}&date=${date}`,
-  );
-  return data;
+  return gmoGet<OHLCBar[]>(`/v1/klines?symbol=${symbol}&interval=${interval}&date=${date}`);
+}
+
+/**
+ * 取引所形式の対応銘柄リスト + 注文制約。
+ * MVP では coins テーブルの初期データ同期に使う。
+ */
+export async function getSymbols(): Promise<SymbolInfo[]> {
+  return gmoGet<SymbolInfo[]>("/v1/symbols");
 }

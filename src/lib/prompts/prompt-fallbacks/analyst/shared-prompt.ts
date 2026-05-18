@@ -11,6 +11,7 @@
  *   {{grok_summary}}       Grok センチメント全文
  *   {{ohlcv_1h_brief}}     直近 1h 足 簡易テキスト (24-72 本)
  *   {{ohlcv_1d_brief}}     直近 1d 足 簡易テキスト (30-90 本)
+ *   {{micro_market}}       板情報・直近約定からのマイクロ指標 (spread, depth bias, buy ratio)
  *
  * 出力 (JSON):
  *   {
@@ -85,6 +86,9 @@ export const ANALYST_USER_PROMPT = `# 銘柄
 
 # 1d 足 (直近 30-90 本)
 {{ohlcv_1d_brief}}
+
+# マイクロマーケット指標 (板情報 + 直近 100 約定)
+{{micro_market}}
 
 # 出力 (JSON のみ)
 \`\`\`json

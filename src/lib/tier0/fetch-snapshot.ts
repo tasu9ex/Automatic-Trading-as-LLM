@@ -1,4 +1,12 @@
-import { type OHLCBar, getKlines, getTicker } from "@/lib/clients/gmo";
+import {
+  type OHLCBar,
+  type Orderbook,
+  type PublicTrade,
+  getKlines,
+  getOrderbook,
+  getRecentTrades,
+  getTicker,
+} from "@/lib/clients/gmo";
 import { callGrok } from "@/lib/clients/grok";
 import { callPerplexity } from "@/lib/clients/perplexity";
 import { createLogger } from "@/lib/logging";
@@ -13,6 +21,21 @@ export interface FetchSnapshotInput {
   kline1mDate?: string;
 }
 
+export interface MicroMarket {
+  /** スプレッド (ask - bid) / mid、% */
+  spreadPct: number;
+  /** top-5 bid サイズ合計 (流動性近似) */
+  bidDepth5: number;
+  /** top-5 ask サイズ合計 */
+  askDepth5: number;
+  /** 板の偏り: bidDepth5 / (bidDepth5 + askDepth5) → 0.5 が均衡、>0.5 が買い厚 */
+  bidBias: number;
+  /** 直近 N 約定の buy/sell 比率: BUY 件数 / 総件数 → 0.5 が均衡、>0.5 が買い優勢 */
+  tradeBuyRatio: number;
+  /** 観測した約定件数 */
+  tradeCount: number;
+}
+
 export interface Snapshot {
   symbol: string;
   fetchedAt: Date;
@@ -21,6 +44,33 @@ export interface Snapshot {
   ohlcv1m: OHLCBar[];
   ohlcv1d: OHLCBar[];
   ticker: { last: string; bid: string; ask: string; volume: string };
+  /** 板情報 + 直近約定から計算したマイクロマーケット指標 */
+  micro: MicroMarket | null;
+}
+
+function summarizeMicro(book: Orderbook, trades: PublicTrade[]): MicroMarket | null {
+  const topBid = Number(book.bids[0]?.price ?? 0);
+  const topAsk = Number(book.asks[0]?.price ?? 0);
+  if (topBid <= 0 || topAsk <= 0) return null;
+
+  const mid = (topBid + topAsk) / 2;
+  const spreadPct = ((topAsk - topBid) / mid) * 100;
+  const bidDepth5 = book.bids.slice(0, 5).reduce((s, e) => s + Number(e.size), 0);
+  const askDepth5 = book.asks.slice(0, 5).reduce((s, e) => s + Number(e.size), 0);
+  const totalDepth = bidDepth5 + askDepth5;
+  const bidBias = totalDepth > 0 ? bidDepth5 / totalDepth : 0.5;
+
+  const buyCount = trades.filter((t) => t.side === "BUY").length;
+  const tradeBuyRatio = trades.length > 0 ? buyCount / trades.length : 0.5;
+
+  return {
+    spreadPct: Number(spreadPct.toFixed(4)),
+    bidDepth5: Number(bidDepth5.toFixed(6)),
+    askDepth5: Number(askDepth5.toFixed(6)),
+    bidBias: Number(bidBias.toFixed(4)),
+    tradeBuyRatio: Number(tradeBuyRatio.toFixed(4)),
+    tradeCount: trades.length,
+  };
 }
 
 function todayYyyymmdd(): string {
@@ -42,17 +92,20 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
   const { symbol } = input;
   const symbolJpy = `${symbol}_JPY`;
 
-  const [tickerRes, ohlcv1mRes, ohlcv1dRes, perplexityRes, grokRes] = await Promise.allSettled([
-    getTicker(symbolJpy),
-    getKlines(symbolJpy, "1min", input.kline1mDate ?? todayYyyymmdd()),
-    getKlines(symbolJpy, "1day", input.klineYear ?? currentYear()),
-    callPerplexity({
-      userPrompt: `${symbol} (仮想通貨) と暗号資産市場全体の過去 24h のニュース・規制・マクロ動向・機関投資家の動き・大口取引・技術アップデートを要約してください。引用元 URL も含めてください。500字程度。`,
-    }),
-    callGrok({
-      userPrompt: `$${symbol} および暗号資産全体について、過去 24 時間の X (Twitter) のセンチメント、KOL (Key Opinion Leader) の発言、ミーム的なトレンドを要約してください。500 字程度。`,
-    }),
-  ]);
+  const [tickerRes, ohlcv1mRes, ohlcv1dRes, orderbookRes, tradesRes, perplexityRes, grokRes] =
+    await Promise.allSettled([
+      getTicker(symbolJpy),
+      getKlines(symbolJpy, "1min", input.kline1mDate ?? todayYyyymmdd()),
+      getKlines(symbolJpy, "1day", input.klineYear ?? currentYear()),
+      getOrderbook(symbolJpy),
+      getRecentTrades(symbolJpy, 1, 100),
+      callPerplexity({
+        userPrompt: `${symbol} (仮想通貨) と暗号資産市場全体の過去 24h のニュース・規制・マクロ動向・機関投資家の動き・大口取引・技術アップデートを要約してください。引用元 URL も含めてください。500字程度。`,
+      }),
+      callGrok({
+        userPrompt: `$${symbol} および暗号資産全体について、過去 24 時間の X (Twitter) のセンチメント、KOL (Key Opinion Leader) の発言、ミーム的なトレンドを要約してください。500 字程度。`,
+      }),
+    ]);
 
   if (tickerRes.status !== "fulfilled") {
     logger.warn({ symbol, err: tickerRes.reason }, "Ticker fetch failed");
@@ -63,6 +116,12 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
   if (ohlcv1dRes.status !== "fulfilled") {
     logger.warn({ symbol, err: ohlcv1dRes.reason }, "1d kline fetch failed");
   }
+  if (orderbookRes.status !== "fulfilled") {
+    logger.warn({ symbol, err: orderbookRes.reason }, "Orderbook fetch failed");
+  }
+  if (tradesRes.status !== "fulfilled") {
+    logger.warn({ symbol, err: tradesRes.reason }, "Trades fetch failed");
+  }
   if (perplexityRes.status !== "fulfilled") {
     logger.warn({ symbol, err: perplexityRes.reason }, "Perplexity fetch failed");
   }
@@ -71,6 +130,11 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
   }
 
   const ticker = tickerRes.status === "fulfilled" ? tickerRes.value[0] : undefined;
+  const micro =
+    orderbookRes.status === "fulfilled" && tradesRes.status === "fulfilled"
+      ? summarizeMicro(orderbookRes.value, tradesRes.value.list)
+      : null;
+
   return {
     symbol,
     fetchedAt: new Date(),
@@ -85,5 +149,6 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
       ask: ticker?.ask ?? "0",
       volume: ticker?.volume ?? "0",
     },
+    micro,
   };
 }

@@ -28,6 +28,21 @@ export async function runAnalyst(
   snapshot: Snapshot,
   preAnalyst: PreAnalystResult,
 ): Promise<AnalystResult> {
+  const microMarket = snapshot.micro
+    ? JSON.stringify(
+        {
+          spread率パーセント: snapshot.micro.spreadPct,
+          top5買い板厚み: snapshot.micro.bidDepth5,
+          top5売り板厚み: snapshot.micro.askDepth5,
+          板の偏り_買い寄り度: snapshot.micro.bidBias,
+          直近100約定の買い比率: snapshot.micro.tradeBuyRatio,
+          観測約定数: snapshot.micro.tradeCount,
+        },
+        null,
+        2,
+      )
+    : "(取得失敗)";
+
   const resolved = await getPrompt("analyst", {
     symbol: snapshot.symbol,
     pre_analyst_summary: JSON.stringify(preAnalyst.output, null, 2),
@@ -35,6 +50,7 @@ export async function runAnalyst(
     grok_summary: snapshot.grokSummary,
     ohlcv_1h_brief: formatBars(snapshot.ohlcv1m, 60),
     ohlcv_1d_brief: formatBars(snapshot.ohlcv1d, 30),
+    micro_market: microMarket,
   });
 
   const output = await generateJson<AnalystOutput>({

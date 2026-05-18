@@ -30,6 +30,7 @@ import {
   systemState,
 } from "@/db/schema";
 import { type SizingMethod, allocate } from "@/lib/allocator";
+import { getExchangeStatus } from "@/lib/clients/gmo";
 import { runCritic } from "@/lib/critic";
 import { runEntryDecision } from "@/lib/decision/entry";
 import { runExitDecision } from "@/lib/decision/exit";
@@ -94,6 +95,23 @@ async function main() {
   const startedAt = Date.now();
 
   logger.info({ cycleId, args }, "Cycle started");
+
+  // GMO 取引所メンテチェック
+  try {
+    const exchangeStatus = await getExchangeStatus();
+    if (exchangeStatus !== "OPEN") {
+      logger.warn({ exchangeStatus }, "Exchange not OPEN, skipping cycle");
+      await notify({
+        level: "info",
+        title: `⏸ GMO ${exchangeStatus}, cycle skipped`,
+        fields: { status: exchangeStatus },
+      });
+      await shutdownTelemetry();
+      process.exit(0);
+    }
+  } catch (err) {
+    logger.warn({ err }, "Exchange status check failed, proceeding anyway");
+  }
 
   // Kill switch チェック (前サイクル状態考慮)
   const state = (
