@@ -1,4 +1,5 @@
 import { createLogger } from "@/lib/logging";
+import { trace } from "@opentelemetry/api";
 import { type LLMUsage, calculateCost } from "./cost-tracking";
 
 const logger = createLogger("telemetry.ai-sdk-usage");
@@ -51,13 +52,16 @@ export function recordLLMCall(usage: AISdkUsage | null | undefined, opts: Attach
     "LLM call",
   );
 
-  // TODO(Phase B): Langfuse span への attach
-  //   const span = trace.getActiveSpan();
-  //   if (span) {
-  //     span.setAttributes({
-  //       "langfuse.observation.usage_details.input": normalized.inputTokens,
-  //       "langfuse.observation.usage_details.output": normalized.outputTokens,
-  //       "langfuse.observation.cost_details.total": cost?.totalUsd ?? 0,
-  //     });
-  //   }
+  // Langfuse span に cost / usage を attach (現在の active span = AI SDK が生成した generation span)
+  const span = trace.getActiveSpan();
+  if (span) {
+    span.setAttributes({
+      "langfuse.observation.usage_details.input": normalized.inputTokens,
+      "langfuse.observation.usage_details.output": normalized.outputTokens,
+      "langfuse.observation.usage_details.total": normalized.inputTokens + normalized.outputTokens,
+      "langfuse.observation.cost_details.total_usd": cost?.totalUsd ?? 0,
+      "langfuse.observation.cost_details.total_jpy": cost?.totalJpy ?? 0,
+      "langfuse.observation.model.name": opts.modelId,
+    });
+  }
 }

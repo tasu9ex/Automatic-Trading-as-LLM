@@ -42,6 +42,15 @@ function pickProvider(modelId: string): {
 export async function generateJson<T>(input: GenerateJsonInput<T>): Promise<T> {
   const { model, service } = pickProvider(input.modelId);
 
+  const telemetry = {
+    isEnabled: true,
+    functionId: input.feature,
+    metadata: {
+      modelId: input.modelId,
+      ...(input.metadata ?? {}),
+    },
+  };
+
   return runWith(service, async () => {
     try {
       const result = await generateObject({
@@ -51,6 +60,7 @@ export async function generateJson<T>(input: GenerateJsonInput<T>): Promise<T> {
         schema: input.schema,
         temperature: input.temperature ?? 0.2,
         maxOutputTokens: input.maxOutputTokens,
+        experimental_telemetry: telemetry,
       });
       recordLLMCall(result.usage, {
         modelId: input.modelId,
@@ -67,6 +77,7 @@ export async function generateJson<T>(input: GenerateJsonInput<T>): Promise<T> {
         schema: input.schema,
         temperature: input.temperature ?? 0.2,
         maxOutputTokens: input.maxOutputTokens,
+        experimental_telemetry: { ...telemetry, functionId: `${input.feature}.retry` },
       });
       recordLLMCall(result.usage, {
         modelId: input.modelId,

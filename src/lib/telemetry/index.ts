@@ -6,3 +6,4 @@ export {
   type CostBreakdown,
   type LLMUsage,
 } from "./cost-tracking";
+export { initTelemetry, shutdownTelemetry } from "./otel-setup";
