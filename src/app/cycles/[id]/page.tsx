@@ -85,6 +85,31 @@ export default async function CycleDetailPage({ params }: PageProps) {
             <CardTitle>{c.symbol}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
+            {c.snapshot && (
+              <details className="rounded border border-border">
+                <summary className="cursor-pointer select-none px-3 py-2 text-muted-foreground text-xs uppercase tracking-wide hover:bg-muted/30">
+                  Tier 0 情報源 (Perplexity ニュース + Grok センチメント)
+                </summary>
+                <div className="space-y-3 border-border border-t p-3 text-xs">
+                  <div>
+                    <div className="mb-1 font-semibold">Perplexity (ニュース・規制・マクロ)</div>
+                    <p className="whitespace-pre-wrap text-muted-foreground">
+                      {c.snapshot.perplexitySummary ?? "(取得失敗または未設定)"}
+                    </p>
+                  </div>
+                  <div>
+                    <div className="mb-1 font-semibold">Grok (X センチメント・KOL)</div>
+                    <p className="whitespace-pre-wrap text-muted-foreground">
+                      {c.snapshot.grokSummary ?? "(取得失敗または未設定)"}
+                    </p>
+                  </div>
+                  <div className="text-muted-foreground">
+                    取得時刻: {new Date(c.snapshot.fetchedAt).toLocaleString("ja-JP")}
+                  </div>
+                </div>
+              </details>
+            )}
+
             {c.preAnalyst && (
               <section className="space-y-1">
                 <div className="flex items-center gap-2">
@@ -166,39 +191,44 @@ export default async function CycleDetailPage({ params }: PageProps) {
               </section>
             )}
 
-            <section className="grid gap-3 md:grid-cols-2">
-              {c.entryDecision && (
-                <div className="rounded border border-border p-3">
-                  <div className="mb-1 flex items-center gap-2">
-                    <h4 className="font-semibold text-xs">Entry (新規)</h4>
-                    <Badge variant={decisionVariant(c.entryDecision.result)}>
-                      {c.entryDecision.result}
-                    </Badge>
-                    <span className="text-muted-foreground text-xs">
-                      確信度 {c.entryDecision.confidence.toFixed(2)}
-                    </span>
+            <section className="space-y-2">
+              <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
+                Decision (売買判断)
+              </h3>
+              <div className="grid gap-3 md:grid-cols-2">
+                {c.entryDecision && (
+                  <div className="rounded border border-border p-3">
+                    <div className="mb-1 flex items-center gap-2">
+                      <h4 className="font-semibold text-xs">Entry (新規)</h4>
+                      <Badge variant={decisionVariant(c.entryDecision.result)}>
+                        {c.entryDecision.result}
+                      </Badge>
+                      <span className="text-muted-foreground text-xs">
+                        確信度 {c.entryDecision.confidence.toFixed(2)}
+                      </span>
+                    </div>
+                    {c.entryDecision.reasoning && (
+                      <p className="whitespace-pre-wrap text-xs">{c.entryDecision.reasoning}</p>
+                    )}
                   </div>
-                  {c.entryDecision.reasoning && (
-                    <p className="whitespace-pre-wrap text-xs">{c.entryDecision.reasoning}</p>
-                  )}
-                </div>
-              )}
-              {c.exitDecision && (
-                <div className="rounded border border-border p-3">
-                  <div className="mb-1 flex items-center gap-2">
-                    <h4 className="font-semibold text-xs">Exit (決済)</h4>
-                    <Badge variant={decisionVariant(c.exitDecision.result)}>
-                      {c.exitDecision.result}
-                    </Badge>
-                    <span className="text-muted-foreground text-xs">
-                      確信度 {c.exitDecision.confidence.toFixed(2)}
-                    </span>
+                )}
+                {c.exitDecision && (
+                  <div className="rounded border border-border p-3">
+                    <div className="mb-1 flex items-center gap-2">
+                      <h4 className="font-semibold text-xs">Exit (決済)</h4>
+                      <Badge variant={decisionVariant(c.exitDecision.result)}>
+                        {c.exitDecision.result}
+                      </Badge>
+                      <span className="text-muted-foreground text-xs">
+                        確信度 {c.exitDecision.confidence.toFixed(2)}
+                      </span>
+                    </div>
+                    {c.exitDecision.reasoning && (
+                      <p className="whitespace-pre-wrap text-xs">{c.exitDecision.reasoning}</p>
+                    )}
                   </div>
-                  {c.exitDecision.reasoning && (
-                    <p className="whitespace-pre-wrap text-xs">{c.exitDecision.reasoning}</p>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
             </section>
           </CardContent>
         </Card>

@@ -144,6 +144,11 @@ export interface CycleDetail {
   } | null;
   coins: Array<{
     symbol: string;
+    snapshot: {
+      perplexitySummary: string | null;
+      grokSummary: string | null;
+      fetchedAt: Date;
+    } | null;
     preAnalyst: {
       summary: string;
       relevanceScore: number;
@@ -202,6 +207,11 @@ export async function getCycleDetail(cycleId: string): Promise<CycleDetail | nul
 
       return {
         symbol: coin.symbol,
+        snapshot: {
+          perplexitySummary: snap.perplexitySummary,
+          grokSummary: snap.grokSummary,
+          fetchedAt: snap.fetchedAt,
+        },
         preAnalyst: preAnalyst
           ? {
               summary: preAnalyst.summary,
