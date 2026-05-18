@@ -39,6 +39,7 @@ export async function runPreAnalyst(snapshot: Snapshot): Promise<PreAnalystResul
     schema: PreAnalystOutputSchema,
     temperature: resolved.config.temperature,
     maxOutputTokens: resolved.config.maxTokens,
+    thinkingLevel: resolved.config.thinkingLevel,
     feature: "tier1.pre-analyst",
     metadata: { symbol: snapshot.symbol },
   });

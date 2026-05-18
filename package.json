@@ -23,7 +23,11 @@
     "langfuse:register": "tsx --env-file=.env.local scripts/langfuse/register-prompt.ts",
     "langfuse:verify": "tsx --env-file=.env.local scripts/langfuse/verify-prompts.ts",
     "cycle:judgment": "tsx --env-file=.env.local scripts/cycle/judgment.ts",
-    "cycle:price-monitor": "tsx --env-file=.env.local scripts/cycle/price-monitor.ts"
+    "cycle:price-monitor": "tsx --env-file=.env.local scripts/cycle/price-monitor.ts",
+    "smoke:sentry": "tsx --env-file=.env.local scripts/smoke/sentry.ts",
+    "smoke:gmo": "tsx --env-file=.env.local scripts/smoke/gmo.ts",
+    "smoke:discord": "tsx --env-file=.env.local scripts/smoke/discord.ts",
+    "smoke:gemini": "tsx --env-file=.env.local scripts/smoke/gemini.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",
@@ -33,6 +37,7 @@
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/sdk-node": "^0.218.0",
     "@opentelemetry/sdk-trace-base": "^2.7.1",
+    "@sentry/nextjs": "^10.53.1",
     "@sentry/node": "^10.53.1",
     "@tailwindcss/postcss": "^4.3.0",
     "ai": "^6.0.184",

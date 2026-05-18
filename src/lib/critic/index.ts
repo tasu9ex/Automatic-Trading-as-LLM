@@ -46,6 +46,7 @@ export async function runCritic(input: CriticInput): Promise<CriticResult> {
       schema: CriticOutputSchema,
       temperature: resolved.config.temperature,
       maxOutputTokens: resolved.config.maxTokens,
+      thinkingLevel: resolved.config.thinkingLevel,
       feature: "critic",
     });
     return {

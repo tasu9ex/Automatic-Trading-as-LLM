@@ -13,10 +13,6 @@ const FALLBACK_CONFIGS: Record<PromptName, PromptConfig> = {
   critic: CRITIC_CONFIG,
 };
 
-/**
- * Langfuse 接続失敗時の fallback config 取得。
- * Langfuse 側で更新された場合、必ず該当する shared-prompt.config.ts も更新すること。
- */
 export function getFallbackPromptConfig(name: PromptName): PromptConfig {
   return FALLBACK_CONFIGS[name];
 }

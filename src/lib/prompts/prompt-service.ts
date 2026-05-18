@@ -1,3 +1,4 @@
+import { getPromptFromLangfuse } from "./langfuse-client";
 import { getFallbackPromptConfig } from "./prompt-fallback-configs";
 import { getFallbackPrompt } from "./prompt-fallbacks";
 import type { GetPromptOptions, PromptName, PromptResolved } from "./prompt-types";
@@ -5,25 +6,20 @@ import type { GetPromptOptions, PromptName, PromptResolved } from "./prompt-type
 /**
  * プロンプト取得の高レベル API。
  *
- * 現状: 常に fallback (コード内テンプレート) を返す。
- * 将来: Langfuse client を入れて Langfuse 優先 + 失敗時 fallback の挙動にする。
- *
- * @see langfuse-client.ts (未実装、Phase B で追加)
+ * Langfuse (production ラベル) を優先して取得。
+ * 接続失敗 / タイムアウト時はコード内テンプレート + shared-prompt.config に自動フォールバック。
  */
 export async function getPrompt(
   name: PromptName,
   vars: Record<string, unknown>,
-  _options?: GetPromptOptions,
+  options?: GetPromptOptions,
 ): Promise<PromptResolved> {
-  const compiled = getFallbackPrompt(name, vars);
-  const config = getFallbackPromptConfig(name);
+  const fromLangfuse = await getPromptFromLangfuse(name, vars, options);
+  if (fromLangfuse) return fromLangfuse;
+
   return {
-    compiled,
-    config,
-    metadata: {
-      name,
-      version: 0,
-      source: "fallback",
-    },
+    compiled: getFallbackPrompt(name, vars),
+    config: getFallbackPromptConfig(name),
+    metadata: { name, version: 0, source: "fallback" },
   };
 }

@@ -77,6 +77,7 @@ export async function runExitDecision(
     schema: ExitDecisionOutputSchema,
     temperature: resolved.config.temperature,
     maxOutputTokens: resolved.config.maxTokens,
+    thinkingLevel: resolved.config.thinkingLevel,
     feature: "decision.exit",
     metadata: { symbol: position.symbol },
   });

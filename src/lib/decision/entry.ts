@@ -30,6 +30,7 @@ export async function runEntryDecision(
     schema: EntryDecisionOutputSchema,
     temperature: resolved.config.temperature,
     maxOutputTokens: resolved.config.maxTokens,
+    thinkingLevel: resolved.config.thinkingLevel,
     feature: "decision.entry",
     metadata: { symbol },
   });

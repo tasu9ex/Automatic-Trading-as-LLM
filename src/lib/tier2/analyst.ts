@@ -60,6 +60,7 @@ export async function runAnalyst(
     schema: AnalystOutputSchema,
     temperature: resolved.config.temperature,
     maxOutputTokens: resolved.config.maxTokens,
+    thinkingLevel: resolved.config.thinkingLevel,
     feature: "tier2.analyst",
     metadata: { symbol: snapshot.symbol },
   });
