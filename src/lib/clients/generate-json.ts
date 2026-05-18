@@ -26,10 +26,17 @@ export interface GenerateJsonInput<T> {
   metadata?: Record<string, string | number | boolean>;
 }
 
+const THINKING_BUDGET: Record<ThinkingLevel, number> = {
+  minimal: 128,
+  low: 1024,
+  medium: 8192,
+  high: 24576,
+};
+
 type ProviderResult = {
   model: ReturnType<typeof anthropic> | ReturnType<typeof google>;
   service: ServiceName;
-  providerOptions: { google: { thinkingConfig: { thinkingLevel: ThinkingLevel } } } | undefined;
+  providerOptions: { google: { thinkingConfig: { thinkingBudget: number } } } | undefined;
 };
 
 function pickProvider(modelId: string, thinkingLevel?: ThinkingLevel): ProviderResult {
@@ -38,7 +45,7 @@ function pickProvider(modelId: string, thinkingLevel?: ThinkingLevel): ProviderR
   }
   if (modelId.startsWith("gemini-")) {
     const providerOptions = thinkingLevel
-      ? { google: { thinkingConfig: { thinkingLevel } } }
+      ? { google: { thinkingConfig: { thinkingBudget: THINKING_BUDGET[thinkingLevel] } } }
       : undefined;
     return { model: google(modelId), service: "google", providerOptions };
   }

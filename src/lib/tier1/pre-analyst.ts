@@ -14,7 +14,7 @@ function buildPriceSnapshotText(s: Snapshot): string {
   const recent = s.ohlcv1d.slice(-3);
   return recent
     .map((bar) => {
-      const d = new Date(bar.openTime).toISOString().slice(0, 10);
+      const d = new Date(Number(bar.openTime)).toISOString().slice(0, 10);
       return `${d}: O=${bar.open} H=${bar.high} L=${bar.low} C=${bar.close} V=${bar.volume}`;
     })
     .join("\n");

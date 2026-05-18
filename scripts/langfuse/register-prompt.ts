@@ -2,7 +2,7 @@
  * コード fallback を Langfuse に新規バージョンとして登録する。
  *
  * 既存バージョンは触らない (Langfuse は create するたびに新バージョン)。
- * ラベルは latest のみ自動付与。production への昇格は Langfuse ダッシュボードで行う。
+ * ラベルは latest + production を自動付与。追加ラベルは --label で指定可。
  *
  * Usage:
  *   pnpm langfuse:register -- --name pre-analyst
@@ -24,7 +24,7 @@ const PROMPT_NAMES: readonly PromptName[] = [
 ] as const;
 
 function parseArgs(argv: string[]) {
-  const out: { name?: string; labels: string[] } = { labels: ["latest"] };
+  const out: { name?: string; labels: string[] } = { labels: ["latest", "production"] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--name") {

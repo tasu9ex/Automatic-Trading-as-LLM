@@ -15,7 +15,7 @@ function formatBars(bars: Snapshot["ohlcv1m"], maxRows: number): string {
   const recent = bars.slice(-maxRows);
   return recent
     .map((bar) => {
-      const d = new Date(bar.openTime).toISOString();
+      const d = new Date(Number(bar.openTime)).toISOString();
       return `${d}: O=${bar.open} H=${bar.high} L=${bar.low} C=${bar.close} V=${bar.volume}`;
     })
     .join("\n");
