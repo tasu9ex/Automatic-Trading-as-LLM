@@ -1,6 +1,6 @@
 import { createLogger } from "@/lib/logging";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
-import { NodeSDK } from "@opentelemetry/sdk-node";
+import { NodeSDK, resources } from "@opentelemetry/sdk-node";
 
 const logger = createLogger("telemetry.otel-setup");
 
@@ -32,6 +32,7 @@ export function initTelemetry(): void {
   }
 
   sdk = new NodeSDK({
+    resource: resources.resourceFromAttributes({ "service.name": "automatic-trading-as-llm" }),
     spanProcessors: [
       new LangfuseSpanProcessor({
         publicKey,
