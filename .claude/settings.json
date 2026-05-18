@@ -1,5 +1,5 @@
 {
   "permissions": {
-    "allow": ["WebFetch(domain:docs.sentry.io)", "WebFetch(domain:sentry.io)"]
+    "allow": ["WebFetch(domain:docs.sentry.io)", "WebFetch(domain:sentry.io)", "WebSearch"]
   }
 }
