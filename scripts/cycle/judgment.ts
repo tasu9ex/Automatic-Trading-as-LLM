@@ -503,12 +503,9 @@ async function main() {
 
 main().catch(async (err) => {
   logger.error({ err }, "Cycle failed");
+  // captureError が Sentry 経由で Discord errors channel に転送する(beforeSend 内で notify)
+  // Sentry 未設定時は captureError 自身が Discord にフォールバックする
   captureError(err, { tags: { script: "cycle.judgment" } });
-  await notify({
-    level: "error",
-    title: "❌ Cycle CRASHED",
-    body: `\`\`\`${(err as Error)?.stack?.slice(0, 1500) ?? String(err)}\`\`\``,
-  });
   await shutdownTelemetry();
   await shutdownSentry();
   process.exit(1);

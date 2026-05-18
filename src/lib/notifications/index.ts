@@ -1,18 +1,20 @@
-import { type DiscordEmbed, sendDiscord } from "@/lib/clients/discord";
+import { type DiscordChannel, type DiscordEmbed, sendDiscord } from "@/lib/clients/discord";
 
 /**
- * 通知レベル → 色マッピング(Discord Embed)。
- * MVP は 1 チャンネル垂れ流し、色だけで重要度を示す。
+ * 通知レベル → 色 + ルーティング先 webhook。
+ * - info/success/warning   → "normal" channel (DISCORD_WEBHOOK_URL)
+ * - error/critical         → "errors" channel (DISCORD_WEBHOOK_URL_ERRORS)
+ *                            未設定なら normal にフォールバック
  */
-const COLOR_BY_LEVEL = {
-  info: 0x3498db, // blue
-  success: 0x2ecc71, // green
-  warning: 0xf39c12, // orange
-  error: 0xe74c3c, // red
-  critical: 0x8b0000, // dark red
-} as const;
+const LEVEL_META: Record<NotifyLevel, { color: number; channel: DiscordChannel }> = {
+  info: { color: 0x3498db, channel: "normal" },
+  success: { color: 0x2ecc71, channel: "normal" },
+  warning: { color: 0xf39c12, channel: "normal" },
+  error: { color: 0xe74c3c, channel: "errors" },
+  critical: { color: 0x8b0000, channel: "errors" },
+};
 
-export type NotifyLevel = keyof typeof COLOR_BY_LEVEL;
+export type NotifyLevel = "info" | "success" | "warning" | "error" | "critical";
 
 export interface NotifyInput {
   level: NotifyLevel;
@@ -23,10 +25,10 @@ export interface NotifyInput {
   fields?: Record<string, string | number>;
 }
 
-function buildEmbed(input: NotifyInput): DiscordEmbed {
+function buildEmbed(input: NotifyInput, color: number): DiscordEmbed {
   const embed: DiscordEmbed = {
     title: input.title,
-    color: COLOR_BY_LEVEL[input.level],
+    color,
     timestamp: new Date().toISOString(),
     footer: { text: `${input.level.toUpperCase()} · LLM Trading` },
   };
@@ -43,6 +45,7 @@ function buildEmbed(input: NotifyInput): DiscordEmbed {
 
 /**
  * 全通知のエントリポイント。
+ * level に応じて自動で normal/errors webhook に振り分け。
  * 失敗してもアプリは継続(best-effort)。
  *
  * Usage:
@@ -54,5 +57,6 @@ function buildEmbed(input: NotifyInput): DiscordEmbed {
  *   });
  */
 export async function notify(input: NotifyInput): Promise<void> {
-  await sendDiscord({ embeds: [buildEmbed(input)] });
+  const meta = LEVEL_META[input.level];
+  await sendDiscord({ embeds: [buildEmbed(input, meta.color)] }, meta.channel);
 }

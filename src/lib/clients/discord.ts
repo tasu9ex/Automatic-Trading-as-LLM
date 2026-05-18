@@ -21,15 +21,30 @@ interface WebhookPayload {
   embeds?: DiscordEmbed[];
 }
 
+export type DiscordChannel = "normal" | "errors";
+
+function pickWebhookUrl(channel: DiscordChannel): string | undefined {
+  if (channel === "errors") {
+    return process.env.DISCORD_WEBHOOK_URL_ERRORS ?? process.env.DISCORD_WEBHOOK_URL;
+  }
+  return process.env.DISCORD_WEBHOOK_URL;
+}
+
 /**
  * Discord Webhook 投稿。
- * webhook URL 未設定なら no-op (個人運用で通知不要時)。
- * 失敗してもアプリは継続(通知系は best-effort)。
+ *   channel="normal": DISCORD_WEBHOOK_URL (BUY/SELL/Critic/Cycle done 等)
+ *   channel="errors": DISCORD_WEBHOOK_URL_ERRORS (Sentry/CRASH/Kill Switch)
+ *                     未設定なら DISCORD_WEBHOOK_URL にフォールバック
+ *
+ * webhook URL 全未設定なら no-op。失敗してもアプリは継続。
  */
-export async function sendDiscord(payload: WebhookPayload): Promise<void> {
-  const url = process.env.DISCORD_WEBHOOK_URL;
+export async function sendDiscord(
+  payload: WebhookPayload,
+  channel: DiscordChannel = "normal",
+): Promise<void> {
+  const url = pickWebhookUrl(channel);
   if (!url) {
-    logger.debug("DISCORD_WEBHOOK_URL not set, skipping notification");
+    logger.debug({ channel }, "Discord webhook URL not set, skipping");
     return;
   }
 
@@ -41,9 +56,9 @@ export async function sendDiscord(payload: WebhookPayload): Promise<void> {
     });
     if (!res.ok) {
       const body = await res.text();
-      logger.warn({ status: res.status, body }, "Discord webhook failed");
+      logger.warn({ status: res.status, body, channel }, "Discord webhook failed");
     }
   } catch (err) {
-    logger.warn({ err }, "Discord webhook threw");
+    logger.warn({ err, channel }, "Discord webhook threw");
   }
 }

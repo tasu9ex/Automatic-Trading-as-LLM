@@ -7,7 +7,6 @@
  */
 
 import { createLogger } from "@/lib/logging";
-import { notify } from "@/lib/notifications";
 import { runPriceMonitor } from "@/lib/price-monitor";
 import { captureError, initSentry, shutdownSentry } from "@/lib/telemetry";
 
@@ -25,11 +24,6 @@ async function main() {
 main().catch(async (err) => {
   logger.error({ err }, "Price monitor failed");
   captureError(err, { tags: { script: "cycle.price-monitor" } });
-  await notify({
-    level: "error",
-    title: "❌ Price monitor CRASHED",
-    body: `\`\`\`${(err as Error)?.stack?.slice(0, 1500) ?? String(err)}\`\`\``,
-  });
   await shutdownSentry();
   process.exit(1);
 });
