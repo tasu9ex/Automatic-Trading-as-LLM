@@ -12,16 +12,19 @@ import pino, { type Logger as PinoLogger } from "pino";
 
 const isDev = process.env.NODE_ENV !== "production";
 const isVitest = process.env.VITEST === "true";
+// Next.js (Turbopack / webpack) のバンドラ内では pino-pretty の worker_thread が壊れるので無効化。
+// CLI 実行 (tsx) のときだけ pretty 出力。
+const isNextBundled = typeof process.env.NEXT_RUNTIME !== "undefined";
+const usePretty = isDev && !isVitest && !isNextBundled;
 
 const root = pino({
   level: process.env.LOG_LEVEL ?? (isDev ? "debug" : "info"),
-  transport:
-    isDev && !isVitest
-      ? {
-          target: "pino-pretty",
-          options: { colorize: true, translateTime: "HH:MM:ss.l", ignore: "pid,hostname" },
-        }
-      : undefined,
+  transport: usePretty
+    ? {
+        target: "pino-pretty",
+        options: { colorize: true, translateTime: "HH:MM:ss.l", ignore: "pid,hostname" },
+      }
+    : undefined,
 });
 
 export interface LogContext {
