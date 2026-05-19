@@ -68,6 +68,10 @@ const COIN_NAMES: Record<string, string> = {
   OP: "Optimism",
   ARB: "Arbitrum",
   SUI: "Sui",
+  LINK: "Chainlink",
+  FCR: "FC Ryukyu Coin",
+  NAC: "NOT A HOTEL COIN",
+  WILD: "Wilder World",
 };
 
 async function main() {
@@ -94,6 +98,7 @@ async function main() {
       await db
         .update(coins)
         .set({
+          name, // COIN_NAMES に新規追加された場合の反映
           minOrderSize: s.minOrderSize,
           enabled: true,
           updatedAt: new Date(),
