@@ -21,6 +21,12 @@ export const orders = pgTable(
     fee: numeric("fee", { precision: 20, scale: 4 }).notNull().default("0"),
     slippage: numeric("slippage", { precision: 20, scale: 4 }).notNull().default("0"),
     reason: text("reason"),
+    /** 実マネー時の TTL (時間)。null = no expiry。ペーパー mode は記録するが評価しない */
+    ttlHours: numeric("ttl_hours", { precision: 6, scale: 2 }),
+    /** TTL 起点での expire 時刻 (placedAt + ttl)。GMO 側に渡し、超過分は exchange 側で expire */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    /** 約定確定時刻 (filled / expired / cancelled / rejected いずれも) */
+    completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => ({

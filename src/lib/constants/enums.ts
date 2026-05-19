@@ -17,7 +17,19 @@ export type DecisionResult = (typeof DECISION_RESULTS)[number];
 export const ORDER_SIDES = ["buy", "sell"] as const;
 export type OrderSide = (typeof ORDER_SIDES)[number];
 
-export const ORDER_STATUSES = ["filled", "rejected", "clipped"] as const;
+/**
+ * Order lifecycle:
+ *   placed → filled / expired / cancelled / rejected
+ *   (clipped: Allocator / RiskClipper が削った "発注しなかった" 印、ライフサイクル外)
+ */
+export const ORDER_STATUSES = [
+  "placed",
+  "filled",
+  "expired",
+  "cancelled",
+  "rejected",
+  "clipped",
+] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 /**

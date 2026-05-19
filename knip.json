@@ -16,6 +16,7 @@
     "src/lib/drizzle/detect-transaction-control.ts",
     "src/lib/inngest/functions.ts",
     "src/lib/cycle/judgment.ts",
+    "src/lib/executor/index.ts",
     "scripts/**/*.ts"
   ],
   "project": ["src/**/*.{ts,tsx}", "scripts/**/*.ts"],

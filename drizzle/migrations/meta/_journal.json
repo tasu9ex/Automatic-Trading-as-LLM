@@ -43,6 +43,13 @@
       "when": 1779170517162,
       "tag": "0005_certain_tusk",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779176454551,
+      "tag": "0006_workable_leper_queen",
+      "breakpoints": true
     }
   ]
 }
