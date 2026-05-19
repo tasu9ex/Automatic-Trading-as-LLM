@@ -25,7 +25,7 @@ function buildPriceSnapshotText(s: Snapshot): string {
  * skip_flag は MVP 初期は記録のみ、Tier 2 は常時実行される。
  */
 export async function runPreAnalyst(snapshot: Snapshot): Promise<PreAnalystResult> {
-  const resolved = await getPrompt("pre-analyst", {
+  const resolved = await getPrompt("tier1/pre-analyst", {
     symbol: snapshot.symbol,
     perplexity_summary: snapshot.perplexitySummary,
     grok_summary: snapshot.grokSummary,

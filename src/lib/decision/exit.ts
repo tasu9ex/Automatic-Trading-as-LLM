@@ -50,7 +50,7 @@ export async function runExitDecision(
     2,
   );
 
-  const resolved = await getPrompt("exit-decision", {
+  const resolved = await getPrompt("tier3/exit", {
     symbol: position.symbol,
     position_state: JSON.stringify(
       {

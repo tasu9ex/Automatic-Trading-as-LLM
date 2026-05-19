@@ -10,6 +10,7 @@ import {
 import { callGrok } from "@/lib/clients/grok";
 import { callPerplexity } from "@/lib/clients/perplexity";
 import { createLogger } from "@/lib/logging";
+import { getPrompt } from "@/lib/prompts";
 
 const logger = createLogger("tier0.fetch-snapshot");
 
@@ -92,6 +93,12 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
   const { symbol } = input;
   const symbolJpy = `${symbol}_JPY`;
 
+  // Tier 0 プロンプト + config を Langfuse / fallback から取得
+  const [newsPrompt, sentimentPrompt] = await Promise.all([
+    getPrompt("tier0/news", { symbol }),
+    getPrompt("tier0/sentiment", { symbol }),
+  ]);
+
   const [tickerRes, ohlcv1mRes, ohlcv1dRes, orderbookRes, tradesRes, perplexityRes, grokRes] =
     await Promise.allSettled([
       getTicker(symbolJpy),
@@ -100,10 +107,16 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
       getOrderbook(symbolJpy),
       getRecentTrades(symbolJpy, 1, 100),
       callPerplexity({
-        userPrompt: `${symbol} (仮想通貨) と暗号資産市場全体の過去 24h のニュース・規制・マクロ動向・機関投資家の動き・大口取引・技術アップデートを要約してください。引用元 URL も含めてください。500字程度。`,
+        model: newsPrompt.config.model,
+        systemPrompt: newsPrompt.compiled.system,
+        userPrompt: newsPrompt.compiled.user,
+        maxTokens: newsPrompt.config.maxTokens,
       }),
       callGrok({
-        userPrompt: `$${symbol} および暗号資産全体について、過去 24 時間の X (Twitter) のセンチメント、KOL (Key Opinion Leader) の発言、ミーム的なトレンドを要約してください。500 字程度。`,
+        model: sentimentPrompt.config.model,
+        systemPrompt: sentimentPrompt.compiled.system,
+        userPrompt: sentimentPrompt.compiled.user,
+        maxTokens: sentimentPrompt.config.maxTokens,
       }),
     ]);
 

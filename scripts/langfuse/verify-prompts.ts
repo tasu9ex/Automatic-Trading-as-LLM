@@ -19,11 +19,13 @@ import type { PromptName } from "@/lib/prompts/prompt-types";
 import { LangfuseClient } from "@langfuse/client";
 
 const PROMPT_NAMES: readonly PromptName[] = [
-  "pre-analyst",
-  "analyst",
-  "entry-decision",
-  "exit-decision",
-  "critic",
+  "tier0/news",
+  "tier0/sentiment",
+  "tier1/pre-analyst",
+  "tier2/analyst",
+  "tier3/entry",
+  "tier3/exit",
+  "tier4/critic",
 ] as const;
 
 /** プレースホルダの値はそのまま {{var}} を残して比較する(両者で同じ ToText になる) */

@@ -1,6 +1,13 @@
 import type { ThinkingLevel } from "@/lib/clients/model-catalog";
 
-export type PromptName = "pre-analyst" | "analyst" | "entry-decision" | "exit-decision" | "critic";
+export type PromptName =
+  | "tier0/news"
+  | "tier0/sentiment"
+  | "tier1/pre-analyst"
+  | "tier2/analyst"
+  | "tier3/entry"
+  | "tier3/exit"
+  | "tier4/critic";
 
 export interface GetPromptOptions {
   label?: string;

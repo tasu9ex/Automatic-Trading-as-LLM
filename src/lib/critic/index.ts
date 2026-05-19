@@ -29,7 +29,7 @@ export interface CriticResult {
  * フェイルオープン: API エラー時は approve として返す(配分案そのまま採用)。
  */
 export async function runCritic(input: CriticInput): Promise<CriticResult> {
-  const resolved = await getPrompt("critic", {
+  const resolved = await getPrompt("tier4/critic", {
     allocation_proposal: JSON.stringify(input.proposal, null, 2),
     analyst_summaries: JSON.stringify(input.analystSummariesBySymbol, null, 2),
     decisions: JSON.stringify(input.decisionsBySymbol, null, 2),

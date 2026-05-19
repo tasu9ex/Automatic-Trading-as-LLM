@@ -17,7 +17,7 @@ export async function runEntryDecision(
   symbol: string,
   analyst: AnalystResult,
 ): Promise<EntryDecisionResult> {
-  const resolved = await getPrompt("entry-decision", {
+  const resolved = await getPrompt("tier3/entry", {
     symbol,
     analyst_synthesis: JSON.stringify(analyst.output.synthesis, null, 2),
     analyst_full: JSON.stringify(analyst.output, null, 2),

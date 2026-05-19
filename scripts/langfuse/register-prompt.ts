@@ -5,8 +5,8 @@
  * ラベルは latest + production を自動付与。追加ラベルは --label で指定可。
  *
  * Usage:
- *   pnpm langfuse:register -- --name pre-analyst
- *   pnpm langfuse:register -- --name analyst --label staging
+ *   pnpm langfuse:register -- --name tier1.pre-analyst
+ *   pnpm langfuse:register -- --name tier2.analyst --label staging
  *
  * 必要な env: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY (.env.local)
  */
@@ -16,11 +16,13 @@ import type { PromptName } from "@/lib/prompts/prompt-types";
 import { LangfuseClient } from "@langfuse/client";
 
 const PROMPT_NAMES: readonly PromptName[] = [
-  "pre-analyst",
-  "analyst",
-  "entry-decision",
-  "exit-decision",
-  "critic",
+  "tier0/news",
+  "tier0/sentiment",
+  "tier1/pre-analyst",
+  "tier2/analyst",
+  "tier3/entry",
+  "tier3/exit",
+  "tier4/critic",
 ] as const;
 
 function parseArgs(argv: string[]) {
@@ -38,8 +40,8 @@ function parseArgs(argv: string[]) {
 }
 
 async function loadPromptModule(name: PromptName) {
-  const slug = name; // フォルダ名は PromptName と一致
-  const mod = await import(`@/lib/prompts/prompt-fallbacks/${slug}/shared-prompt`);
+  // PromptName == フォルダパス (1:1 対応)
+  const mod = await import(`@/lib/prompts/prompt-fallbacks/${name}/shared-prompt`);
   const entries = Object.entries(mod).filter(
     ([k, v]) => typeof v === "string" && /_SYSTEM_PROMPT$|_USER_PROMPT$/.test(k),
   );

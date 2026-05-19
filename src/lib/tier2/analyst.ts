@@ -43,7 +43,7 @@ export async function runAnalyst(
       )
     : "(取得失敗)";
 
-  const resolved = await getPrompt("analyst", {
+  const resolved = await getPrompt("tier2/analyst", {
     symbol: snapshot.symbol,
     pre_analyst_summary: JSON.stringify(preAnalyst.output, null, 2),
     perplexity_summary: snapshot.perplexitySummary,

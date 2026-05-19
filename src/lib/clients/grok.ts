@@ -38,7 +38,7 @@ export async function callGrok(req: GrokRequest): Promise<GrokResponse> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: req.model ?? "grok-4",
+        model: req.model ?? "grok-4.20-0309-non-reasoning",
         messages,
         max_tokens: req.maxTokens ?? 800,
       }),

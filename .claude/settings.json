@@ -4,7 +4,11 @@
       "WebFetch(domain:docs.sentry.io)",
       "WebFetch(domain:sentry.io)",
       "WebSearch",
-      "WebFetch(domain:ai.google.dev)"
+      "WebFetch(domain:ai.google.dev)",
+      "WebFetch(domain:docs.x.ai)",
+      "WebFetch(domain:x.ai)",
+      "WebFetch(domain:www.fimaw.com)",
+      "WebFetch(domain:cloudcredits.io)"
     ]
   }
 }

@@ -181,6 +181,37 @@ export async function runJudgmentCycle(
         })
         .returning();
 
+      // 既存ポジション確認 (skip 判定で参照)
+      const openPosPre = (
+        await db
+          .select()
+          .from(positions)
+          .where(
+            and(
+              eq(positions.model, model),
+              eq(positions.coinId, coin.id),
+              eq(positions.status, "open"),
+            ),
+          )
+          .limit(1)
+      )[0];
+
+      // skip_flag が立っていて未保有なら Tier 2 以降スキップ (コスト削減)
+      // 保有中はメンテのため必ず Tier 2 + Exit を回す
+      if (preRes.output.skip_flag && !openPosPre) {
+        return {
+          coin,
+          snap,
+          analyst: null,
+          entry: null,
+          entryDecisionId: null,
+          exit: null,
+          exitDecisionId: null,
+          openPos: null,
+          skipped: true as const,
+        };
+      }
+
       const analystRes = await runAnalyst(snap, preRes);
       const [analystRow] = await db
         .insert(analystOutputs)
@@ -197,19 +228,7 @@ export async function runJudgmentCycle(
         .returning();
       if (!analystRow) throw new Error("analyst insert failed");
 
-      const openPos = (
-        await db
-          .select()
-          .from(positions)
-          .where(
-            and(
-              eq(positions.model, model),
-              eq(positions.coinId, coin.id),
-              eq(positions.status, "open"),
-            ),
-          )
-          .limit(1)
-      )[0];
+      const openPos = openPosPre;
 
       let entry: Awaited<ReturnType<typeof runEntryDecision>> | null = null;
       let exit: Awaited<ReturnType<typeof runExitDecision>> | null = null;
@@ -294,6 +313,7 @@ export async function runJudgmentCycle(
         exit,
         exitDecisionId,
         openPos,
+        skipped: false as const,
       };
     }),
   );
@@ -343,7 +363,13 @@ export async function runJudgmentCycle(
   });
 
   const analystSummariesBySymbol = Object.fromEntries(
-    results.map((r) => [r.coin.symbol, r.analyst.output.synthesis]),
+    results
+      .filter((r) => r.analyst !== null)
+      .map((r) => [
+        r.coin.symbol,
+        // biome-ignore lint/style/noNonNullAssertion: filter で確認済み
+        r.analyst!.output.synthesis,
+      ]),
   );
   const decisionsBySymbol = Object.fromEntries(
     results.map((r) => [
@@ -480,11 +506,13 @@ export async function runJudgmentCycle(
   const elapsedMs = Date.now() - startedAt;
   const exitsTriggered = results.filter((r) => r.exit?.output.decision === "close").length;
   const entriesExecuted = Object.keys(clipped.proposal).length;
+  const symbolsSkipped = results.filter((r) => r.skipped).length;
   logger.info(
     {
       cycleId,
       elapsedMs,
       symbolsProcessed: results.length,
+      symbolsSkipped,
       symbolsFailed: failures.length,
       buySignals: buySignals.length,
       exitsTriggered,
@@ -500,6 +528,7 @@ export async function runJudgmentCycle(
     title: `🔁 サイクル完了 · ${model}`,
     fields: {
       処理銘柄: `${results.length}/${enabledCoins.length}`,
+      Tier1スキップ: symbolsSkipped,
       失敗: failures.length,
       買いシグナル: buySignals.length,
       新規約定: entriesExecuted,

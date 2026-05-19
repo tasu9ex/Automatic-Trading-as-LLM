@@ -26,3 +26,8 @@ pre-push:
     build:
       glob: "*"
       run: pnpm build
+    # ローカル fallback プロンプトと Langfuse 上の production ラベルが一致しているか確認。
+    # ネットワーク + LANGFUSE_PUBLIC_KEY/SECRET_KEY 必須。
+    langfuse-verify:
+      glob: "src/lib/prompts/**"
+      run: pnpm langfuse:verify
