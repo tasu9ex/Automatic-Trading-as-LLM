@@ -1,7 +1,7 @@
 import { SYSTEM_STATES } from "@/lib/constants/enums";
 import { DEFAULT_CYCLE_INTERVAL_HOURS } from "@/lib/system-control/constants";
 import { sql } from "drizzle-orm";
-import { integer, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { integer, numeric, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 export const systemStateEnum = pgEnum("system_state_value", SYSTEM_STATES);
 
@@ -22,6 +22,10 @@ export const systemState = pgTable("system_state", {
     .default(DEFAULT_CYCLE_INTERVAL_HOURS),
   /** 次回判定サイクルを実行する予定時刻（UTC）。running 時のみ進む。 */
   nextScheduledAt: timestamp("next_scheduled_at", { withTimezone: true }),
+  /** 累計 API コスト (USD)。各サイクル完了時に Langfuse 取得値で加算 */
+  cumulativeCostUsd: numeric("cumulative_cost_usd", { precision: 12, scale: 6 })
+    .notNull()
+    .default("0"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
 });
 

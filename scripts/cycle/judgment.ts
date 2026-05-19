@@ -9,11 +9,11 @@
  */
 
 import type { SizingMethod } from "@/lib/allocator";
+import { notifyCycleCost } from "@/lib/cycle/cost-notify";
 import { runJudgmentCycle } from "@/lib/cycle/judgment";
 import { createLogger } from "@/lib/logging";
 import {
   captureError,
-  fetchCycleCost,
   initSentry,
   initTelemetry,
   shutdownSentry,
@@ -48,21 +48,9 @@ async function main() {
 
   await shutdownTelemetry();
 
-  // Langfuse ingestion 待ち (eventual consistency)
-  console.log("\n--- Langfuse cost 取得待ち (15s)...");
-  await new Promise((r) => setTimeout(r, 15_000));
-
-  const cost = await fetchCycleCost(result.cycleId);
-  if (cost) {
-    console.log(`\n=== Cycle ${result.cycleId} cost ===`);
-    console.log(`Total: $${cost.totalCostUsd.toFixed(4)} (≈¥${cost.totalCostJpy.toFixed(1)})`);
-    console.log("By model:");
-    for (const [model, stat] of Object.entries(cost.observationsByModel)) {
-      console.log(`  ${model}: ${stat.count} calls, $${stat.costUsd.toFixed(4)}`);
-    }
-  } else {
-    console.log("(cost 取得不可)");
-  }
+  // 内部で Langfuse ingestion 待ち + 取得 + 累計加算 + Discord 通知
+  console.log("\n--- Langfuse cost 取得 + Discord 通知...");
+  await notifyCycleCost(result.cycleId);
 
   await shutdownSentry();
   process.exit(0);

@@ -1,0 +1,1 @@
+ALTER TABLE "system_state" ADD COLUMN "cumulative_cost_usd" numeric(12, 6) DEFAULT '0' NOT NULL;

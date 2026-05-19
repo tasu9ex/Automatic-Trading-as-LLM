@@ -100,6 +100,14 @@ export async function preflight(input: PreflightInput): Promise<PreflightResult>
     await runPriceMonitor({ since: priceMonitorSince });
   } catch (err) {
     logger.error({ err }, "Price monitor failed (continuing cycle)");
+    await notify({
+      level: "error",
+      title: "⚠️ Price monitor 失敗 (サイクル継続)",
+      body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
+      fields: {
+        影響: "逆指値判定がスキップされた、ポジションは LLM Exit のみで判断",
+      },
+    });
   }
 
   const portfolio = (
@@ -561,6 +569,16 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
           });
         } catch (err) {
           logger.error({ err, symbol: c.coin.symbol }, "executeExit failed");
+          await notify({
+            level: "error",
+            title: `🚨 Exit 失敗 ${c.coin.symbol}`,
+            body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
+            fields: {
+              意図: "全決済",
+              参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
+              影響: "ポジション保有継続、price-monitor SL に依存",
+            },
+          });
         }
       }
     }
@@ -642,7 +660,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       level: "warning",
       title: "🛑 Critic 拒否 (VETO)",
       body: critic.output.reasoning.slice(0, 1000),
-      fields: { モデル: model, シグナル数: Object.keys(proposal).length },
+      fields: { シグナル数: Object.keys(proposal).length },
     });
     finalProposal = {};
   } else if (critic.output.decision === "modify" && critic.output.adjustments) {
@@ -659,7 +677,6 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       title: "✏️ Critic 修正 (MODIFY)",
       body: critic.output.reasoning.slice(0, 1000),
       fields: {
-        モデル: model,
         修正前: JSON.stringify(proposal).slice(0, 200),
         修正後: JSON.stringify(finalProposal).slice(0, 200),
       },
@@ -696,6 +713,16 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       });
     } catch (err) {
       logger.error({ err, symbol: c.coin.symbol }, "executeEntry failed");
+      await notify({
+        level: "error",
+        title: `🚨 Entry 失敗 ${c.coin.symbol}`,
+        body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
+        fields: {
+          配分: `¥${budget.toLocaleString()}`,
+          参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
+          影響: "この銘柄の Entry をスキップ、次サイクル待ち",
+        },
+      });
     }
   }
 
@@ -743,16 +770,55 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     "Cycle done",
   );
 
+  // 約定明細 + 現ポジ一覧を embed body (markdown) に詰める
+  const buys = ctxs
+    .filter((c) => clipped.proposal[c.coin.symbol])
+    .map((c) => `• ${c.coin.symbol}: ¥${(clipped.proposal[c.coin.symbol] ?? 0).toLocaleString()}`);
+  const closes = ctxs.filter((c) => c.exit?.result === "close").map((c) => `• ${c.coin.symbol}`);
+
+  const refreshedAfterEntries = (
+    await db.select().from(portfolios).where(eq(portfolios.model, model)).limit(1)
+  )[0];
+  const cashAfter = Number(refreshedAfterEntries?.cashJpy ?? 0);
+  const openPositions = await db
+    .select()
+    .from(positions)
+    .where(and(eq(positions.model, model), eq(positions.status, "open")));
+  const positionLines = await Promise.all(
+    openPositions.map(async (p) => {
+      const c = (await db.select().from(coins).where(eq(coins.id, p.coinId)).limit(1))[0];
+      const sym = c?.symbol ?? "?";
+      const qty = Number(p.quantity).toFixed(6);
+      const avg = Math.round(Number(p.avgEntryPrice)).toLocaleString();
+      return `• ${sym}: ${qty} @ ¥${avg}`;
+    }),
+  );
+
+  const bodyParts: string[] = [];
+  if (buys.length > 0) bodyParts.push(`**📥 新規 Entry**\n${buys.join("\n")}`);
+  if (closes.length > 0) bodyParts.push(`**📤 Close**\n${closes.join("\n")}`);
+  if (positionLines.length > 0) {
+    bodyParts.push(`**📊 保有ポジション (${positionLines.length})**\n${positionLines.join("\n")}`);
+  }
+  bodyParts.push(`**💰 現金**: ¥${Math.round(cashAfter).toLocaleString()}`);
+
+  const CRITIC_JP: Record<string, string> = {
+    approve: "承認",
+    veto: "拒否",
+    modify: "修正",
+  };
+
   await notify({
     level: "info",
-    title: `🔁 サイクル完了 · ${model}`,
+    title: "🔁 サイクル完了",
+    body: bodyParts.join("\n\n"),
     fields: {
       処理銘柄: `${symbolsProcessed}/${enabledCoins.length}`,
-      Tier1スキップ: symbolsSkipped,
+      Tier1スキップ: `${symbolsSkipped}/${enabledCoins.length}`,
       買いシグナル: buySignals.length,
       新規約定: entriesExecuted,
       決済: exitsTriggered,
-      Critic判定: critic.output.decision,
+      Critic判定: CRITIC_JP[critic.output.decision] ?? critic.output.decision,
       所要時間: `${(elapsedMs / 1000).toFixed(1)}秒`,
     },
   });
@@ -806,13 +872,54 @@ export async function recordCycleFailure(args: {
     payload: { cycleId: args.cycleId, phase: args.phase },
   });
 
+  // Phase 名から推定原因 + 推奨対応
+  const PHASE_HINTS: Record<string, { cause: string; action: string }> = {
+    "tier0-snapshots": {
+      cause: "Perplexity / Grok / GMO API 一時障害の可能性",
+      action: "API status 確認後、次サイクル待ち",
+    },
+    "tier1-pre-analyst": {
+      cause: "Anthropic 過負荷 (overloaded_error) の可能性",
+      action: "https://status.anthropic.com 確認、次サイクル待ち",
+    },
+    "tier2-analyst": {
+      cause: "Anthropic Opus 過負荷 or ITPM レート超過",
+      action: "Langfuse で詳細確認、次サイクル待ち",
+    },
+    "tier3-decisions": {
+      cause: "Anthropic Sonnet 過負荷 or ITPM レート超過",
+      action: "Langfuse で詳細確認、次サイクル待ち",
+    },
+    finalize: {
+      cause: "Critic 失敗 / DB 接続 / Executor バグ",
+      action: "ログとダッシュボード状態を確認",
+    },
+  };
+  const hint = PHASE_HINTS[args.phase] ?? {
+    cause: "不明",
+    action: "ログ確認",
+  };
+
+  // 自動 pause 閾値 (kill-switch CONSECUTIVE_FAILURES_TRIGGER と同期)
+  const AUTO_PAUSE_THRESHOLD = 3;
+  const remaining = Math.max(0, AUTO_PAUSE_THRESHOLD - newCount);
+  const nextScheduledAt = state?.nextScheduledAt
+    ? state.nextScheduledAt.toISOString().slice(0, 16).replace("T", " ")
+    : "未設定";
+
   await notify({
     level: "error",
     title: `🛑 サイクル中断 (${args.phase})`,
-    body: errMsg.slice(0, 500),
+    body: [
+      "**エラー**",
+      `\`\`\`\n${errMsg.slice(0, 800)}\n\`\`\``,
+      `**推定原因**: ${hint.cause}`,
+      `**推奨対応**: ${hint.action}`,
+    ].join("\n"),
     fields: {
       サイクル: args.cycleId.slice(0, 8),
-      連続失敗: newCount,
+      連続失敗: `${newCount}/${AUTO_PAUSE_THRESHOLD}${remaining === 0 ? " (次回 auto pause)" : ` (あと ${remaining})`}`,
+      次サイクル: nextScheduledAt,
     },
   });
 }

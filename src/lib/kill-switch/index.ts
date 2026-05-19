@@ -132,7 +132,6 @@ async function triggerKillSwitch(input: {
     title: "🚨 緊急停止 (Kill Switch) 発動",
     body: `**${reason}**\n全ポジションを強制クローズしました。システムは停止状態です。手動で再開してください。`,
     fields: {
-      モデル: model,
       元本: `¥${Math.round(initial).toLocaleString()}`,
       現在資産: `¥${Math.round(totalValue).toLocaleString()}`,
       ドローダウン: `${(ddRatio * 100).toFixed(1)}%`,
@@ -175,6 +174,6 @@ async function triggerAutoPauseDueToFailures(input: { model: string; failures: n
     level: "warning",
     title: "⏸ 連続失敗のため自動一時停止",
     body: `判定パイプラインが **${failures} サイクル連続**で全銘柄失敗しました。\nポジションは維持されています。ダッシュボードから再開してください。`,
-    fields: { モデル: model, 連続失敗: String(failures) },
+    fields: { 連続失敗: String(failures) },
   });
 }

@@ -125,7 +125,6 @@ async function placeEntryOrder(input: ExecuteEntryInput): Promise<{ orderId: str
     level: "info",
     title: `📤 発注 ${input.symbol} (buy)`,
     fields: {
-      モデル: input.model,
       投入額: `¥${input.budgetJpy.toLocaleString()}`,
       参考価格: `¥${Math.round(input.marketPrice).toLocaleString()}`,
       TTL: input.ttlHours ? `${input.ttlHours}h` : "無期限",
@@ -304,7 +303,6 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
       level: "success",
       title: `🟢 約定 (買) ${symbol}`,
       fields: {
-        モデル: model,
         数量: fill.quantity.toFixed(8),
         価格: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
         手数料: `¥${fill.feeJpy.toFixed(0)}`,
@@ -432,7 +430,6 @@ async function placeExitOrder(input: ExecuteExitInput): Promise<PlacedExitOrder 
     title: `📤 発注 ${input.symbol} (sell${isFull ? "" : ` ${Math.round(ratio * 100)}%`}${input.forced ? " 強制" : ""})`,
     body: input.reason ?? undefined,
     fields: {
-      モデル: input.model,
       数量: sellQty.toFixed(8),
       参考価格: `¥${Math.round(input.marketPrice).toLocaleString()}`,
       TTL: input.ttlHours ? `${input.ttlHours}h` : "無期限",
@@ -558,7 +555,6 @@ export async function fillExitOrder(args: FillExitArgs): Promise<void> {
       title: `${isProfit ? "🔵" : "🔴"} 約定 (売${partialLabel}) ${symbol}${args.forced ? " 強制" : ""}`,
       body: args.reason ?? undefined,
       fields: {
-        モデル: model,
         数量: sellQty.toFixed(8),
         価格: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
         損益: `${isProfit ? "+" : ""}¥${Math.round(pnlJpy).toLocaleString()}`,
@@ -594,7 +590,6 @@ export async function expireOrder(orderId: string): Promise<void> {
     level: "warning",
     title: `⏰ 期限切れ ${coin?.symbol ?? "?"} (${order.side})`,
     fields: {
-      モデル: order.model,
       参考価格: `¥${Math.round(Number(order.price)).toLocaleString()}`,
       TTL: order.ttlHours ? `${order.ttlHours}h` : "—",
     },
@@ -614,7 +609,6 @@ export async function rejectOrder(orderId: string, reason: string): Promise<void
     level: "warning",
     title: `🚫 拒否 ${coin?.symbol ?? "?"} (${order.side})`,
     body: reason,
-    fields: { モデル: order.model },
   });
 }
 
@@ -631,6 +625,5 @@ export async function cancelOrder(orderId: string, reason: string): Promise<void
     level: "info",
     title: `❌ キャンセル ${coin?.symbol ?? "?"} (${order.side})`,
     body: reason,
-    fields: { モデル: order.model },
   });
 }
