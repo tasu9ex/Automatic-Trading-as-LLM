@@ -102,6 +102,14 @@ async function triggerKillSwitch(input: {
       }
     } catch (err) {
       logger.error({ err, symbol: coin.symbol }, "Kill switch close failed");
+      await notify({
+        level: "critical",
+        title: `🚨 Kill Switch close 失敗 ${coin.symbol}`,
+        body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
+        fields: {
+          影響: "ポジション残ったまま killed 状態。手動 close 必要",
+        },
+      });
     }
   }
 

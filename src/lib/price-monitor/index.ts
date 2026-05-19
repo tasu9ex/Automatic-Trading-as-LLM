@@ -126,6 +126,11 @@ export interface PriceMonitorInput {
  * 実マネー運用時 (Phase E) は GMO 取引所側で逆指値が動くので、この処理は不要。
  */
 export async function runPriceMonitor(input: PriceMonitorInput = {}): Promise<void> {
+  // REAL mode では GMO 側で逆指値が動くため、ローカル replay は不要かつ二重決済リスク
+  if ((process.env.PAPER_TRADE ?? "true").toLowerCase() === "false") {
+    logger.info("REAL mode: price-monitor skipped (GMO handles SL)");
+    return;
+  }
   const since = input.since ?? new Date(Date.now() - 60 * 60_000);
 
   const openPositions = await db

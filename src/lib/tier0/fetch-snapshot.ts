@@ -149,18 +149,34 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
       ),
     ]);
 
-  const fetchResults: ReadonlyArray<readonly [string, PromiseSettledResult<unknown>]> = [
+  // 必須ソース: 1 つでも失敗で throw → tier0 step の withRetry が retry → 全敗で ALL-or-NOTHING
+  // (Orderbook/Trades は micro market 用のオプション、null 許容なので除外)
+  const requiredResults: ReadonlyArray<readonly [string, PromiseSettledResult<unknown>]> = [
     ["Ticker", tickerRes],
     ["1m kline", ohlcv1mRes],
     ["1d kline", ohlcv1dRes],
-    ["Orderbook", orderbookRes],
-    ["Trades", tradesRes],
     ["Perplexity", perplexityRes],
     ["Grok", grokRes],
   ];
-  for (const [label, res] of fetchResults) {
+  const failures = requiredResults.filter(([, res]) => res.status !== "fulfilled");
+  if (failures.length > 0) {
+    for (const [label, res] of failures) {
+      logger.warn(
+        { symbol, err: res.status === "rejected" ? res.reason : undefined },
+        `${label} fetch failed`,
+      );
+    }
+    const labels = failures.map(([l]) => l).join(", ");
+    throw new Error(`Tier 0 required sources failed for ${symbol}: ${labels}`);
+  }
+
+  // Orderbook / Trades は失敗しても micro = null で続行 (degraded)
+  for (const [label, res] of [
+    ["Orderbook", orderbookRes],
+    ["Trades", tradesRes],
+  ] as const) {
     if (res.status !== "fulfilled") {
-      logger.warn({ symbol, err: res.reason }, `${label} fetch failed`);
+      logger.warn({ symbol, err: res.reason }, `${label} fetch failed (degraded, micro=null)`);
     }
   }
 

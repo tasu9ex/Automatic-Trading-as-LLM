@@ -94,6 +94,11 @@ export async function executeEntry(input: ExecuteEntryInput): Promise<void> {
 
 /** Entry 発注: status=placed で orders 行を作成し "📤 発注" 通知。実マネー時はここで GMO API を呼ぶ */
 async function placeEntryOrder(input: ExecuteEntryInput): Promise<{ orderId: string }> {
+  if (!isPaperMode()) {
+    throw new Error(
+      "REAL mode placeEntryOrder not implemented (GMO Private API integration pending)",
+    );
+  }
   const coin = (await db.select().from(coins).where(eq(coins.symbol, input.symbol)).limit(1))[0];
   if (!coin) throw new Error(`Coin not found: ${input.symbol}`);
 
@@ -376,6 +381,11 @@ interface PlacedExitOrder {
 
 /** Exit 発注: status=placed で orders 行を作成し "📤 発注" 通知 */
 async function placeExitOrder(input: ExecuteExitInput): Promise<PlacedExitOrder | null> {
+  if (!isPaperMode()) {
+    throw new Error(
+      "REAL mode placeExitOrder not implemented (GMO Private API integration pending)",
+    );
+  }
   const coin = (await db.select().from(coins).where(eq(coins.symbol, input.symbol)).limit(1))[0];
   if (!coin) throw new Error(`Coin not found: ${input.symbol}`);
 
@@ -425,16 +435,20 @@ async function placeExitOrder(input: ExecuteExitInput): Promise<PlacedExitOrder 
   if (!order) throw new Error("order insert failed");
 
   const isFull = ratio >= 0.999999;
-  await notify({
-    level: "info",
-    title: `📤 発注 ${input.symbol} (sell${isFull ? "" : ` ${Math.round(ratio * 100)}%`}${input.forced ? " 強制" : ""})`,
-    body: input.reason ?? undefined,
-    fields: {
-      数量: sellQty.toFixed(8),
-      参考価格: `¥${Math.round(input.marketPrice).toLocaleString()}`,
-      TTL: input.ttlHours ? `${input.ttlHours}h` : "無期限",
-    },
-  });
+  // forced=true (price-monitor SL / kill-switch) のときは「逆指値発火」「Kill Switch」
+  // の上位通知と重複するので発注通知をスキップ。約定通知は出す
+  if (!input.forced) {
+    await notify({
+      level: "info",
+      title: `📤 発注 ${input.symbol} (sell${isFull ? "" : ` ${Math.round(ratio * 100)}%`})`,
+      body: input.reason ?? undefined,
+      fields: {
+        数量: sellQty.toFixed(8),
+        参考価格: `¥${Math.round(input.marketPrice).toLocaleString()}`,
+        TTL: input.ttlHours ? `${input.ttlHours}h` : "無期限",
+      },
+    });
+  }
 
   return {
     orderId: order.id,

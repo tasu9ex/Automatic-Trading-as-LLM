@@ -26,7 +26,13 @@ export async function notifyCycleCost(cycleId: string): Promise<void> {
 
   const cost = await fetchCycleCost(cycleId);
   if (!cost) {
-    logger.warn({ cycleId }, "Cost fetch failed, skip notification");
+    logger.warn({ cycleId }, "Cost fetch failed");
+    await notify({
+      level: "warning",
+      title: "💰 コスト取得失敗",
+      body: "Langfuse から該当サイクルの cost 取得不可。累計に加算されない。",
+      fields: { サイクル: cycleId.slice(0, 8) },
+    });
     return;
   }
 
