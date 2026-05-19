@@ -16,6 +16,10 @@ const logger = createLogger("tier0.fetch-snapshot");
 
 export interface FetchSnapshotInput {
   symbol: string; // 例: "BTC"
+  /** プロジェクト正式名称 (例: "Bitcoin")、Tier 0 検索品質向上のため */
+  name?: string;
+  /** Tier 0 の検索対象期間 (時間)。デフォルト 24h。サイクル頻度に応じて呼出側で設定。 */
+  periodHours?: number;
   /** 1d 足の取得対象年 (YYYY, デフォルト現在年) */
   klineYear?: string;
   /** 1m 足の取得対象日 (YYYYMMDD, デフォルト本日 JST) */
@@ -93,12 +97,14 @@ function currentYear(): string {
  */
 export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot> {
   const { symbol } = input;
+  const name = input.name ?? symbol; // フルネーム未指定なら symbol を fallback
+  const periodHours = input.periodHours ?? 24;
   const symbolJpy = `${symbol}_JPY`;
 
   // Tier 0 プロンプト + config を Langfuse / fallback から取得
   const [newsPrompt, sentimentPrompt] = await Promise.all([
-    getPrompt("tier0/news", { symbol }),
-    getPrompt("tier0/sentiment", { symbol }),
+    getPrompt("tier0/news", { symbol, name, period_hours: periodHours }),
+    getPrompt("tier0/sentiment", { symbol, name, period_hours: periodHours }),
   ]);
 
   const [tickerRes, ohlcv1mRes, ohlcv1dRes, orderbookRes, tradesRes, perplexityRes, grokRes] =

@@ -8,6 +8,6 @@ import type { PromptConfig } from "@/lib/prompts/prompt-types";
 export const LANGFUSE_PROMPT_CONFIG: PromptConfig = {
   ...MODEL_CATALOG["perplexity-sonar"],
   temperature: 0.2,
-  maxTokens: 800,
+  maxTokens: 1500,
   responseFormat: "text",
 };

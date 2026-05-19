@@ -14,7 +14,7 @@ const logger = createLogger("inngest.functions");
 /**
  * 1 時間ごとに判定サイクルを実行。
  *
- * cron 設定: 毎時 0 分 (UTC)
+ * cron 設定: 毎日 UTC 0:00 (= JST 朝 9:00、要件書通り)
  *
  * Inngest は失敗時に自動でリトライ (デフォルト 4 回、指数バックオフ)。
  * 我々のサイクル内部にも失敗時の連続失敗カウンタ + kill switch があるので、
@@ -23,9 +23,9 @@ const logger = createLogger("inngest.functions");
 export const judgmentCron = inngest.createFunction(
   {
     id: "judgment-cron",
-    name: "Judgment Cycle (hourly)",
+    name: "Judgment Cycle (daily JST 9:00)",
     retries: 1,
-    triggers: [{ cron: "0 * * * *" }],
+    triggers: [{ cron: "0 0 * * *" }],
   },
   async ({ step }) => {
     initTelemetry();

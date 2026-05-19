@@ -9,6 +9,6 @@ import type { PromptConfig } from "@/lib/prompts/prompt-types";
 export const LANGFUSE_PROMPT_CONFIG: PromptConfig = {
   ...MODEL_CATALOG["grok-4.3"],
   temperature: 0.3,
-  maxTokens: 800,
+  maxTokens: 1500,
   responseFormat: "text",
 };

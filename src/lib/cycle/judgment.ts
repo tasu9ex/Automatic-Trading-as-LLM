@@ -164,9 +164,16 @@ export async function runJudgmentCycle(
     };
   }
 
+  // Tier 0 の検索対象期間: 前回サイクルから経過時間 (下限 6h、上限 168h)。
+  // サイクル頻度 1h → 6h で打ち止め、1d → 24h、長く回せば実時間反映。
+  const hoursSinceLast = state?.lastCycleAt
+    ? (Date.now() - state.lastCycleAt.getTime()) / 3_600_000
+    : 24;
+  const periodHours = Math.round(Math.max(6, Math.min(168, hoursSinceLast)));
+
   const perCoin = await Promise.allSettled(
     enabledCoins.map(async (coin) => {
-      const snap = await fetchSnapshot({ symbol: coin.symbol });
+      const snap = await fetchSnapshot({ symbol: coin.symbol, name: coin.name, periodHours });
       const snapRow = await recordSnapshot(cycleId, coin.id, snap);
 
       const preRes = await runPreAnalyst(snap);
