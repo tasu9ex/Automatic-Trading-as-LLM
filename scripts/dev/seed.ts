@@ -36,8 +36,8 @@ async function main() {
     .values({
       model: "opus-confidence",
       description: "Phase 5a/5b: Claude Opus 4.7 + Confidence Weighted",
-      initialCashJpy: "250000",
-      cashJpy: "250000",
+      initialCashJpy: "500000",
+      cashJpy: "500000",
     })
     .onConflictDoNothing({ target: portfolios.model });
   console.log("✓ portfolios");
