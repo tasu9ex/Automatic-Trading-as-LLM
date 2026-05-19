@@ -9,6 +9,7 @@
  *   {{analyst_summaries}}   各銘柄の Analyst synthesis 一覧 (JSON 配列)
  *   {{decisions}}           Entry/Exit Decision 結果一覧 (JSON 配列)
  *   {{current_positions}}   現保有ポジション (JSON 配列)
+ *   {{symbol_to_name}}      symbol → プロジェクト正式名称マップ
  *   {{cash_jpy}}            現金残高
  *   {{risk_params}}         Risk Clipper の閾値 (参考表示用)
  *
@@ -57,6 +58,9 @@ export const CRITIC_USER_PROMPT = `# Allocator 配分案
 
 # 現保有ポジション
 {{current_positions}}
+
+# 銘柄シンボル → プロジェクト正式名称
+{{symbol_to_name}}
 
 # 現金残高
 ¥{{cash_jpy}}

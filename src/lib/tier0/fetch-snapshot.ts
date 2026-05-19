@@ -43,6 +43,8 @@ export interface MicroMarket {
 
 export interface Snapshot {
   symbol: string;
+  /** プロジェクト正式名称 (例: "Bitcoin")、symbol fallback あり */
+  name: string;
   fetchedAt: Date;
   perplexitySummary: string;
   perplexityCitations: string[];
@@ -159,6 +161,7 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
 
   return {
     symbol,
+    name,
     fetchedAt: new Date(),
     perplexitySummary:
       perplexityRes.status === "fulfilled" ? perplexityRes.value.content : "情報なし",

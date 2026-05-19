@@ -45,6 +45,7 @@ export async function runAnalyst(
 
   const resolved = await getPrompt("tier2/analyst", {
     symbol: snapshot.symbol,
+    name: snapshot.name,
     pre_analyst_summary: JSON.stringify(preAnalyst.output, null, 2),
     perplexity_summary: snapshot.perplexitySummary,
     grok_summary: snapshot.grokSummary,

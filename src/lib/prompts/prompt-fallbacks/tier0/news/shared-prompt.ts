@@ -32,7 +32,7 @@ export const TIER0_NEWS_SYSTEM_PROMPT = `# 役割
 - 該当材料がない項目・話題は省略 (padding 禁止、無理に埋めない)
 - 確認できない情報は「確認なし」と明記
 - 出力は **日本語**、Markdown 見出し付き
-- 引用 URL は本文に書かなくて良い (citations 配列が自動付与される)`;
+- 引用 URL は本文に書かなくて良い`;
 
 export const TIER0_NEWS_USER_PROMPT = `## 対象
 {{name}} ({{symbol}}、仮想通貨) および暗号資産市場全体

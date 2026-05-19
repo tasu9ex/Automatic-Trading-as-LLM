@@ -9,6 +9,7 @@
  *
  * 入力:
  *   {{symbol}}            銘柄シンボル
+ *   {{name}}              プロジェクト正式名称
  *   {{analyst_synthesis}} Analyst の synthesis セクション (direction, confidence, reasoning)
  *   {{analyst_full}}      Analyst の全 JSON (参照したい場合)
  *
@@ -55,7 +56,7 @@ Buy の場合は **Entry 仮説** も合わせて返してください:
 - JSON のみ返す`;
 
 export const ENTRY_DECISION_USER_PROMPT = `# 銘柄
-{{symbol}}
+{{name}} ({{symbol}})
 
 # Analyst Synthesis
 {{analyst_synthesis}}

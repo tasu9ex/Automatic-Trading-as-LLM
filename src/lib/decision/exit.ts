@@ -5,6 +5,7 @@ import type { AnalystResult } from "@/lib/tier2/analyst";
 
 export interface PositionState {
   symbol: string;
+  name: string;
   avgEntryPrice: number;
   quantity: number;
   /** 現在の保有評価額 (JPY) */
@@ -52,6 +53,7 @@ export async function runExitDecision(
 
   const resolved = await getPrompt("tier3/exit", {
     symbol: position.symbol,
+    name: position.name,
     position_state: JSON.stringify(
       {
         建値: position.avgEntryPrice,

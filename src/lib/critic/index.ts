@@ -14,6 +14,8 @@ export interface CriticInput {
   analystSummariesBySymbol: Record<string, unknown>;
   decisionsBySymbol: Record<string, unknown>;
   currentPositions: Array<{ symbol: string; qty: number; avgPrice: number }>;
+  /** symbol → プロジェクト正式名称マップ (LLM 文脈用) */
+  symbolToName: Record<string, string>;
   cashJpy: number;
   riskParams: { perCoinMaxRatio: number; killSwitchDdRatio: number };
 }
@@ -34,6 +36,7 @@ export async function runCritic(input: CriticInput): Promise<CriticResult> {
     analyst_summaries: JSON.stringify(input.analystSummariesBySymbol, null, 2),
     decisions: JSON.stringify(input.decisionsBySymbol, null, 2),
     current_positions: JSON.stringify(input.currentPositions, null, 2),
+    symbol_to_name: JSON.stringify(input.symbolToName, null, 2),
     cash_jpy: input.cashJpy,
     risk_params: JSON.stringify(input.riskParams, null, 2),
   });

@@ -6,6 +6,7 @@
  *
  * 入力:
  *   {{symbol}}            銘柄シンボル
+ *   {{name}}              プロジェクト正式名称
  *   {{analyst_synthesis}} Analyst の synthesis セクション
  *   {{analyst_full}}      Analyst の全 JSON
  *   {{position_state}}    建値・保有量・含み損益・保有期間・Entry 理由・保有中最大含み益損
@@ -62,7 +63,7 @@ Entry 時の仮説は二次情報。
 - JSON のみ返す`;
 
 export const EXIT_DECISION_USER_PROMPT = `# 銘柄
-{{symbol}}
+{{name}} ({{symbol}})
 
 # 現在のポジション状態
 {{position_state}}

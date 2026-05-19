@@ -15,10 +15,12 @@ export interface EntryDecisionResult {
  */
 export async function runEntryDecision(
   symbol: string,
+  name: string,
   analyst: AnalystResult,
 ): Promise<EntryDecisionResult> {
   const resolved = await getPrompt("tier3/entry", {
     symbol,
+    name,
     analyst_synthesis: JSON.stringify(analyst.output.synthesis, null, 2),
     analyst_full: JSON.stringify(analyst.output, null, 2),
   });

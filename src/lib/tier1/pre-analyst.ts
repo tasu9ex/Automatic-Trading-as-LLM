@@ -27,6 +27,7 @@ function buildPriceSnapshotText(s: Snapshot): string {
 export async function runPreAnalyst(snapshot: Snapshot): Promise<PreAnalystResult> {
   const resolved = await getPrompt("tier1/pre-analyst", {
     symbol: snapshot.symbol,
+    name: snapshot.name,
     perplexity_summary: snapshot.perplexitySummary,
     grok_summary: snapshot.grokSummary,
     price_snapshot: buildPriceSnapshotText(snapshot),

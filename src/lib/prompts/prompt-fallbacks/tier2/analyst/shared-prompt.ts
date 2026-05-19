@@ -6,6 +6,7 @@
  *
  * 入力:
  *   {{symbol}}             銘柄シンボル
+ *   {{name}}               プロジェクト正式名称
  *   {{pre_analyst_summary}} Tier 1 の要約・関連度スコア
  *   {{perplexity_summary}} Perplexity ニュース全文
  *   {{grok_summary}}       Grok センチメント全文
@@ -70,7 +71,7 @@ export const ANALYST_SYSTEM_PROMPT = `# 役割
 - ${"`pre_analyst_summary.skip_flag`"} が true でも分析はする(MVP 初期の検証目的)`;
 
 export const ANALYST_USER_PROMPT = `# 銘柄
-{{symbol}}
+{{name}} ({{symbol}})
 
 # Pre-Analyst 要約 (Tier 1)
 {{pre_analyst_summary}}

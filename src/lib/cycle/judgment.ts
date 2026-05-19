@@ -260,6 +260,7 @@ export async function runJudgmentCycle(
         exit = await runExitDecision(
           {
             symbol: coin.symbol,
+            name: coin.name,
             avgEntryPrice: avg,
             quantity: qty,
             marketValueJpy: mkt,
@@ -295,7 +296,7 @@ export async function runJudgmentCycle(
         exitDecisionId = row?.id ?? null;
       }
 
-      entry = await runEntryDecision(coin.symbol, analystRes);
+      entry = await runEntryDecision(coin.symbol, coin.name, analystRes);
       const [entryRow] = await db
         .insert(decisions)
         .values({
@@ -392,11 +393,14 @@ export async function runJudgmentCycle(
       avgPrice: Number(r.openPos?.avgEntryPrice ?? 0),
     }));
 
+  const symbolToName = Object.fromEntries(results.map((r) => [r.coin.symbol, r.coin.name]));
+
   const critic = await runCritic({
     proposal,
     analystSummariesBySymbol,
     decisionsBySymbol,
     currentPositions,
+    symbolToName,
     cashJpy,
     riskParams: { perCoinMaxRatio: RISK_PER_COIN_MAX_RATIO, killSwitchDdRatio: 0.5 },
   });
