@@ -28,6 +28,31 @@ interface ModelDef {
 }
 
 const MODELS: ModelDef[] = [
+  // Anthropic — catalog 名 (date サフィックスなし) でも価格マッチさせる
+  {
+    modelName: "claude-opus-4-7",
+    matchPattern: "(?i)^claude-opus-4-7(-\\d{8})?$",
+    inputPrice: 15 / 1_000_000,
+    outputPrice: 75 / 1_000_000,
+    unit: "TOKENS",
+    isLangfuseManaged: false,
+  },
+  {
+    modelName: "claude-sonnet-4-6",
+    matchPattern: "(?i)^claude-sonnet-4-6(-\\d{8})?$",
+    inputPrice: 3 / 1_000_000,
+    outputPrice: 15 / 1_000_000,
+    unit: "TOKENS",
+    isLangfuseManaged: false,
+  },
+  {
+    modelName: "claude-haiku-4-5",
+    matchPattern: "(?i)^claude-haiku-4-5(-\\d{8})?$",
+    inputPrice: 0.8 / 1_000_000,
+    outputPrice: 4 / 1_000_000,
+    unit: "TOKENS",
+    isLangfuseManaged: false,
+  },
   {
     modelName: "grok-4.3",
     matchPattern: "(?i)^grok-4\\.3$",

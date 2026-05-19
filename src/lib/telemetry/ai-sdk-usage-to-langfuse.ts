@@ -60,7 +60,9 @@ export function recordLLMCall(usage: AISdkUsage | null | undefined, opts: Attach
     "LLM call",
   );
 
-  // Langfuse span に usage + model を attach (cost は Langfuse 側で自動計算)
+  // Langfuse span に usage を attach (model 名は AI SDK が gen_ai.response.model で
+  // 報告する dated 形式 = "claude-haiku-4-5-20251001" を Langfuse pricing 認識に使うため
+  // ここで catalog 形式 "claude-haiku-4-5" を上書きしない)
   const span = trace.getActiveSpan();
   if (span) {
     const session = sessionStore.getStore();
@@ -68,7 +70,6 @@ export function recordLLMCall(usage: AISdkUsage | null | undefined, opts: Attach
       "langfuse.observation.usage_details.input": inputTokens,
       "langfuse.observation.usage_details.output": outputTokens,
       "langfuse.observation.usage_details.total": inputTokens + outputTokens,
-      "langfuse.observation.model.name": opts.modelId,
       ...(session ? { "langfuse.session.id": session.sessionId } : {}),
     });
   }
