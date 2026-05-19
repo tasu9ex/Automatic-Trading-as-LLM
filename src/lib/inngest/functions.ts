@@ -1,4 +1,4 @@
-import { runJudgmentCycle } from "@/lib/cycle/judgment";
+import { runScheduledCycleIfDue } from "@/lib/inngest/run-scheduled-cycle";
 import { createLogger } from "@/lib/logging";
 import {
   captureError,
@@ -12,31 +12,26 @@ import { inngest } from "./client";
 const logger = createLogger("inngest.functions");
 
 /**
- * 1 時間ごとに判定サイクルを実行。
- *
- * cron 設定: 毎日 UTC 0:00 (= JST 朝 9:00、要件書通り)
- *
- * Inngest は失敗時に自動でリトライ (デフォルト 4 回、指数バックオフ)。
- * 我々のサイクル内部にも失敗時の連続失敗カウンタ + kill switch があるので、
- * 過剰リトライ防止のため retries: 1 に絞る。
+ * 毎時 0 分に tick。実際の判定間隔は system_state.cycle_interval_hours と
+ * next_scheduled_at で制御（1h / 6h / 24h）。
  */
 export const judgmentCron = inngest.createFunction(
   {
     id: "judgment-cron",
-    name: "Judgment Cycle (daily JST 9:00)",
+    name: "Judgment Cycle Scheduler (hourly tick)",
     retries: 1,
-    triggers: [{ cron: "0 0 * * *" }],
+    triggers: [{ cron: "0 * * * *" }],
   },
   async ({ step }) => {
     initTelemetry();
     initSentry();
 
     try {
-      return await step.run("run-cycle", async () => {
+      return await step.run("scheduled-cycle", async () => {
         try {
-          return await runJudgmentCycle({});
+          return await runScheduledCycleIfDue();
         } catch (err) {
-          logger.error({ err }, "Judgment cycle failed");
+          logger.error({ err }, "Scheduled cycle failed");
           captureError(err, { tags: { trigger: "inngest.judgment-cron" } });
           throw err;
         }

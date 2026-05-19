@@ -15,12 +15,20 @@ import {
   systemState,
 } from "@/db/schema";
 import type { AnalystOutput } from "@/lib/schemas/llm-outputs";
+import {
+  type CycleIntervalHours,
+  DEFAULT_CYCLE_INTERVAL_HOURS,
+  isCycleIntervalHours,
+} from "@/lib/system-control/constants";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 
 const MODEL = "opus-confidence";
 
 export interface DashboardStats {
   state: string | undefined;
+  killReason: string | null;
+  cycleIntervalHours: CycleIntervalHours;
+  nextScheduledAt: Date | null;
   lastCycleAt: Date | null;
   cashJpy: number;
   initialCashJpy: number;
@@ -58,8 +66,16 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       .then((r) => Number(r[0]?.count ?? 0)),
   ]);
 
+  const intervalRaw = state?.cycleIntervalHours ?? DEFAULT_CYCLE_INTERVAL_HOURS;
+  const cycleIntervalHours = isCycleIntervalHours(intervalRaw)
+    ? intervalRaw
+    : DEFAULT_CYCLE_INTERVAL_HOURS;
+
   return {
     state: state?.state,
+    killReason: state?.killReason ?? null,
+    cycleIntervalHours,
+    nextScheduledAt: state?.nextScheduledAt ?? null,
     lastCycleAt: state?.lastCycleAt ?? null,
     cashJpy: Number(portfolio?.cashJpy ?? 0),
     initialCashJpy: Number(portfolio?.initialCashJpy ?? 0),

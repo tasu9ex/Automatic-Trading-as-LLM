@@ -1,4 +1,5 @@
 import { SYSTEM_STATES } from "@/lib/constants/enums";
+import { DEFAULT_CYCLE_INTERVAL_HOURS } from "@/lib/system-control/constants";
 import { sql } from "drizzle-orm";
 import { integer, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
@@ -15,6 +16,12 @@ export const systemState = pgTable("system_state", {
   killedAt: timestamp("killed_at", { withTimezone: true }),
   lastCycleId: uuid("last_cycle_id"),
   lastCycleAt: timestamp("last_cycle_at", { withTimezone: true }),
+  /** 判定サイクル間隔（時間）。1 / 6 / 24 のみ。 */
+  cycleIntervalHours: integer("cycle_interval_hours")
+    .notNull()
+    .default(DEFAULT_CYCLE_INTERVAL_HOURS),
+  /** 次回判定サイクルを実行する予定時刻（UTC）。running 時のみ進む。 */
+  nextScheduledAt: timestamp("next_scheduled_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
 });
 

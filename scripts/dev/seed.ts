@@ -44,7 +44,11 @@ async function main() {
 
   await db
     .insert(systemState)
-    .values({ id: "singleton", state: "stopped" })
+    .values({
+      id: "singleton",
+      state: "stopped",
+      cycleIntervalHours: 24,
+    })
     .onConflictDoNothing({ target: systemState.id });
   console.log("✓ system_state");
 

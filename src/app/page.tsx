@@ -1,3 +1,4 @@
+import { SystemControls } from "@/components/dashboard/system-controls";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getDashboardStats, getOpenPositions, getRecentCycles } from "@/lib/cycle/queries";
@@ -32,13 +33,15 @@ export default async function Home() {
     <main className="container mx-auto flex min-h-screen max-w-5xl flex-col gap-6 p-6">
       <header className="flex items-center justify-between">
         <h1 className="font-bold text-2xl">LLM Trading</h1>
-        <div className="flex items-center gap-3">
-          <span className="text-muted-foreground text-sm">{user.email}</span>
-          <Badge variant={stats.state === "running" ? "default" : "destructive"}>
-            {stats.state ?? "unknown"}
-          </Badge>
-        </div>
+        <span className="text-muted-foreground text-sm">{user.email}</span>
       </header>
+
+      <SystemControls
+        state={stats.state ?? "stopped"}
+        killReason={stats.killReason}
+        cycleIntervalHours={stats.cycleIntervalHours}
+        nextScheduledAt={stats.nextScheduledAt?.toISOString() ?? null}
+      />
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Card>

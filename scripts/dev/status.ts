@@ -50,6 +50,9 @@ async function main() {
   console.log(`\n${BOLD}━━━ Portfolio ━━━${RESET}`);
   const stateColor = stats.state === "running" ? GREEN : stats.state === "killed" ? RED : YELLOW;
   console.log(`  State           ${stateColor}${stats.state ?? "unknown"}${RESET}`);
+  console.log(`  Cycle interval  ${stats.cycleIntervalHours}h`);
+  console.log(`  Next scheduled  ${stats.nextScheduledAt ? rel(stats.nextScheduledAt) : "—"}`);
+  if (stats.killReason) console.log(`  Kill reason     ${stats.killReason}`);
   console.log(`  Last cycle      ${rel(stats.lastCycleAt)}`);
   console.log(`  Cash            ${jpy(stats.cashJpy)}`);
   console.log(`  Initial         ${jpy(stats.initialCashJpy)}`);

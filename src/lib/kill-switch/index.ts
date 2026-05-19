@@ -15,18 +15,17 @@ export interface KillSwitchCheckInput {
   model: string;
 }
 
+export type SafetyTriggerKind = "killed" | "paused";
+
 /**
- * Kill Switch 発動条件チェック:
- *   - ポートフォリオ累積 DD <= -50%
- *   - 連続失敗回数 >= 3
- *   - その他重大エラー(別経路で呼ぶ)
+ * サイクル終了後の安全チェック。
  *
- * 発動時の挙動:
- *   1. 全 open ポジションを仮想成行クローズ
- *   2. system_state.state = 'killed'
- *   3. system_events 記録
+ * - ポートフォリオ DD <= -50% → Kill Switch（全ポジション仮想成行クローズ + killed）
+ * - 連続失敗 >= 3 → 自動一時停止（ポジション維持 + paused、LLM のみ止める）
  */
-export async function checkAndTriggerKillSwitch(input: KillSwitchCheckInput): Promise<boolean> {
+export async function checkAndTriggerKillSwitch(
+  input: KillSwitchCheckInput,
+): Promise<SafetyTriggerKind | false> {
   const portfolio = (
     await db.select().from(portfolios).where(eq(portfolios.model, input.model)).limit(1)
   )[0];
@@ -42,7 +41,6 @@ export async function checkAndTriggerKillSwitch(input: KillSwitchCheckInput): Pr
     .innerJoin(coins, eq(positions.coinId, coins.id))
     .where(and(eq(positions.model, input.model), eq(positions.status, "open")));
 
-  // 現在の総資産 = cash + 評価額
   let marketValue = 0;
   for (const { position, coin } of open) {
     try {
@@ -60,22 +58,40 @@ export async function checkAndTriggerKillSwitch(input: KillSwitchCheckInput): Pr
   const failureTriggered = state && state.consecutiveFailures >= CONSECUTIVE_FAILURES_TRIGGER;
   const ddTriggered = ddRatio >= PORTFOLIO_DD_TRIGGER;
 
-  if (!ddTriggered && !failureTriggered) return false;
+  if (ddTriggered) {
+    const reason = `portfolio DD ${(ddRatio * 100).toFixed(1)}%`;
+    await triggerKillSwitch({ model: input.model, open, reason, totalValue, initial, ddRatio });
+    return "killed";
+  }
 
-  const reason = ddTriggered
-    ? `portfolio DD ${(ddRatio * 100).toFixed(1)}%`
-    : `${state?.consecutiveFailures ?? 0} consecutive failures`;
+  if (failureTriggered) {
+    const failures = state?.consecutiveFailures ?? 0;
+    await triggerAutoPauseDueToFailures({ model: input.model, failures });
+    return "paused";
+  }
 
-  logger.error({ model: input.model, totalValue, ddRatio, reason }, "Kill Switch triggered");
+  return false;
+}
 
-  // 全クローズ
+async function triggerKillSwitch(input: {
+  model: string;
+  open: { coin: typeof coins.$inferSelect }[];
+  reason: string;
+  totalValue: number;
+  initial: number;
+  ddRatio: number;
+}) {
+  const { model, open, reason, totalValue, initial, ddRatio } = input;
+
+  logger.error({ model, totalValue, ddRatio, reason }, "Kill Switch triggered");
+
   for (const { coin } of open) {
     try {
       const ticker = await getTicker(`${coin.symbol}_JPY`);
       const lastPrice = Number(ticker[0]?.last ?? 0);
       if (lastPrice > 0) {
         await executeExit({
-          model: input.model,
+          model,
           symbol: coin.symbol,
           decisionId: null,
           marketPrice: lastPrice,
@@ -104,7 +120,7 @@ export async function checkAndTriggerKillSwitch(input: KillSwitchCheckInput): Pr
     });
 
   await db.insert(systemEvents).values({
-    model: input.model,
+    model,
     kind: "kill_switch_triggered",
     severity: "critical",
     message: `Kill Switch: ${reason}`,
@@ -116,12 +132,49 @@ export async function checkAndTriggerKillSwitch(input: KillSwitchCheckInput): Pr
     title: "🚨 緊急停止 (Kill Switch) 発動",
     body: `**${reason}**\n全ポジションを強制クローズしました。システムは停止状態です。手動で再開してください。`,
     fields: {
-      モデル: input.model,
+      モデル: model,
       元本: `¥${Math.round(initial).toLocaleString()}`,
       現在資産: `¥${Math.round(totalValue).toLocaleString()}`,
       ドローダウン: `${(ddRatio * 100).toFixed(1)}%`,
     },
   });
+}
 
-  return true;
+async function triggerAutoPauseDueToFailures(input: { model: string; failures: number }) {
+  const { model, failures } = input;
+  const reason = `${failures} consecutive cycle failures`;
+
+  logger.warn({ model, failures }, "Auto-pause due to consecutive failures");
+
+  await db
+    .insert(systemState)
+    .values({
+      id: "singleton",
+      state: "paused",
+      consecutiveFailures: 0,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: systemState.id,
+      set: {
+        state: "paused",
+        consecutiveFailures: 0,
+        updatedAt: new Date(),
+      },
+    });
+
+  await db.insert(systemEvents).values({
+    model,
+    kind: "system_paused",
+    severity: "warning",
+    message: `Auto-pause: ${reason}`,
+    payload: { failures, trigger: "consecutive_failures" },
+  });
+
+  await notify({
+    level: "warning",
+    title: "⏸ 連続失敗のため自動一時停止",
+    body: `判定パイプラインが **${failures} サイクル連続**で全銘柄失敗しました。\nポジションは維持されています。ダッシュボードから再開してください。`,
+    fields: { モデル: model, 連続失敗: String(failures) },
+  });
 }
