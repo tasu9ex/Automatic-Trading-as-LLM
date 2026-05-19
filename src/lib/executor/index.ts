@@ -238,16 +238,22 @@ export interface ExecuteExitInput {
   /** 逆指値タッチによる強制決済か (true ならスリッページ 0.3% 適用) */
   forced?: boolean;
   reason?: string;
+  /**
+   * 決済比率 (0.1-1.0)。1.0 = 全決済 (デフォルト、従来通り)、<1.0 = 部分決済。
+   * 部分決済時は position を open のまま残し quantity を削減する。
+   * pending_orders は price 駆動で qty 非依存なので維持 (price-monitor 側で現 qty 計算)。
+   */
+  quantityRatio?: number;
 }
 
 /**
- * Close 仮想約定 (all-or-nothing):
+ * Close 仮想約定:
  *   1. open position 取得
- *   2. orders 登録
+ *   2. orders 登録 (sell qty = position.qty * ratio)
  *   3. trades 登録 (pnl 計算)
- *   4. positions を closed に
- *   5. 該当 pending_orders を inactive に
- *   6. portfolios.cash_jpy 加算 + realized_pnl_jpy 更新
+ *   4. ratio === 1.0: positions を closed に + pending_orders を inactive
+ *      ratio  <  1.0: positions.quantity を削減 (open 維持)、pending_orders は維持
+ *   5. portfolios.cash_jpy 加算 + realized_pnl_jpy 更新
  */
 export async function executeExit(input: ExecuteExitInput): Promise<void> {
   await db.transaction(async (tx) => {
@@ -277,16 +283,21 @@ export async function executeExit(input: ExecuteExitInput): Promise<void> {
       return;
     }
 
-    const qty = Number(position.quantity);
+    const positionQty = Number(position.quantity);
+    const rawRatio = input.quantityRatio ?? 1.0;
+    const ratio = Math.min(1.0, Math.max(0, rawRatio));
+    const sellQty = positionQty * ratio;
+    const isFullClose = ratio >= 0.999999; // 浮動小数誤差吸収
+
     const fill = calculateFill({
       side: "sell",
       marketPrice: input.marketPrice,
-      quoteAmountJpy: qty * input.marketPrice,
+      quoteAmountJpy: sellQty * input.marketPrice,
       takerFeeRate: input.takerFeeRate,
       slippageRate: input.forced ? 0.003 : 0,
     });
 
-    const pnlJpy = (fill.executedPrice - Number(position.avgEntryPrice)) * qty - fill.feeJpy;
+    const pnlJpy = (fill.executedPrice - Number(position.avgEntryPrice)) * sellQty - fill.feeJpy;
 
     const [order] = await tx
       .insert(orders)
@@ -296,8 +307,8 @@ export async function executeExit(input: ExecuteExitInput): Promise<void> {
         model: input.model,
         side: "sell",
         status: "filled",
-        sizeJpy: (qty * fill.executedPrice).toFixed(4),
-        quantity: qty.toFixed(10),
+        sizeJpy: (sellQty * fill.executedPrice).toFixed(4),
+        quantity: sellQty.toFixed(10),
         price: fill.executedPrice.toFixed(4),
         fee: fill.feeJpy.toFixed(4),
         slippage: fill.slippageJpy.toFixed(4),
@@ -312,27 +323,42 @@ export async function executeExit(input: ExecuteExitInput): Promise<void> {
       coinId: coin.id,
       model: input.model,
       side: "sell",
-      quantity: qty.toFixed(10),
+      quantity: sellQty.toFixed(10),
       price: fill.executedPrice.toFixed(4),
       fee: fill.feeJpy.toFixed(4),
       pnlJpy: pnlJpy.toFixed(4),
       executedAt: new Date(),
     });
 
-    await tx
-      .update(positions)
-      .set({
-        status: "closed",
-        closedAt: new Date(),
-        realizedPnlJpy: (Number(position.realizedPnlJpy) + pnlJpy).toFixed(4),
-        updatedAt: new Date(),
-      })
-      .where(eq(positions.id, position.id));
+    if (isFullClose) {
+      await tx
+        .update(positions)
+        .set({
+          status: "closed",
+          closedAt: new Date(),
+          realizedPnlJpy: (Number(position.realizedPnlJpy) + pnlJpy).toFixed(4),
+          updatedAt: new Date(),
+        })
+        .where(eq(positions.id, position.id));
 
-    await tx
-      .update(pendingOrders)
-      .set({ active: false, updatedAt: new Date() })
-      .where(and(eq(pendingOrders.positionId, position.id), eq(pendingOrders.active, true)));
+      await tx
+        .update(pendingOrders)
+        .set({ active: false, updatedAt: new Date() })
+        .where(and(eq(pendingOrders.positionId, position.id), eq(pendingOrders.active, true)));
+    } else {
+      // 部分決済: position の qty を削減し open のまま維持。
+      // 平均建値は変更しない (残量の建値は変わらない)。
+      // pending_orders は qty 非依存 (price 駆動) なので維持。
+      const remainingQty = positionQty - sellQty;
+      await tx
+        .update(positions)
+        .set({
+          quantity: remainingQty.toFixed(10),
+          realizedPnlJpy: (Number(position.realizedPnlJpy) + pnlJpy).toFixed(4),
+          updatedAt: new Date(),
+        })
+        .where(eq(positions.id, position.id));
+    }
 
     const newCash = Number(portfolio.cashJpy) + fill.netCashJpy;
     await tx
@@ -348,19 +374,21 @@ export async function executeExit(input: ExecuteExitInput): Promise<void> {
         pnlJpy,
         forced: input.forced,
         reason: input.reason,
+        ratio,
         newCash,
       },
-      "executeExit done",
+      isFullClose ? "executeExit done (full)" : "executeExit done (partial)",
     );
 
     const isProfit = pnlJpy >= 0;
+    const partialLabel = isFullClose ? "" : ` (${Math.round(ratio * 100)}%)`;
     await notify({
       level: input.forced ? "warning" : isProfit ? "success" : "info",
-      title: `${isProfit ? "🔵" : "🔴"} 売り ${input.symbol}${input.forced ? " (強制)" : ""}`,
+      title: `${isProfit ? "🔵" : "🔴"} 売り${partialLabel} ${input.symbol}${input.forced ? " (強制)" : ""}`,
       body: input.reason ?? undefined,
       fields: {
         モデル: input.model,
-        数量: qty.toFixed(8),
+        数量: sellQty.toFixed(8),
         価格: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
         損益: `${isProfit ? "+" : ""}¥${Math.round(pnlJpy).toLocaleString()}`,
         手数料: `¥${fill.feeJpy.toFixed(0)}`,

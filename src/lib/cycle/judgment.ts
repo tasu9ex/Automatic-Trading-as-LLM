@@ -343,6 +343,7 @@ export async function runJudgmentCycle(
             decisionId: r.exitDecisionId,
             marketPrice: lastPrice,
             takerFeeRate: Number(r.coin.takerFeeRate),
+            quantityRatio: r.exit.output.close_ratio,
             reason: "llm decision",
           });
         } catch (err) {

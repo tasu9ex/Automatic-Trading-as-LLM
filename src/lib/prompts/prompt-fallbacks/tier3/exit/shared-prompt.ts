@@ -13,9 +13,10 @@
  *
  * 出力 (JSON):
  *   {
- *     "decision":   "hold" | "close",
- *     "confidence": 0.0-1.0,
- *     "reasoning":  "150字以内"
+ *     "decision":    "hold" | "close",
+ *     "confidence":  0.0-1.0,
+ *     "reasoning":   "判断根拠 (padding 禁止、必要な分だけ)",
+ *     "close_ratio": 0.1-1.0   // close 時の決済比率、1.0=全決済、<1.0=部分決済 (hold 時は無視)
  *   }
  */
 
@@ -24,7 +25,16 @@ export const EXIT_DECISION_SYSTEM_PROMPT = `# 役割
 保有銘柄を Hold / Close を判定します。
 
 # タスク
-Hold / Close の二択で判定してください。部分決済は不可、Close は全決済です。
+Hold / Close の二択で判定してください。Close の場合は **close_ratio** で決済比率も指定します。
+
+# close_ratio (close 時のみ)
+- **1.0** = 全決済 (デフォルト想定)
+- **<1.0** = 部分決済 (例: 0.5 = 半分決済、残りは継続保有)
+- 使いどころ:
+  - 段階利確: シナリオは生きてるが含み益が大きい → 一部利確 (0.3-0.5)
+  - リスク縮小: 確信が弱まったが完全否定でない → 一部損切り (0.3-0.5)
+  - 全否定: シナリオ崩壊 / 強い悪材料 → 全決済 (1.0)
+- hold の場合は 1.0 を入れて OK (無視される)
 
 # 評価軸
 - **close**: 以下のいずれかが該当する時
@@ -46,20 +56,20 @@ Hold / Close の二択で判定してください。部分決済は不可、Clos
 最終判断は **現在の市場状況と Analyst の見解** をフレッシュに評価して行う。
 Entry 時の仮説は二次情報。
 
-# 注意
-- **コードが個別緊急 SL (-25% Stop-Limit / -35% Stop-Market / -50% trailing) と
-  Kill Switch (-50%) を別途実行**します。あなたは「異常事態」ではなく
-  「通常運用の判断」を担当してください
-- 通常の損切り(-5〜-20%程度)はあなたが判断する領域です
-- 利確タイミング(+X% で逃げる)もあなたの判断
+# 役割分担
+- **異常損失 (大幅 DD・トレーリング失効) と Kill Switch はコード側が別途強制執行**します
+- あなたは「通常運用範囲の損切り / 利確」を担当します
+- 数値閾値はコード側で管理しているのでここでは指定しません
 
 # confidence について
-- ここで返す confidence は「close 判断の確からしさ」(0-1)
-- hold の場合は「hold 判断の確からしさ」を返す
-- 同モデル内の相対値として扱われる
+- 「close 判断の確からしさ」(hold の場合は「hold 判断の確からしさ」) を 0-1 で
+- 同モデル内の相対値として扱う
 
-# 制約
-- reasoning は 150字以内、何を重視したかを明示
+# reasoning の書き方
+- 何を重視したかを凝縮 (padding 禁止、必要な分だけ)
+- 一般論・憶測の埋め草は書かない
+
+# その他制約
 - JSON のみ返す`;
 
 export const EXIT_DECISION_USER_PROMPT = `# 銘柄
@@ -82,6 +92,7 @@ export const EXIT_DECISION_USER_PROMPT = `# 銘柄
 {
   "decision": "hold",
   "confidence": 0.5,
-  "reasoning": ""
+  "reasoning": "",
+  "close_ratio": 1.0
 }
 \`\`\``;
