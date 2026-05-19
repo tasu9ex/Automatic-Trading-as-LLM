@@ -131,26 +131,19 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
       }),
     ]);
 
-  if (tickerRes.status !== "fulfilled") {
-    logger.warn({ symbol, err: tickerRes.reason }, "Ticker fetch failed");
-  }
-  if (ohlcv1mRes.status !== "fulfilled") {
-    logger.warn({ symbol, err: ohlcv1mRes.reason }, "1m kline fetch failed");
-  }
-  if (ohlcv1dRes.status !== "fulfilled") {
-    logger.warn({ symbol, err: ohlcv1dRes.reason }, "1d kline fetch failed");
-  }
-  if (orderbookRes.status !== "fulfilled") {
-    logger.warn({ symbol, err: orderbookRes.reason }, "Orderbook fetch failed");
-  }
-  if (tradesRes.status !== "fulfilled") {
-    logger.warn({ symbol, err: tradesRes.reason }, "Trades fetch failed");
-  }
-  if (perplexityRes.status !== "fulfilled") {
-    logger.warn({ symbol, err: perplexityRes.reason }, "Perplexity fetch failed");
-  }
-  if (grokRes.status !== "fulfilled") {
-    logger.warn({ symbol, err: grokRes.reason }, "Grok fetch failed");
+  const fetchResults: ReadonlyArray<readonly [string, PromiseSettledResult<unknown>]> = [
+    ["Ticker", tickerRes],
+    ["1m kline", ohlcv1mRes],
+    ["1d kline", ohlcv1dRes],
+    ["Orderbook", orderbookRes],
+    ["Trades", tradesRes],
+    ["Perplexity", perplexityRes],
+    ["Grok", grokRes],
+  ];
+  for (const [label, res] of fetchResults) {
+    if (res.status !== "fulfilled") {
+      logger.warn({ symbol, err: res.reason }, `${label} fetch failed`);
+    }
   }
 
   const ticker = tickerRes.status === "fulfilled" ? tickerRes.value[0] : undefined;
