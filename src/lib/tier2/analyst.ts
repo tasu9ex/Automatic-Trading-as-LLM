@@ -49,7 +49,7 @@ export async function runAnalyst(
     pre_analyst_summary: JSON.stringify(preAnalyst.output, null, 2),
     perplexity_summary: snapshot.perplexitySummary,
     grok_summary: snapshot.grokSummary,
-    ohlcv_1h_brief: formatBars(snapshot.ohlcv1m, 60),
+    ohlcv_1m_brief: formatBars(snapshot.ohlcv1m, 60),
     ohlcv_1d_brief: formatBars(snapshot.ohlcv1d, 30),
     micro_market: microMarket,
   });
