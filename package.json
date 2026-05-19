@@ -21,6 +21,7 @@
     "db:sync-coins": "tsx --env-file=.env.local scripts/dev/sync-coins.ts",
     "db:check": "tsx scripts/db/check-migration-order.ts",
     "langfuse:register": "tsx --env-file=.env.local scripts/langfuse/register-prompt.ts",
+    "langfuse:register-models": "tsx --env-file=.env.local scripts/langfuse/register-models.ts",
     "langfuse:verify": "tsx --env-file=.env.local scripts/langfuse/verify-prompts.ts",
     "cycle:judgment": "tsx --env-file=.env.local scripts/cycle/judgment.ts",
     "smoke:sentry": "tsx --env-file=.env.local scripts/smoke/sentry.ts",

@@ -11,6 +11,7 @@ import { callGrok } from "@/lib/clients/grok";
 import { callPerplexity } from "@/lib/clients/perplexity";
 import { createLogger } from "@/lib/logging";
 import { getPrompt } from "@/lib/prompts";
+import { recordLLMCall } from "@/lib/telemetry";
 
 const logger = createLogger("tier0.fetch-snapshot");
 
@@ -130,6 +131,22 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
         useTools: true,
       }),
     ]);
+
+  // Tier 0 LLM コスト記録 (AI SDK 経由ではないため手動で recordLLMCall)
+  if (perplexityRes.status === "fulfilled") {
+    recordLLMCall(perplexityRes.value.usage, {
+      modelId: newsPrompt.config.model,
+      feature: "tier0.news",
+      extraMetadata: { symbol },
+    });
+  }
+  if (grokRes.status === "fulfilled") {
+    recordLLMCall(grokRes.value.usage, {
+      modelId: sentimentPrompt.config.model,
+      feature: "tier0.sentiment",
+      extraMetadata: { symbol },
+    });
+  }
 
   const fetchResults: ReadonlyArray<readonly [string, PromiseSettledResult<unknown>]> = [
     ["Ticker", tickerRes],

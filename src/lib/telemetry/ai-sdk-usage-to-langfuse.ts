@@ -1,6 +1,5 @@
 import { createLogger } from "@/lib/logging";
 import { trace } from "@opentelemetry/api";
-import { type LLMUsage, calculateCost } from "./cost-tracking";
 
 const logger = createLogger("telemetry.ai-sdk-usage");
 
@@ -12,7 +11,7 @@ export interface AISdkUsage {
 }
 
 export interface AttachOptions {
-  /** モデル ID (PRICING に登録済みのもの) */
+  /** モデル ID (Langfuse 側で pricing 解決される) */
   modelId: string;
   /** 機能名 (例: "tier2.analyst", "critic") */
   feature: string;
@@ -21,10 +20,10 @@ export interface AttachOptions {
 }
 
 /**
- * AI SDK の usage を構造化ログに出力。
- * Phase B で Langfuse client / OTel が入ったらここから span attribute も振る。
+ * AI SDK / Tier 0 クライアントの usage を構造化ログ + Langfuse span に記録。
  *
- * 当面はログだけだが、シグネチャを安定させて呼び出し側を将来書き換えなくて済むようにする。
+ * cost 計算は Langfuse 側に一元化 (Settings → Models で登録した単価から自動算出)。
+ * ローカルでは tokens + model のみログ出力 (CLI での即時 cost 表示はなし)。
  */
 export function recordLLMCall(usage: AISdkUsage | null | undefined, opts: AttachOptions): void {
   if (!usage) {
@@ -32,35 +31,27 @@ export function recordLLMCall(usage: AISdkUsage | null | undefined, opts: Attach
     return;
   }
 
-  const normalized: LLMUsage = {
-    inputTokens: usage.inputTokens ?? 0,
-    outputTokens: usage.outputTokens ?? 0,
-  };
-
-  const cost = calculateCost(opts.modelId, normalized);
+  const inputTokens = usage.inputTokens ?? 0;
+  const outputTokens = usage.outputTokens ?? 0;
 
   logger.info(
     {
       feature: opts.feature,
       modelId: opts.modelId,
-      inputTokens: normalized.inputTokens,
-      outputTokens: normalized.outputTokens,
-      totalUsd: cost?.totalUsd,
-      totalJpy: cost?.totalJpy,
+      inputTokens,
+      outputTokens,
       ...opts.extraMetadata,
     },
     "LLM call",
   );
 
-  // Langfuse span に cost / usage を attach (現在の active span = AI SDK が生成した generation span)
+  // Langfuse span に usage + model を attach (cost は Langfuse 側で自動計算)
   const span = trace.getActiveSpan();
   if (span) {
     span.setAttributes({
-      "langfuse.observation.usage_details.input": normalized.inputTokens,
-      "langfuse.observation.usage_details.output": normalized.outputTokens,
-      "langfuse.observation.usage_details.total": normalized.inputTokens + normalized.outputTokens,
-      "langfuse.observation.cost_details.total_usd": cost?.totalUsd ?? 0,
-      "langfuse.observation.cost_details.total_jpy": cost?.totalJpy ?? 0,
+      "langfuse.observation.usage_details.input": inputTokens,
+      "langfuse.observation.usage_details.output": outputTokens,
+      "langfuse.observation.usage_details.total": inputTokens + outputTokens,
       "langfuse.observation.model.name": opts.modelId,
     });
   }
