@@ -1,7 +1,22 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createLogger } from "@/lib/logging";
-import { trace } from "@opentelemetry/api";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
 
 const logger = createLogger("telemetry.ai-sdk-usage");
+
+/**
+ * サイクル単位のメタデータ伝播 (recordLLMCall が Langfuse span に付与する用)。
+ * runJudgmentCycle 開始時に setSessionId 経由でセット。
+ */
+const sessionStore = new AsyncLocalStorage<{ sessionId: string }>();
+
+export function runWithSession<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+  return sessionStore.run({ sessionId }, fn);
+}
+
+export function getCurrentSessionId(): string | undefined {
+  return sessionStore.getStore()?.sessionId;
+}
 
 /** Vercel AI SDK の usage の shape (バージョン差を吸収) */
 export interface AISdkUsage {
@@ -48,11 +63,69 @@ export function recordLLMCall(usage: AISdkUsage | null | undefined, opts: Attach
   // Langfuse span に usage + model を attach (cost は Langfuse 側で自動計算)
   const span = trace.getActiveSpan();
   if (span) {
+    const session = sessionStore.getStore();
     span.setAttributes({
       "langfuse.observation.usage_details.input": inputTokens,
       "langfuse.observation.usage_details.output": outputTokens,
       "langfuse.observation.usage_details.total": inputTokens + outputTokens,
       "langfuse.observation.model.name": opts.modelId,
+      ...(session ? { "langfuse.session.id": session.sessionId } : {}),
     });
   }
+}
+
+/**
+ * AI SDK 経由でない呼び出し (Tier 0 の Perplexity / Grok 等) を Langfuse trace に乗せる。
+ *
+ * AI SDK は experimental_telemetry で span を自動生成するが、raw fetch クライアントは
+ * span を作らない。ここで明示的に generation span を作り、Langfuse 側で cost 集計可能にする。
+ */
+export async function withGenerationSpan<T>(
+  opts: AttachOptions,
+  fn: () => Promise<{ result: T; usage: AISdkUsage | null | undefined }>,
+): Promise<T> {
+  const tracer = trace.getTracer("tier0.manual");
+  const session = sessionStore.getStore();
+  return tracer.startActiveSpan(opts.feature, async (span) => {
+    // gen_ai.* attribute を付けると LangfuseSpanProcessor が export する (isGenAISpan 判定)
+    span.setAttributes({
+      "gen_ai.system": opts.modelId,
+      "gen_ai.request.model": opts.modelId,
+      "langfuse.observation.type": "generation",
+      "langfuse.observation.model.name": opts.modelId,
+      "langfuse.trace.name": opts.feature,
+      ...(session ? { "langfuse.session.id": session.sessionId } : {}),
+    });
+    try {
+      const { result, usage } = await fn();
+      const inputTokens = usage?.inputTokens ?? 0;
+      const outputTokens = usage?.outputTokens ?? 0;
+      span.setAttributes({
+        // OTel semconv (Langfuse はここから usage を読む)
+        "gen_ai.usage.input_tokens": inputTokens,
+        "gen_ai.usage.output_tokens": outputTokens,
+        // Langfuse 独自 (補完)
+        "langfuse.observation.usage_details.input": inputTokens,
+        "langfuse.observation.usage_details.output": outputTokens,
+        "langfuse.observation.usage_details.total": inputTokens + outputTokens,
+      });
+      logger.info(
+        {
+          feature: opts.feature,
+          modelId: opts.modelId,
+          inputTokens,
+          outputTokens,
+          ...opts.extraMetadata,
+        },
+        "LLM call",
+      );
+      return result;
+    } catch (err) {
+      span.setStatus({ code: SpanStatusCode.ERROR });
+      span.recordException(err as Error);
+      throw err;
+    } finally {
+      span.end();
+    }
+  });
 }

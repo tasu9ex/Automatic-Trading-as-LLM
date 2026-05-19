@@ -11,7 +11,7 @@ import { callGrok } from "@/lib/clients/grok";
 import { callPerplexity } from "@/lib/clients/perplexity";
 import { createLogger } from "@/lib/logging";
 import { getPrompt } from "@/lib/prompts";
-import { recordLLMCall } from "@/lib/telemetry";
+import { withGenerationSpan } from "@/lib/telemetry";
 
 const logger = createLogger("tier0.fetch-snapshot");
 
@@ -117,36 +117,37 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
       getKlines(symbolJpy, "1day", input.klineYear ?? currentYear()),
       getOrderbook(symbolJpy),
       getRecentTrades(symbolJpy, 1, 100),
-      callPerplexity({
-        model: newsPrompt.config.model,
-        systemPrompt: newsPrompt.compiled.system,
-        userPrompt: newsPrompt.compiled.user,
-        maxTokens: newsPrompt.config.maxTokens,
-      }),
-      callGrok({
-        model: sentimentPrompt.config.model,
-        systemPrompt: sentimentPrompt.compiled.system,
-        userPrompt: sentimentPrompt.compiled.user,
-        maxTokens: sentimentPrompt.config.maxTokens,
-        useTools: true,
-      }),
+      // Tier 0 は AI SDK 経由ではないため、Langfuse cost 集計のため明示的に generation span を作る
+      withGenerationSpan(
+        { modelId: newsPrompt.config.model, feature: "tier0.news", extraMetadata: { symbol } },
+        async () => {
+          const r = await callPerplexity({
+            model: newsPrompt.config.model,
+            systemPrompt: newsPrompt.compiled.system,
+            userPrompt: newsPrompt.compiled.user,
+            maxTokens: newsPrompt.config.maxTokens,
+          });
+          return { result: r, usage: r.usage };
+        },
+      ),
+      withGenerationSpan(
+        {
+          modelId: sentimentPrompt.config.model,
+          feature: "tier0.sentiment",
+          extraMetadata: { symbol },
+        },
+        async () => {
+          const r = await callGrok({
+            model: sentimentPrompt.config.model,
+            systemPrompt: sentimentPrompt.compiled.system,
+            userPrompt: sentimentPrompt.compiled.user,
+            maxTokens: sentimentPrompt.config.maxTokens,
+            useTools: true,
+          });
+          return { result: r, usage: r.usage };
+        },
+      ),
     ]);
-
-  // Tier 0 LLM コスト記録 (AI SDK 経由ではないため手動で recordLLMCall)
-  if (perplexityRes.status === "fulfilled") {
-    recordLLMCall(perplexityRes.value.usage, {
-      modelId: newsPrompt.config.model,
-      feature: "tier0.news",
-      extraMetadata: { symbol },
-    });
-  }
-  if (grokRes.status === "fulfilled") {
-    recordLLMCall(grokRes.value.usage, {
-      modelId: sentimentPrompt.config.model,
-      feature: "tier0.sentiment",
-      extraMetadata: { symbol },
-    });
-  }
 
   const fetchResults: ReadonlyArray<readonly [string, PromiseSettledResult<unknown>]> = [
     ["Ticker", tickerRes],

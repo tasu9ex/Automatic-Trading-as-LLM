@@ -13,6 +13,7 @@ import { runJudgmentCycle } from "@/lib/cycle/judgment";
 import { createLogger } from "@/lib/logging";
 import {
   captureError,
+  fetchCycleCost,
   initSentry,
   initTelemetry,
   shutdownSentry,
@@ -43,9 +44,26 @@ async function main() {
   initSentry();
 
   const args = parseArgs(process.argv.slice(2));
-  await runJudgmentCycle(args);
+  const result = await runJudgmentCycle(args);
 
   await shutdownTelemetry();
+
+  // Langfuse ingestion 待ち (eventual consistency)
+  console.log("\n--- Langfuse cost 取得待ち (15s)...");
+  await new Promise((r) => setTimeout(r, 15_000));
+
+  const cost = await fetchCycleCost(result.cycleId);
+  if (cost) {
+    console.log(`\n=== Cycle ${result.cycleId} cost ===`);
+    console.log(`Total: $${cost.totalCostUsd.toFixed(4)} (≈¥${cost.totalCostJpy.toFixed(1)})`);
+    console.log("By model:");
+    for (const [model, stat] of Object.entries(cost.observationsByModel)) {
+      console.log(`  ${model}: ${stat.count} calls, $${stat.costUsd.toFixed(4)}`);
+    }
+  } else {
+    console.log("(cost 取得不可)");
+  }
+
   await shutdownSentry();
   process.exit(0);
 }

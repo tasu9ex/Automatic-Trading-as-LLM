@@ -3,13 +3,13 @@
  *
  * 流れ:
  *   1. GMO 取引所メンテチェック
- *   2. Kill switch チェック (killed なら早期 return)
+ *   2. 稼働チェック (running 以外なら早期 return)
  *   3. Price-monitor: 前回サイクル以降の 1m バーで逆指値タッチ判定
  *   4. 各銘柄並列: Tier 0 → Tier 1 → Tier 2 → Entry/Exit Decision
  *   5. Allocator → Critic → Risk Clipper
  *   6. Executor で仮想約定 (Exit 優先 → Entry)
  *   7. system_state.last_cycle_* 更新、連続失敗カウンタリセット
- *   8. Kill switch 再チェック
+ *   8. 安全チェック (DD → Kill Switch / 連続失敗 → 自動 paused)
  */
 
 import { randomUUID } from "node:crypto";
@@ -37,6 +37,7 @@ import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { runPriceMonitor } from "@/lib/price-monitor";
 import { applyRiskClipper } from "@/lib/risk/clipper";
+import { runWithSession } from "@/lib/telemetry";
 import { type Snapshot, fetchSnapshot } from "@/lib/tier0/fetch-snapshot";
 import { runPreAnalyst } from "@/lib/tier1/pre-analyst";
 import { runAnalyst } from "@/lib/tier2/analyst";
@@ -55,7 +56,7 @@ export interface JudgmentCycleInput {
 
 export interface JudgmentCycleResult {
   cycleId: string;
-  skipped?: "exchange_closed" | "killed" | "no_coins";
+  skipped?: "exchange_closed" | "not_running" | "no_coins";
   elapsedMs: number;
   symbolsProcessed: number;
   symbolsFailed: number;
@@ -87,9 +88,18 @@ async function recordSnapshot(cycleId: string, coinId: string, snap: Snapshot) {
 export async function runJudgmentCycle(
   input: JudgmentCycleInput = {},
 ): Promise<JudgmentCycleResult> {
+  const cycleId = randomUUID();
+  // AsyncLocalStorage で cycleId を propagate、recordLLMCall が各 LLM span に
+  // langfuse.session.id として付与 → Langfuse 側で session 単位の集計が可能
+  return runWithSession(cycleId, () => runJudgmentCycleInner(cycleId, input));
+}
+
+async function runJudgmentCycleInner(
+  cycleId: string,
+  input: JudgmentCycleInput,
+): Promise<JudgmentCycleResult> {
   const model = input.model ?? "opus-confidence";
   const method = input.method ?? "confidence";
-  const cycleId = randomUUID();
   const startedAt = Date.now();
 
   logger.info({ cycleId, model, method }, "Cycle started");
@@ -121,11 +131,11 @@ export async function runJudgmentCycle(
   const state = (
     await db.select().from(systemState).where(eq(systemState.id, "singleton")).limit(1)
   )[0];
-  if (state?.state === "killed") {
-    logger.error("System is killed, skipping cycle");
+  if (state?.state !== "running") {
+    logger.info({ state: state?.state }, "System not running, skipping cycle");
     return {
       cycleId,
-      skipped: "killed",
+      skipped: "not_running",
       elapsedMs: Date.now() - startedAt,
       symbolsProcessed: 0,
       symbolsFailed: 0,
@@ -505,7 +515,6 @@ export async function runJudgmentCycle(
     .onConflictDoUpdate({
       target: systemState.id,
       set: {
-        state: "running",
         consecutiveFailures: newConsecutiveFailures,
         lastCycleId: cycleId,
         lastCycleAt: new Date(),

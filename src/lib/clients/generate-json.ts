@@ -3,7 +3,7 @@ import { google } from "@/lib/clients/google";
 import type { ThinkingLevel } from "@/lib/clients/model-catalog";
 import { createLogger } from "@/lib/logging";
 import { type ServiceName, runWith } from "@/lib/rate-limit";
-import { recordLLMCall } from "@/lib/telemetry";
+import { getCurrentSessionId, recordLLMCall } from "@/lib/telemetry";
 import { generateObject } from "ai";
 import type { z } from "zod";
 
@@ -72,12 +72,17 @@ export async function generateJson<T>(input: GenerateJsonInput<T>): Promise<T> {
   };
 
   async function call(featureId: string) {
+    const sessionId = getCurrentSessionId();
     const result = await generateObject({
       ...baseArgs,
       experimental_telemetry: {
         isEnabled: true,
         functionId: featureId,
-        metadata: { modelId: input.modelId, ...(input.metadata ?? {}) },
+        metadata: {
+          modelId: input.modelId,
+          ...(sessionId ? { sessionId } : {}),
+          ...(input.metadata ?? {}),
+        },
       },
     });
     recordLLMCall(result.usage, {
