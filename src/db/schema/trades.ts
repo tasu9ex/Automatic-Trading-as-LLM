@@ -18,7 +18,7 @@ export const trades = pgTable(
     coinId: uuid("coin_id")
       .notNull()
       .references(() => coins.id, { onDelete: "cascade" }),
-    model: text("model").notNull(),
+    strategyId: text("strategy_id").notNull(),
     side: orderSideEnum("side").notNull(),
     quantity: numeric("quantity", { precision: 30, scale: 10 }).notNull(),
     price: numeric("price", { precision: 20, scale: 4 }).notNull(),
@@ -28,7 +28,7 @@ export const trades = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => ({
-    modelCoinIdx: index("trades_model_coin_idx").on(table.model, table.coinId),
+    modelCoinIdx: index("trades_model_coin_idx").on(table.strategyId, table.coinId),
     executedAtIdx: index("trades_executed_at_idx").on(table.executedAt),
   }),
 );

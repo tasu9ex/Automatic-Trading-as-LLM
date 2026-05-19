@@ -7,7 +7,7 @@ export const positions = pgTable(
   "positions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    model: text("model").notNull(),
+    strategyId: text("strategy_id").notNull(),
     coinId: uuid("coin_id")
       .notNull()
       .references(() => coins.id, { onDelete: "cascade" }),
@@ -32,7 +32,7 @@ export const positions = pgTable(
   },
   (table) => ({
     modelCoinStatusIdx: index("positions_model_coin_status_idx").on(
-      table.model,
+      table.strategyId,
       table.coinId,
       table.status,
     ),

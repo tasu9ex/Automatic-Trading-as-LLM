@@ -14,7 +14,7 @@ export const pendingOrders = pgTable(
     coinId: uuid("coin_id")
       .notNull()
       .references(() => coins.id, { onDelete: "cascade" }),
-    model: text("model").notNull(),
+    strategyId: text("strategy_id").notNull(),
     kind: pendingOrderKindEnum("kind").notNull(),
     triggerPrice: numeric("trigger_price", { precision: 20, scale: 4 }).notNull(),
     /** Stop-Limit の指値価格 (stop_limit_primary でのみ非 null) */

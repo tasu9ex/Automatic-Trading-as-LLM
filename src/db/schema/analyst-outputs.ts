@@ -13,7 +13,7 @@ export const analystOutputs = pgTable(
     preAnalystId: uuid("pre_analyst_id").references(() => preAnalystOutputs.id, {
       onDelete: "set null",
     }),
-    model: text("model").notNull(),
+    llmModel: text("llm_model").notNull(),
     fundamental: jsonb("fundamental").notNull(),
     sentiment: jsonb("sentiment").notNull(),
     technical: jsonb("technical").notNull(),
@@ -23,7 +23,10 @@ export const analystOutputs = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => ({
-    snapshotModelIdx: index("analyst_outputs_snapshot_model_idx").on(table.snapshotId, table.model),
+    snapshotModelIdx: index("analyst_outputs_snapshot_model_idx").on(
+      table.snapshotId,
+      table.llmModel,
+    ),
   }),
 );
 

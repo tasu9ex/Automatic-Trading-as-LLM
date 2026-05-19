@@ -196,7 +196,7 @@ export async function runPriceMonitor(input: PriceMonitorInput = {}): Promise<vo
     );
 
     await executeExit({
-      model: position.model,
+      strategyId: position.strategyId,
       symbol: coin.symbol,
       decisionId: null,
       marketPrice: fired.marketPrice,
@@ -206,7 +206,7 @@ export async function runPriceMonitor(input: PriceMonitorInput = {}): Promise<vo
     });
 
     await db.insert(systemEvents).values({
-      model: position.model,
+      strategyId: position.strategyId,
       kind: "price_monitor_triggered",
       severity: "warning",
       message: `${coin.symbol} SL fired: ${fired.kind}`,

@@ -10,11 +10,11 @@ import { portfolios, systemState } from "@/db/schema";
 import { checkAndTriggerKillSwitch } from "@/lib/kill-switch";
 import { eq } from "drizzle-orm";
 
-const MODEL = "opus-confidence";
+const STRATEGY_ID = "trial-5";
 
 async function main() {
   const before = (
-    await db.select().from(portfolios).where(eq(portfolios.model, MODEL)).limit(1)
+    await db.select().from(portfolios).where(eq(portfolios.strategyId, STRATEGY_ID)).limit(1)
   )[0];
   if (!before) throw new Error("portfolio not found");
 
@@ -27,7 +27,7 @@ async function main() {
   await db
     .update(portfolios)
     .set({ cashJpy: sabotaged.toFixed(4) })
-    .where(eq(portfolios.model, MODEL));
+    .where(eq(portfolios.strategyId, STRATEGY_ID));
 
   // killed 状態だと終了させたいので一旦 running に戻す
   await db
@@ -36,7 +36,7 @@ async function main() {
     .where(eq(systemState.id, "singleton"));
 
   console.log("\n=== Running checkAndTriggerKillSwitch ===");
-  const triggered = await checkAndTriggerKillSwitch({ model: MODEL });
+  const triggered = await checkAndTriggerKillSwitch({ strategyId: STRATEGY_ID });
   console.log(`triggered=${triggered}`);
 
   const after = (
@@ -48,7 +48,10 @@ async function main() {
 
   // 復元
   console.log("\n=== Restoring ===");
-  await db.update(portfolios).set({ cashJpy: before.cashJpy }).where(eq(portfolios.model, MODEL));
+  await db
+    .update(portfolios)
+    .set({ cashJpy: before.cashJpy })
+    .where(eq(portfolios.strategyId, STRATEGY_ID));
   await db
     .update(systemState)
     .set({ state: "running", killReason: null, killedAt: null })

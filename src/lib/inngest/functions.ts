@@ -1,7 +1,7 @@
 /**
  * Inngest cron + per-Tier step.run 分割。
  *
- * Vercel function 60s 制限 + Anthropic per-model ITPM レート対策のため、各 Tier を
+ * Vercel function 60s 制限 + Anthropic per-strategyId ITPM レート対策のため、各 Tier を
  * 独立した step.run() に分けて実行 (各 step が独立した 60s 予算 + step retry)。
  *
  * CLI 側 (runJudgmentCycle) は同じ phase 関数を sequential に呼ぶラッパー。
@@ -42,7 +42,7 @@ import { inngest } from "./client";
 
 const logger = createLogger("inngest.functions");
 
-const DEFAULT_MODEL = "opus-confidence";
+const DEFAULT_STRATEGY_ID = "trial-5";
 const DEFAULT_METHOD: SizingMethod = "confidence";
 
 /**
@@ -85,7 +85,7 @@ export const judgmentCron = inngest.createFunction(
         const startedAt = Date.now();
         const result = await preflight({
           cycleId,
-          model: DEFAULT_MODEL,
+          strategyId: DEFAULT_STRATEGY_ID,
           method: DEFAULT_METHOD,
         });
         if (!result.proceed) {
@@ -107,7 +107,7 @@ export const judgmentCron = inngest.createFunction(
       }
 
       const { cycleId, periodHours, startedAt } = pre;
-      const model = DEFAULT_MODEL;
+      const strategyId = DEFAULT_STRATEGY_ID;
       const method = DEFAULT_METHOD;
 
       // 2-6. 各 Tier step.run (失敗時は recordCycleFailure → throw → Inngest 側で retry/abort)
@@ -116,7 +116,7 @@ export const judgmentCron = inngest.createFunction(
           await step.run(name, () => withSession(cycleId, fn));
         } catch (err) {
           await step.run(`${name}-record-failure`, () =>
-            recordCycleFailure({ cycleId, model, phase: name, err }),
+            recordCycleFailure({ cycleId, strategyId, phase: name, err }),
           );
           throw err;
         }
@@ -125,10 +125,10 @@ export const judgmentCron = inngest.createFunction(
       await runStep("tier0-snapshots", () => tier0Snapshots(cycleId, periodHours));
       await runStep("tier1-pre-analyst", () => tier1PreAnalyst(cycleId));
       await runStep("tier2-analyst", () => tier2Analyst(cycleId));
-      await runStep("tier3-decisions", () => tier3Decisions(cycleId, model));
+      await runStep("tier3-decisions", () => tier3Decisions(cycleId, strategyId));
 
       const result = await step.run("finalize", () =>
-        withSession(cycleId, () => finalize({ cycleId, model, method, startedAt })),
+        withSession(cycleId, () => finalize({ cycleId, strategyId, method, startedAt })),
       );
 
       await step.run("advance-schedule", () => advanceNextScheduledAt(new Date(startedAt)));

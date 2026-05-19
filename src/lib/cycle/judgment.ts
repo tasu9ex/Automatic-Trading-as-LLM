@@ -33,7 +33,7 @@ import { runWithSession } from "@/lib/telemetry";
 const logger = createLogger("cycle.judgment");
 
 export interface JudgmentCycleInput {
-  model?: string;
+  strategyId?: string;
   method?: SizingMethod;
 }
 
@@ -60,13 +60,13 @@ async function runJudgmentCycleInner(
   cycleId: string,
   input: JudgmentCycleInput,
 ): Promise<JudgmentCycleResult> {
-  const model = input.model ?? "opus-confidence";
+  const strategyId = input.strategyId ?? "trial-5";
   const method = input.method ?? "confidence";
   const startedAt = Date.now();
 
-  logger.info({ cycleId, model, method }, "Cycle started");
+  logger.info({ cycleId, strategyId, method }, "Cycle started");
 
-  const pre = await preflight({ cycleId, model, method });
+  const pre = await preflight({ cycleId, strategyId, method });
   if (!pre.proceed) {
     return {
       cycleId,
@@ -87,7 +87,7 @@ async function runJudgmentCycleInner(
     try {
       return await fn();
     } catch (err) {
-      await recordCycleFailure({ cycleId, model, phase: name, err });
+      await recordCycleFailure({ cycleId, strategyId, phase: name, err });
       throw err;
     }
   };
@@ -96,9 +96,9 @@ async function runJudgmentCycleInner(
     await runPhase("tier0-snapshots", () => tier0Snapshots(cycleId, periodHours));
     await runPhase("tier1-pre-analyst", () => tier1PreAnalyst(cycleId));
     await runPhase("tier2-analyst", () => tier2Analyst(cycleId));
-    await runPhase("tier3-decisions", () => tier3Decisions(cycleId, model));
+    await runPhase("tier3-decisions", () => tier3Decisions(cycleId, strategyId));
     const result: FinalizeResult = await runPhase("finalize", () =>
-      finalize({ cycleId, model, method, startedAt }),
+      finalize({ cycleId, strategyId, method, startedAt }),
     );
     return result;
   } catch {

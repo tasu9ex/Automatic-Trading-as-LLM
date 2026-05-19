@@ -9,7 +9,7 @@ export const preAnalystOutputs = pgTable(
     snapshotId: uuid("snapshot_id")
       .notNull()
       .references(() => marketSnapshots.id, { onDelete: "cascade" }),
-    model: text("model").notNull(),
+    llmModel: text("llm_model").notNull(),
     summary: text("summary").notNull(),
     relevanceScore: numeric("relevance_score", { precision: 4, scale: 3 }).notNull(),
     skipFlag: boolean("skip_flag").notNull().default(false),

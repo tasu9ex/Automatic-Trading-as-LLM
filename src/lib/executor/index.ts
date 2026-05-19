@@ -50,7 +50,7 @@ function expiresAtFrom(now: Date, ttlHours: number | null | undefined): Date | n
 // =====================================================================
 
 export interface ExecuteEntryInput {
-  model: string;
+  strategyId: string;
   symbol: string;
   decisionId: string | null;
   marketPrice: number;
@@ -80,7 +80,7 @@ export async function executeEntry(input: ExecuteEntryInput): Promise<void> {
     });
     await fillEntryOrder({
       orderId,
-      model: input.model,
+      strategyId: input.strategyId,
       symbol: input.symbol,
       fill,
       entryReason: input.entryReason,
@@ -111,7 +111,7 @@ async function placeEntryOrder(input: ExecuteEntryInput): Promise<{ orderId: str
     .values({
       decisionId: input.decisionId,
       coinId: coin.id,
-      model: input.model,
+      strategyId: input.strategyId,
       side: "buy",
       status: "placed",
       sizeJpy: input.budgetJpy.toFixed(4),
@@ -141,7 +141,7 @@ async function placeEntryOrder(input: ExecuteEntryInput): Promise<{ orderId: str
 
 interface FillEntryArgs {
   orderId: string;
-  model: string;
+  strategyId: string;
   symbol: string;
   fill: FillResult;
   entryReason: string | null;
@@ -152,15 +152,15 @@ interface FillEntryArgs {
 
 /** Entry 約定: orders を filled に更新 + position/trade/portfolio 反映 + "🟢 約定" 通知 */
 export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
-  const { orderId, model, symbol, fill } = args;
+  const { orderId, strategyId, symbol, fill } = args;
   await db.transaction(async (tx) => {
     const coin = (await tx.select().from(coins).where(eq(coins.symbol, symbol)).limit(1))[0];
     if (!coin) throw new Error(`Coin not found: ${symbol}`);
 
     const portfolio = (
-      await tx.select().from(portfolios).where(eq(portfolios.model, model)).limit(1)
+      await tx.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
     )[0];
-    if (!portfolio) throw new Error(`Portfolio not found: ${model}`);
+    if (!portfolio) throw new Error(`Portfolio not found: ${strategyId}`);
 
     await tx
       .update(orders)
@@ -181,7 +181,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
         .from(positions)
         .where(
           and(
-            eq(positions.model, model),
+            eq(positions.strategyId, strategyId),
             eq(positions.coinId, coin.id),
             eq(positions.status, "open"),
           ),
@@ -218,7 +218,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
       const [pos] = await tx
         .insert(positions)
         .values({
-          model,
+          strategyId,
           coinId: coin.id,
           status: "open",
           quantity: fill.quantity.toFixed(10),
@@ -241,7 +241,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
       positionId,
       orderId,
       coinId: coin.id,
-      model,
+      strategyId,
       side: "buy",
       quantity: fill.quantity.toFixed(10),
       price: fill.executedPrice.toFixed(4),
@@ -262,7 +262,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
     await tx.insert(pendingOrders).values({
       positionId,
       coinId: coin.id,
-      model,
+      strategyId,
       kind: "stop_limit_primary",
       triggerPrice: (newAvgPrice * STOP_LIMIT_TRIGGER_RATIO).toFixed(4),
       limitPrice: (newAvgPrice * STOP_LIMIT_LIMIT_RATIO).toFixed(4),
@@ -271,7 +271,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
     await tx.insert(pendingOrders).values({
       positionId,
       coinId: coin.id,
-      model,
+      strategyId,
       kind: "stop_market_entry",
       triggerPrice: (newAvgPrice * STOP_MARKET_ENTRY_RATIO).toFixed(4),
       createdBy: "code",
@@ -279,7 +279,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
     await tx.insert(pendingOrders).values({
       positionId,
       coinId: coin.id,
-      model,
+      strategyId,
       kind: "stop_market_peak",
       triggerPrice: (currentPeak * STOP_MARKET_PEAK_RATIO).toFixed(4),
       createdBy: "code",
@@ -293,7 +293,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
 
     logger.info(
       {
-        model,
+        strategyId,
         symbol,
         quantity: fill.quantity,
         executedPrice: fill.executedPrice,
@@ -322,7 +322,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
 // =====================================================================
 
 export interface ExecuteExitInput {
-  model: string;
+  strategyId: string;
   symbol: string;
   decisionId: string | null;
   marketPrice: number;
@@ -360,7 +360,7 @@ export async function executeExit(input: ExecuteExitInput): Promise<void> {
     await fillExitOrder({
       orderId: placed.orderId,
       positionId: placed.positionId,
-      model: input.model,
+      strategyId: input.strategyId,
       symbol: input.symbol,
       fill,
       sellQty,
@@ -395,7 +395,7 @@ async function placeExitOrder(input: ExecuteExitInput): Promise<PlacedExitOrder 
       .from(positions)
       .where(
         and(
-          eq(positions.model, input.model),
+          eq(positions.strategyId, input.strategyId),
           eq(positions.coinId, coin.id),
           eq(positions.status, "open"),
         ),
@@ -403,7 +403,10 @@ async function placeExitOrder(input: ExecuteExitInput): Promise<PlacedExitOrder 
       .limit(1)
   )[0];
   if (!position) {
-    logger.warn({ model: input.model, symbol: input.symbol }, "placeExitOrder: no open position");
+    logger.warn(
+      { strategyId: input.strategyId, symbol: input.symbol },
+      "placeExitOrder: no open position",
+    );
     return null;
   }
 
@@ -419,7 +422,7 @@ async function placeExitOrder(input: ExecuteExitInput): Promise<PlacedExitOrder 
     .values({
       decisionId: input.decisionId,
       coinId: coin.id,
-      model: input.model,
+      strategyId: input.strategyId,
       side: "sell",
       status: "placed",
       sizeJpy: (sellQty * input.marketPrice).toFixed(4),
@@ -461,7 +464,7 @@ async function placeExitOrder(input: ExecuteExitInput): Promise<PlacedExitOrder 
 interface FillExitArgs {
   orderId: string;
   positionId: string;
-  model: string;
+  strategyId: string;
   symbol: string;
   fill: FillResult;
   sellQty: number;
@@ -472,14 +475,14 @@ interface FillExitArgs {
 
 /** Exit 約定: orders を filled に更新 + position/trade/portfolio 反映 + "🔵/🔴 約定" 通知 */
 export async function fillExitOrder(args: FillExitArgs): Promise<void> {
-  const { orderId, positionId, model, symbol, fill, sellQty, ratio } = args;
+  const { orderId, positionId, strategyId, symbol, fill, sellQty, ratio } = args;
   const isFullClose = ratio >= 0.999999;
 
   await db.transaction(async (tx) => {
     const portfolio = (
-      await tx.select().from(portfolios).where(eq(portfolios.model, model)).limit(1)
+      await tx.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
     )[0];
-    if (!portfolio) throw new Error(`Portfolio not found: ${model}`);
+    if (!portfolio) throw new Error(`Portfolio not found: ${strategyId}`);
 
     const position = (
       await tx.select().from(positions).where(eq(positions.id, positionId)).limit(1)
@@ -505,7 +508,7 @@ export async function fillExitOrder(args: FillExitArgs): Promise<void> {
       positionId,
       orderId,
       coinId: position.coinId,
-      model,
+      strategyId,
       side: "sell",
       quantity: sellQty.toFixed(10),
       price: fill.executedPrice.toFixed(4),
@@ -550,7 +553,7 @@ export async function fillExitOrder(args: FillExitArgs): Promise<void> {
 
     logger.info(
       {
-        model,
+        strategyId,
         symbol,
         executedPrice: fill.executedPrice,
         pnlJpy,

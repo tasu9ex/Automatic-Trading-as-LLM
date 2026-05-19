@@ -23,7 +23,7 @@ const STOP_MARKET_PEAK_RATIO = 0.5;
 const TOTAL_COST_JPY = 98370;
 /** 仮の保有開始日 (約2年前) */
 const OPENED_AT = new Date(Date.now() - 730 * 86_400_000);
-const MODEL = "opus-confidence";
+const STRATEGY_ID = "trial-5";
 
 async function main() {
   const assets = (await getAssets()).filter((a) => Number(a.amount) > 0 && a.symbol !== "JPY");
@@ -66,7 +66,7 @@ async function main() {
   const existing = await db
     .select({ coinId: positions.coinId })
     .from(positions)
-    .where(and(eq(positions.model, MODEL), eq(positions.status, "open")));
+    .where(and(eq(positions.strategyId, STRATEGY_ID), eq(positions.status, "open")));
   const existingCoinIds = new Set(existing.map((p) => p.coinId));
 
   for (const a of assets) {
@@ -92,7 +92,7 @@ async function main() {
     const [inserted] = await db
       .insert(positions)
       .values({
-        model: MODEL,
+        strategyId: STRATEGY_ID,
         coinId,
         status: "open",
         quantity: a.amount,
@@ -113,7 +113,7 @@ async function main() {
       {
         positionId,
         coinId,
-        model: MODEL,
+        strategyId: STRATEGY_ID,
         kind: "stop_limit_primary",
         triggerPrice: (estimatedEntryPrice * STOP_LIMIT_TRIGGER_RATIO).toFixed(4),
         limitPrice: (estimatedEntryPrice * STOP_LIMIT_LIMIT_RATIO).toFixed(4),
@@ -122,7 +122,7 @@ async function main() {
       {
         positionId,
         coinId,
-        model: MODEL,
+        strategyId: STRATEGY_ID,
         kind: "stop_market_entry",
         triggerPrice: (estimatedEntryPrice * STOP_MARKET_ENTRY_RATIO).toFixed(4),
         createdBy: "code",
@@ -130,7 +130,7 @@ async function main() {
       {
         positionId,
         coinId,
-        model: MODEL,
+        strategyId: STRATEGY_ID,
         kind: "stop_market_peak",
         triggerPrice: (peakInit * STOP_MARKET_PEAK_RATIO).toFixed(4),
         createdBy: "code",

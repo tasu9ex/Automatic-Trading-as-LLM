@@ -34,12 +34,12 @@ async function main() {
   await db
     .insert(portfolios)
     .values({
-      model: "opus-confidence",
-      description: "Phase 5a/5b: Claude Opus 4.7 + Confidence Weighted",
+      strategyId: "trial-5",
+      description: "実走テスト 5 銘柄",
       initialCashJpy: "500000",
       cashJpy: "500000",
     })
-    .onConflictDoNothing({ target: portfolios.model });
+    .onConflictDoNothing({ target: portfolios.strategyId });
   console.log("✓ portfolios");
 
   await db

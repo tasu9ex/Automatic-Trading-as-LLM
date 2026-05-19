@@ -14,7 +14,7 @@ export const decisions = pgTable(
     coinId: uuid("coin_id")
       .notNull()
       .references(() => coins.id, { onDelete: "cascade" }),
-    model: text("model").notNull(),
+    llmModel: text("llm_model").notNull(),
     kind: decisionKindEnum("kind").notNull(),
     result: decisionResultEnum("result").notNull(),
     confidence: numeric("confidence", { precision: 4, scale: 3 }).notNull(),
@@ -26,7 +26,7 @@ export const decisions = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => ({
-    coinModelIdx: index("decisions_coin_model_idx").on(table.coinId, table.model),
+    coinModelIdx: index("decisions_coin_model_idx").on(table.coinId, table.llmModel),
     createdAtIdx: index("decisions_created_at_idx").on(table.createdAt),
   }),
 );

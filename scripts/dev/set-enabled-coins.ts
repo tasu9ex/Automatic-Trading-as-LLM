@@ -4,7 +4,7 @@ import { inArray, notInArray } from "drizzle-orm";
 
 // 引数で指定可。 例: pnpm tsx ... -- BTC ETH
 const args = process.argv.slice(2).filter((a) => !a.startsWith("-"));
-const ENABLED = args.length > 0 ? args : ["BTC", "ETH", "SOL", "DOT"];
+const ENABLED = args.length > 0 ? args : ["BTC", "ETH", "XRP", "SOL", "DOT"];
 
 async function main() {
   await db.update(coins).set({ enabled: false }).where(notInArray(coins.symbol, ENABLED));

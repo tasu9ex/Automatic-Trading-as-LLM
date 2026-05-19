@@ -12,7 +12,7 @@ const PORTFOLIO_DD_TRIGGER = 0.5; // -50%
 const CONSECUTIVE_FAILURES_TRIGGER = 3;
 
 export interface KillSwitchCheckInput {
-  model: string;
+  strategyId: string;
 }
 
 export type SafetyTriggerKind = "killed" | "paused";
@@ -27,7 +27,7 @@ export async function checkAndTriggerKillSwitch(
   input: KillSwitchCheckInput,
 ): Promise<SafetyTriggerKind | false> {
   const portfolio = (
-    await db.select().from(portfolios).where(eq(portfolios.model, input.model)).limit(1)
+    await db.select().from(portfolios).where(eq(portfolios.strategyId, input.strategyId)).limit(1)
   )[0];
   if (!portfolio) return false;
 
@@ -39,7 +39,7 @@ export async function checkAndTriggerKillSwitch(
     .select({ position: positions, coin: coins })
     .from(positions)
     .innerJoin(coins, eq(positions.coinId, coins.id))
-    .where(and(eq(positions.model, input.model), eq(positions.status, "open")));
+    .where(and(eq(positions.strategyId, input.strategyId), eq(positions.status, "open")));
 
   let marketValue = 0;
   for (const { position, coin } of open) {
@@ -60,13 +60,20 @@ export async function checkAndTriggerKillSwitch(
 
   if (ddTriggered) {
     const reason = `portfolio DD ${(ddRatio * 100).toFixed(1)}%`;
-    await triggerKillSwitch({ model: input.model, open, reason, totalValue, initial, ddRatio });
+    await triggerKillSwitch({
+      strategyId: input.strategyId,
+      open,
+      reason,
+      totalValue,
+      initial,
+      ddRatio,
+    });
     return "killed";
   }
 
   if (failureTriggered) {
     const failures = state?.consecutiveFailures ?? 0;
-    await triggerAutoPauseDueToFailures({ model: input.model, failures });
+    await triggerAutoPauseDueToFailures({ strategyId: input.strategyId, failures });
     return "paused";
   }
 
@@ -74,16 +81,16 @@ export async function checkAndTriggerKillSwitch(
 }
 
 async function triggerKillSwitch(input: {
-  model: string;
+  strategyId: string;
   open: { coin: typeof coins.$inferSelect }[];
   reason: string;
   totalValue: number;
   initial: number;
   ddRatio: number;
 }) {
-  const { model, open, reason, totalValue, initial, ddRatio } = input;
+  const { strategyId, open, reason, totalValue, initial, ddRatio } = input;
 
-  logger.error({ model, totalValue, ddRatio, reason }, "Kill Switch triggered");
+  logger.error({ strategyId, totalValue, ddRatio, reason }, "Kill Switch triggered");
 
   for (const { coin } of open) {
     try {
@@ -91,7 +98,7 @@ async function triggerKillSwitch(input: {
       const lastPrice = Number(ticker[0]?.last ?? 0);
       if (lastPrice > 0) {
         await executeExit({
-          model,
+          strategyId,
           symbol: coin.symbol,
           decisionId: null,
           marketPrice: lastPrice,
@@ -128,7 +135,7 @@ async function triggerKillSwitch(input: {
     });
 
   await db.insert(systemEvents).values({
-    model,
+    strategyId,
     kind: "kill_switch_triggered",
     severity: "critical",
     message: `Kill Switch: ${reason}`,
@@ -147,11 +154,11 @@ async function triggerKillSwitch(input: {
   });
 }
 
-async function triggerAutoPauseDueToFailures(input: { model: string; failures: number }) {
-  const { model, failures } = input;
+async function triggerAutoPauseDueToFailures(input: { strategyId: string; failures: number }) {
+  const { strategyId, failures } = input;
   const reason = `${failures} consecutive cycle failures`;
 
-  logger.warn({ model, failures }, "Auto-pause due to consecutive failures");
+  logger.warn({ strategyId, failures }, "Auto-pause due to consecutive failures");
 
   await db
     .insert(systemState)
@@ -171,7 +178,7 @@ async function triggerAutoPauseDueToFailures(input: { model: string; failures: n
     });
 
   await db.insert(systemEvents).values({
-    model,
+    strategyId,
     kind: "system_paused",
     severity: "warning",
     message: `Auto-pause: ${reason}`,

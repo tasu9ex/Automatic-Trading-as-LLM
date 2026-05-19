@@ -3,7 +3,7 @@
  *
  * Usage:
  *   pnpm cycle:judgment
- *   pnpm cycle:judgment -- --model opus-confidence --method confidence
+ *   pnpm cycle:judgment -- --strategyId opus-confidence --method confidence
  *
  * 本体ロジックは src/lib/cycle/judgment.ts (Inngest からも呼ばれる)。
  */
@@ -22,13 +22,13 @@ import {
 
 const logger = createLogger("cycle.judgment.cli");
 
-function parseArgs(argv: string[]): { model?: string; method?: SizingMethod } {
-  const out: { model?: string; method?: SizingMethod } = {};
+function parseArgs(argv: string[]): { strategyId?: string; method?: SizingMethod } {
+  const out: { strategyId?: string; method?: SizingMethod } = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--model") {
+    if (a === "--strategyId") {
       const v = argv[++i];
-      if (v) out.model = v;
+      if (v) out.strategyId = v;
     } else if (a === "--method") {
       const v = argv[++i];
       if (v === "equal" || v === "confidence") out.method = v;

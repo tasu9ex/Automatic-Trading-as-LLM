@@ -58,7 +58,7 @@ export type CycleSkipReason = "exchange_closed" | "not_running" | "no_coins";
 
 export interface PreflightInput {
   cycleId: string;
-  model: string;
+  strategyId: string;
   method: SizingMethod;
 }
 
@@ -111,9 +111,9 @@ export async function preflight(input: PreflightInput): Promise<PreflightResult>
   }
 
   const portfolio = (
-    await db.select().from(portfolios).where(eq(portfolios.model, input.model)).limit(1)
+    await db.select().from(portfolios).where(eq(portfolios.strategyId, input.strategyId)).limit(1)
   )[0];
-  if (!portfolio) throw new Error(`Portfolio not found: ${input.model}`);
+  if (!portfolio) throw new Error(`Portfolio not found: ${input.strategyId}`);
 
   const enabledCoins = await db.select().from(coins).where(eq(coins.enabled, true));
   if (enabledCoins.length === 0) {
@@ -232,7 +232,7 @@ export async function tier1PreAnalyst(cycleId: string): Promise<void> {
           const preRes = await runPreAnalyst(snap);
           await db.insert(preAnalystOutputs).values({
             snapshotId: snapshot.id,
-            model: preRes.model,
+            llmModel: preRes.llmModel,
             summary: preRes.output.summary,
             relevanceScore: preRes.output.relevance_score.toFixed(3),
             skipFlag: preRes.output.skip_flag,
@@ -293,13 +293,13 @@ export async function tier2Analyst(cycleId: string): Promise<void> {
               reasoning: pre.reasoning ?? "",
             },
             promptVersion: pre.promptVersion,
-            model: pre.model,
+            llmModel: pre.llmModel,
           };
           const analystRes = await runAnalyst(snap, preResLike);
           await db.insert(analystOutputs).values({
             snapshotId: snapshot.id,
             preAnalystId: pre.id,
-            model: analystRes.model,
+            llmModel: analystRes.llmModel,
             fundamental: analystRes.output.fundamental,
             sentiment: analystRes.output.sentiment,
             technical: analystRes.output.technical,
@@ -314,7 +314,7 @@ export async function tier2Analyst(cycleId: string): Promise<void> {
 }
 
 /** Phase 5: Tier 3 Entry/Exit Decision (ALL-or-NOTHING) */
-export async function tier3Decisions(cycleId: string, model: string): Promise<void> {
+export async function tier3Decisions(cycleId: string, strategyId: string): Promise<void> {
   const enabledCoins = await getEnabledCoins();
 
   await Promise.all(
@@ -348,7 +348,7 @@ export async function tier3Decisions(cycleId: string, model: string): Promise<vo
               synthesis: analyst.synthesis,
             },
             promptVersion: analyst.promptVersion,
-            model: analyst.model,
+            llmModel: analyst.llmModel,
           };
 
           // Entry decision (常に)
@@ -368,7 +368,7 @@ export async function tier3Decisions(cycleId: string, model: string): Promise<vo
             await db.insert(decisions).values({
               analystId: analyst.id,
               coinId: coin.id,
-              model: entry.model,
+              llmModel: entry.llmModel,
               kind: "entry",
               result: entry.output.decision,
               confidence: entry.output.confidence.toFixed(3),
@@ -384,7 +384,7 @@ export async function tier3Decisions(cycleId: string, model: string): Promise<vo
               .from(positions)
               .where(
                 and(
-                  eq(positions.model, model),
+                  eq(positions.strategyId, strategyId),
                   eq(positions.coinId, coin.id),
                   eq(positions.status, "open"),
                 ),
@@ -442,7 +442,7 @@ export async function tier3Decisions(cycleId: string, model: string): Promise<vo
           await db.insert(decisions).values({
             analystId: analyst.id,
             coinId: coin.id,
-            model: exit.model,
+            llmModel: exit.llmModel,
             kind: "exit",
             result: exit.output.decision,
             confidence: exit.output.confidence.toFixed(3),
@@ -471,14 +471,14 @@ export interface FinalizeResult {
 
 interface FinalizeInput {
   cycleId: string;
-  model: string;
+  strategyId: string;
   method: SizingMethod;
   startedAt: number;
 }
 
 /** Phase 6: Exit 実行 → Critic → Risk Clipper → Entry 実行 → state 更新 → kill switch */
 export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
-  const { cycleId, model, method, startedAt } = input;
+  const { cycleId, strategyId, method, startedAt } = input;
   const enabledCoins = await getEnabledCoins();
 
   // 全コインのコンテキストを DB から組み立て
@@ -540,7 +540,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
             .from(positions)
             .where(
               and(
-                eq(positions.model, model),
+                eq(positions.strategyId, strategyId),
                 eq(positions.coinId, coin.id),
                 eq(positions.status, "open"),
               ),
@@ -556,7 +556,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   // === Critic 前段: Exit は **未実行**。Critic に Exit + Entry 両方の判断を委ねる ===
   // Exit が走った想定で cash が増える見込み額 (Allocator がそれ込みで配分計算)
   const currentPortfolio = (
-    await db.select().from(portfolios).where(eq(portfolios.model, model)).limit(1)
+    await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
   )[0];
   const currentCashJpy = Number(currentPortfolio?.cashJpy ?? 0);
 
@@ -622,7 +622,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
 
   await db.insert(criticOutputs).values({
     cycleId,
-    model: critic.model,
+    llmModel: critic.llmModel,
     decision: critic.output.decision,
     allocationProposal: proposal,
     adjustments: critic.output.adjustments,
@@ -635,7 +635,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   if (critic.output.decision === "veto") {
     logger.warn({ reason: critic.output.reasoning }, "Critic vetoed this cycle");
     await db.insert(systemEvents).values({
-      model,
+      strategyId,
       kind: "critic_veto",
       severity: "warning",
       message: `Critic veto: ${critic.output.reasoning.slice(0, 200)}`,
@@ -654,7 +654,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     finalProposal = { ...proposal, ...buys };
     Object.assign(exitOverrides, exits);
     await db.insert(systemEvents).values({
-      model,
+      strategyId,
       kind: "critic_modify",
       severity: "info",
       message: `Critic modified: ${critic.output.reasoning.slice(0, 200)}`,
@@ -691,7 +691,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       const effectivePct = overridePct ?? tier3Pct;
       try {
         await executeExit({
-          model,
+          strategyId,
           symbol: c.coin.symbol,
           decisionId: c.exit?.id ?? null,
           marketPrice: lastPrice,
@@ -720,7 +720,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
 
     // Exit 後の cash refresh
     const refreshedPortfolio = (
-      await db.select().from(portfolios).where(eq(portfolios.model, model)).limit(1)
+      await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
     )[0];
     const cashAfterExits = Number(refreshedPortfolio?.cashJpy ?? 0);
 
@@ -745,7 +745,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       if (lastPrice <= 0) continue;
       try {
         await executeEntry({
-          model,
+          strategyId,
           symbol: c.coin.symbol,
           decisionId: c.entry?.id ?? null,
           marketPrice: lastPrice,
@@ -791,7 +791,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       },
     });
 
-  await checkAndTriggerKillSwitch({ model });
+  await checkAndTriggerKillSwitch({ strategyId });
 
   const elapsedMs = Date.now() - startedAt;
   // 実際に走った数 (veto なら 0)
@@ -824,13 +824,13 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     critic.output.decision === "veto" ? [] : exitsToRun.map((c) => `• ${c.coin.symbol}`);
 
   const refreshedAfterEntries = (
-    await db.select().from(portfolios).where(eq(portfolios.model, model)).limit(1)
+    await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
   )[0];
   const cashAfter = Number(refreshedAfterEntries?.cashJpy ?? 0);
   const openPositions = await db
     .select()
     .from(positions)
-    .where(and(eq(positions.model, model), eq(positions.status, "open")));
+    .where(and(eq(positions.strategyId, strategyId), eq(positions.status, "open")));
   const positionLines = await Promise.all(
     openPositions.map(async (p) => {
       const c = (await db.select().from(coins).where(eq(coins.id, p.coinId)).limit(1))[0];
@@ -886,7 +886,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
 /** サイクル中断時の通知 + 連続失敗カウント更新 */
 export async function recordCycleFailure(args: {
   cycleId: string;
-  model: string;
+  strategyId: string;
   phase: string;
   err: unknown;
 }): Promise<void> {
@@ -911,7 +911,7 @@ export async function recordCycleFailure(args: {
     });
 
   await db.insert(systemEvents).values({
-    model: args.model,
+    strategyId: args.strategyId,
     // 暫定: 専用 enum 値が未定義のため llm_failure 流用 (Inngest dashboard / 通知が主観測点)
     kind: "llm_failure",
     severity: "error",

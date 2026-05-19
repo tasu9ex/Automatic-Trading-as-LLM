@@ -6,7 +6,7 @@ import type { Snapshot } from "@/lib/tier0/fetch-snapshot";
 export interface PreAnalystResult {
   output: PreAnalystOutput;
   promptVersion: string | null;
-  model: string;
+  llmModel: string;
 }
 
 function buildPriceSnapshotText(s: Snapshot): string {
@@ -49,6 +49,6 @@ export async function runPreAnalyst(snapshot: Snapshot): Promise<PreAnalystResul
     output,
     promptVersion:
       resolved.metadata.source === "langfuse" ? String(resolved.metadata.version) : null,
-    model: resolved.config.model,
+    llmModel: resolved.config.model,
   };
 }

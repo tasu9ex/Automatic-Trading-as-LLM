@@ -26,7 +26,7 @@ import { and, desc, eq, gte, sql } from "drizzle-orm";
 
 const logger = createLogger("cycle.queries");
 
-const MODEL = "opus-confidence";
+const STRATEGY_ID = "trial-5";
 
 export interface DashboardStats {
   state: string | undefined;
@@ -54,14 +54,14 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     db
       .select()
       .from(portfolios)
-      .where(eq(portfolios.model, MODEL))
+      .where(eq(portfolios.strategyId, STRATEGY_ID))
       .limit(1)
       .then((r) => r[0]),
     // open / closed 問わず全 position の確定損益を合算 (部分決済 → open のまま realized 累積される)
     db
       .select({ sum: sql<string>`COALESCE(SUM(${positions.realizedPnlJpy}), 0)` })
       .from(positions)
-      .where(eq(positions.model, MODEL))
+      .where(eq(positions.strategyId, STRATEGY_ID))
       .then((r) => Number(r[0]?.sum ?? 0)),
     // critic_outputs.model は LLM モデル名なので portfolio モデルではフィルタしない
     // (現状 portfolio は1つなので全 critic = 全 cycle)
@@ -111,7 +111,7 @@ export async function getOpenPositions(): Promise<OpenPositionRow[]> {
     .select({ position: positions, coin: coins })
     .from(positions)
     .innerJoin(coins, eq(positions.coinId, coins.id))
-    .where(and(eq(positions.model, MODEL), eq(positions.status, "open")))
+    .where(and(eq(positions.strategyId, STRATEGY_ID), eq(positions.status, "open")))
     .orderBy(desc(positions.openedAt));
 
   if (rows.length === 0) return [];

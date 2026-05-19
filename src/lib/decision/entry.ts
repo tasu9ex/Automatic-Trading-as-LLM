@@ -6,7 +6,7 @@ import type { AnalystResult } from "@/lib/tier2/analyst";
 export interface EntryDecisionResult {
   output: EntryDecisionOutput;
   promptVersion: string | null;
-  model: string;
+  llmModel: string;
 }
 
 /**
@@ -41,6 +41,6 @@ export async function runEntryDecision(
     output,
     promptVersion:
       resolved.metadata.source === "langfuse" ? String(resolved.metadata.version) : null,
-    model: resolved.config.model,
+    llmModel: resolved.config.model,
   };
 }

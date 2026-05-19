@@ -3,11 +3,11 @@ import { boolean, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg
 
 /**
  * Shadow trading の各仮想ポートフォリオ。
- * model 名 (例: "opus-confidence") が portfolio identifier として全テーブルに紐づく。
+ * strategy_id (例: "trial-5") が portfolio identifier として全テーブルに紐づく。
  */
 export const portfolios = pgTable("portfolios", {
   id: uuid("id").primaryKey().defaultRandom(),
-  model: text("model").notNull().unique(),
+  strategyId: text("strategy_id").notNull().unique(),
   description: text("description"),
   initialCashJpy: numeric("initial_cash_jpy", { precision: 20, scale: 4 }).notNull(),
   cashJpy: numeric("cash_jpy", { precision: 20, scale: 4 }).notNull(),

@@ -6,7 +6,7 @@ export const systemEvents = pgTable(
   "system_events",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    model: text("model"),
+    strategyId: text("strategy_id"),
     kind: systemEventKindEnum("kind").notNull(),
     severity: systemEventSeverityEnum("severity").notNull().default("info"),
     message: text("message").notNull(),

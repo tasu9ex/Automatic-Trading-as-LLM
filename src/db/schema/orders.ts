@@ -12,7 +12,7 @@ export const orders = pgTable(
     coinId: uuid("coin_id")
       .notNull()
       .references(() => coins.id, { onDelete: "cascade" }),
-    model: text("model").notNull(),
+    strategyId: text("strategy_id").notNull(),
     side: orderSideEnum("side").notNull(),
     status: orderStatusEnum("status").notNull(),
     sizeJpy: numeric("size_jpy", { precision: 20, scale: 4 }).notNull(),
@@ -30,7 +30,7 @@ export const orders = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => ({
-    modelCoinIdx: index("orders_model_coin_idx").on(table.model, table.coinId),
+    modelCoinIdx: index("orders_model_coin_idx").on(table.strategyId, table.coinId),
     createdAtIdx: index("orders_created_at_idx").on(table.createdAt),
   }),
 );

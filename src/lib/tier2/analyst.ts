@@ -7,7 +7,7 @@ import type { PreAnalystResult } from "@/lib/tier1/pre-analyst";
 export interface AnalystResult {
   output: AnalystOutput;
   promptVersion: string | null;
-  model: string;
+  llmModel: string;
 }
 
 function formatBars(bars: Snapshot["ohlcv1m"], maxRows: number): string {
@@ -70,6 +70,6 @@ export async function runAnalyst(
     output,
     promptVersion:
       resolved.metadata.source === "langfuse" ? String(resolved.metadata.version) : null,
-    model: resolved.config.model,
+    llmModel: resolved.config.model,
   };
 }

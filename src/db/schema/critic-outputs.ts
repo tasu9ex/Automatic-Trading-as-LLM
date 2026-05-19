@@ -7,7 +7,7 @@ export const criticOutputs = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     cycleId: uuid("cycle_id").notNull(),
-    model: text("model").notNull(),
+    llmModel: text("llm_model").notNull(),
     decision: criticDecisionEnum("decision").notNull(),
     allocationProposal: jsonb("allocation_proposal").notNull(),
     adjustments: jsonb("adjustments"),
@@ -17,7 +17,7 @@ export const criticOutputs = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => ({
-    cycleModelIdx: index("critic_outputs_cycle_model_idx").on(table.cycleId, table.model),
+    cycleModelIdx: index("critic_outputs_cycle_model_idx").on(table.cycleId, table.llmModel),
   }),
 );
 

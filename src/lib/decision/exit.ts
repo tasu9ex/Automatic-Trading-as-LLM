@@ -30,7 +30,7 @@ export interface PositionState {
 export interface ExitDecisionResult {
   output: ExitDecisionOutput;
   promptVersion: string | null;
-  model: string;
+  llmModel: string;
 }
 
 export async function runExitDecision(
@@ -88,6 +88,6 @@ export async function runExitDecision(
     output,
     promptVersion:
       resolved.metadata.source === "langfuse" ? String(resolved.metadata.version) : null,
-    model: resolved.config.model,
+    llmModel: resolved.config.model,
   };
 }
