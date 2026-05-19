@@ -24,16 +24,19 @@ export default async function Home() {
     getRecentCycles(20),
   ]);
 
-  const equity =
-    stats.cashJpy + openPositions.reduce((acc, p) => acc + p.quantity * p.avgEntryPrice, 0);
-  const totalPnl = equity + stats.realizedPnlJpy - stats.initialCashJpy;
+  // 時価評価: 現金 + 全 open position の (現在価格 × qty) - 元本
+  // realized は cash に既に反映済みなので加算しない (二重計上回避)
+  const marketValue = openPositions.reduce((acc, p) => acc + p.marketValueJpy, 0);
+  const equity = stats.cashJpy + marketValue;
+  const totalPnl = equity - stats.initialCashJpy;
   const totalPnlPct = stats.initialCashJpy > 0 ? (totalPnl / stats.initialCashJpy) * 100 : 0;
+  const unrealizedPnl = openPositions.reduce((acc, p) => acc + p.unrealizedPnlJpy, 0);
 
   return (
     <main className="container mx-auto flex min-h-screen max-w-5xl flex-col gap-6 p-6">
       <header className="flex items-center justify-between">
         <h1 className="font-bold text-2xl">LLM Trading</h1>
-        <span className="text-muted-foreground text-sm">{user.email}</span>
+        <span className="text-muted-foreground text-sm">ログイン中</span>
       </header>
 
       <SystemControls
@@ -64,18 +67,26 @@ export default async function Home() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>累計損益</CardDescription>
+            <CardDescription>累計損益 (時価評価)</CardDescription>
             <CardTitle
               className={`font-mono text-lg ${totalPnl >= 0 ? "text-emerald-500" : "text-red-500"}`}
             >
               {jpy(totalPnl)} ({totalPnlPct.toFixed(2)}%)
             </CardTitle>
+            <CardDescription className="pt-1 text-xs">
+              含み:{" "}
+              <span className={unrealizedPnl >= 0 ? "text-emerald-500" : "text-red-500"}>
+                {jpy(unrealizedPnl)}
+              </span>
+            </CardDescription>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>本日のサイクル数</CardDescription>
-            <CardTitle className="font-mono text-lg">{stats.cyclesToday}</CardTitle>
+            <CardDescription>本日 / 累計 サイクル</CardDescription>
+            <CardTitle className="font-mono text-lg">
+              {stats.cyclesToday} / {stats.cyclesTotal}
+            </CardTitle>
           </CardHeader>
         </Card>
       </section>

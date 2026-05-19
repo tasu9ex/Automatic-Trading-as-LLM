@@ -73,6 +73,7 @@ export const ANALYST_SYSTEM_PROMPT = `# 役割
 - 一般論・憶測の埋め草は書かない
 
 # その他制約
+- 自由テキスト (notes / reasoning) は **日本語**
 - JSON のみ返す、前置き不要`;
 
 export const ANALYST_USER_PROMPT = `# 銘柄

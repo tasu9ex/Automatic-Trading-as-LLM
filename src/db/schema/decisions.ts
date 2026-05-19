@@ -18,6 +18,8 @@ export const decisions = pgTable(
     kind: decisionKindEnum("kind").notNull(),
     result: decisionResultEnum("result").notNull(),
     confidence: numeric("confidence", { precision: 4, scale: 3 }).notNull(),
+    /** Exit のみ: 決済比率 % (整数 10-100)。entry は null。100=全決済、<100=部分決済 */
+    closePct: numeric("close_pct", { precision: 5, scale: 2 }),
     reasoning: text("reasoning"),
     promptVersion: text("prompt_version"),
     langfuseTraceId: text("langfuse_trace_id"),

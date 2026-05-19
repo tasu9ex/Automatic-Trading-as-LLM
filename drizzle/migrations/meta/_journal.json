@@ -57,6 +57,13 @@
       "when": 1779177272917,
       "tag": "0007_wooden_boom_boom",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1779180663581,
+      "tag": "0008_natural_ricochet",
+      "breakpoints": true
     }
   ]
 }

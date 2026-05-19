@@ -91,7 +91,19 @@ export type ExitDecisionOutput = z.infer<typeof ExitDecisionOutputSchema>;
 /** Critic の出力 */
 export const CriticOutputSchema = z.object({
   decision: z.enum(CRITIC_DECISIONS),
-  adjustments: z.record(z.string(), z.number()).nullable(),
+  /**
+   * modify 時のみ非 null:
+   *   buys:  symbol → 修正後 JPY 額 (Allocator 提案を上書き)
+   *   exits: symbol → 修正後 close 比率 % (10-100 整数、Tier 3 の close_pct を上書き)
+   *           値 0 は意味なし (実装側で 10 にクランプ)、close 中止したいなら veto を使う
+   * 修正不要な銘柄は省略可。approve / veto は null。
+   */
+  adjustments: z
+    .object({
+      buys: z.record(z.string(), z.number()).optional(),
+      exits: z.record(z.string(), z.number().int().min(10).max(100)).optional(),
+    })
+    .nullable(),
   reasoning: z.string(),
 });
 export type CriticOutput = z.infer<typeof CriticOutputSchema>;

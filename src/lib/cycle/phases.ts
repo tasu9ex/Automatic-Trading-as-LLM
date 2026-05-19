@@ -446,6 +446,7 @@ export async function tier3Decisions(cycleId: string, model: string): Promise<vo
             kind: "exit",
             result: exit.output.decision,
             confidence: exit.output.confidence.toFixed(3),
+            closePct: exit.output.close_pct.toFixed(2),
             reasoning: exit.output.reasoning,
             promptVersion: exit.promptVersion,
           });
@@ -552,43 +553,20 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   );
 
   // Exit 約定
-  for (const c of ctxs) {
-    if (c.exit?.result === "close" && c.openPos) {
-      const lastPrice = Number(c.snap.ticker.last) || 0;
-      if (lastPrice > 0) {
-        try {
-          // Exit の close_pct は decisions テーブルに無いので、現状全決済 (100%) として扱う。
-          // 将来 decisions に close_pct 列追加 or LLM 出力を別途保存。
-          await executeExit({
-            model,
-            symbol: c.coin.symbol,
-            decisionId: c.exit.id,
-            marketPrice: lastPrice,
-            takerFeeRate: Number(c.coin.takerFeeRate),
-            reason: "llm decision",
-          });
-        } catch (err) {
-          logger.error({ err, symbol: c.coin.symbol }, "executeExit failed");
-          await notify({
-            level: "error",
-            title: `🚨 Exit 失敗 ${c.coin.symbol}`,
-            body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
-            fields: {
-              意図: "全決済",
-              参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
-              影響: "ポジション保有継続、price-monitor SL に依存",
-            },
-          });
-        }
-      }
-    }
-  }
-
-  // 現金残高 refresh
-  const refreshedPortfolio = (
+  // === Critic 前段: Exit は **未実行**。Critic に Exit + Entry 両方の判断を委ねる ===
+  // Exit が走った想定で cash が増える見込み額 (Allocator がそれ込みで配分計算)
+  const currentPortfolio = (
     await db.select().from(portfolios).where(eq(portfolios.model, model)).limit(1)
   )[0];
-  const cashJpy = Number(refreshedPortfolio?.cashJpy ?? 0);
+  const currentCashJpy = Number(currentPortfolio?.cashJpy ?? 0);
+
+  const exitsToRun = ctxs.filter((c) => c.exit?.result === "close" && c.openPos);
+  const expectedCloseCash = exitsToRun.reduce((sum, c) => {
+    const price = Number(c.snap.ticker.last) || 0;
+    const qty = Number(c.openPos?.quantity ?? 0);
+    return sum + qty * price;
+  }, 0);
+  const projectedCashJpy = currentCashJpy + expectedCloseCash;
 
   const buySignals = ctxs
     .filter((c) => c.entry?.result === "buy")
@@ -596,7 +574,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
 
   const proposal = allocate({
     buySignals,
-    availableCashJpy: cashJpy,
+    availableCashJpy: projectedCashJpy,
     maxAllocationRatio: 1.0,
     perCoinMaxRatio: RISK_PER_COIN_MAX_RATIO,
     perCoinMinJpy: RISK_PER_COIN_MIN_JPY,
@@ -613,7 +591,13 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
         entry: c.entry
           ? { decision: c.entry.result, confidence: Number(c.entry.confidence) }
           : null,
-        exit: c.exit ? { decision: c.exit.result, confidence: Number(c.exit.confidence) } : null,
+        exit: c.exit
+          ? {
+              decision: c.exit.result,
+              confidence: Number(c.exit.confidence),
+              close_pct: c.exit.closePct ? Number(c.exit.closePct) : 100,
+            }
+          : null,
       },
     ]),
   );
@@ -632,7 +616,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     decisionsBySymbol,
     currentPositions,
     symbolToName,
-    cashJpy,
+    cashJpy: projectedCashJpy,
     riskParams: { perCoinMaxRatio: RISK_PER_COIN_MAX_RATIO, killSwitchDdRatio: 0.5 },
   });
 
@@ -647,6 +631,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   });
 
   let finalProposal = proposal;
+  const exitOverrides: Record<string, number> = {}; // symbol → close_pct (Critic 上書き値)
   if (critic.output.decision === "veto") {
     logger.warn({ reason: critic.output.reasoning }, "Critic vetoed this cycle");
     await db.insert(systemEvents).values({
@@ -664,65 +649,124 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     });
     finalProposal = {};
   } else if (critic.output.decision === "modify" && critic.output.adjustments) {
-    finalProposal = { ...proposal, ...critic.output.adjustments };
+    const buys = critic.output.adjustments.buys ?? {};
+    const exits = critic.output.adjustments.exits ?? {};
+    finalProposal = { ...proposal, ...buys };
+    Object.assign(exitOverrides, exits);
     await db.insert(systemEvents).values({
       model,
       kind: "critic_modify",
       severity: "info",
       message: `Critic modified: ${critic.output.reasoning.slice(0, 200)}`,
-      payload: { cycleId, before: proposal, after: finalProposal },
+      payload: { cycleId, before: proposal, after: finalProposal, exitOverrides },
     });
     await notify({
       level: "info",
       title: "✏️ Critic 修正 (MODIFY)",
       body: critic.output.reasoning.slice(0, 1000),
       fields: {
-        修正前: JSON.stringify(proposal).slice(0, 200),
-        修正後: JSON.stringify(finalProposal).slice(0, 200),
+        買い修正: Object.keys(buys).length > 0 ? JSON.stringify(buys).slice(0, 200) : "なし",
+        売り修正: Object.keys(exits).length > 0 ? JSON.stringify(exits).slice(0, 200) : "なし",
       },
     });
   }
 
-  const currentInvested = currentPositions.reduce((s, p) => s + p.qty * p.avgPrice, 0);
-  const clipped = applyRiskClipper({
-    proposal: finalProposal,
-    availableCashJpy: cashJpy,
-    currentInvestedJpy: currentInvested,
-    perCoinMaxRatio: RISK_PER_COIN_MAX_RATIO,
-    perCoinMinJpy: RISK_PER_COIN_MIN_JPY,
-    totalMaxRatio: RISK_TOTAL_MAX_RATIO,
-  });
-  if (clipped.changes.length > 0) {
-    logger.info({ changes: clipped.changes }, "Risk Clipper applied");
-  }
+  // === Critic 後段 ===
+  // veto: Exit / Entry 両方とも実行しない (Critic がポートフォリオ操作全体を拒否)
+  // approve / modify: Exit 実行 → cash refresh → Risk Clipper + Entry 実行
+  let exitsExecuted = 0;
+  let entriesExecutedFinal = 0;
+  let clipped: ReturnType<typeof applyRiskClipper> = {
+    proposal: {},
+    changes: [],
+  };
 
-  for (const c of ctxs) {
-    const budget = clipped.proposal[c.coin.symbol];
-    if (!budget) continue;
-    const lastPrice = Number(c.snap.ticker.last) || 0;
-    if (lastPrice <= 0) continue;
-    try {
-      await executeEntry({
-        model,
-        symbol: c.coin.symbol,
-        decisionId: c.entry?.id ?? null,
-        marketPrice: lastPrice,
-        budgetJpy: budget,
-        takerFeeRate: Number(c.coin.takerFeeRate),
-        entryReason: c.entry?.reasoning ?? null,
-      });
-    } catch (err) {
-      logger.error({ err, symbol: c.coin.symbol }, "executeEntry failed");
-      await notify({
-        level: "error",
-        title: `🚨 Entry 失敗 ${c.coin.symbol}`,
-        body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
-        fields: {
-          配分: `¥${budget.toLocaleString()}`,
-          参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
-          影響: "この銘柄の Entry をスキップ、次サイクル待ち",
-        },
-      });
+  if (critic.output.decision !== "veto") {
+    // Exit 実行 (close_pct: Critic 上書き > Tier 3 出力 > default 100)
+    for (const c of exitsToRun) {
+      const lastPrice = Number(c.snap.ticker.last) || 0;
+      if (lastPrice <= 0) continue;
+      const tier3Pct = c.exit?.closePct ? Number(c.exit.closePct) : 100;
+      const overridePct = exitOverrides[c.coin.symbol];
+      const effectivePct = overridePct ?? tier3Pct;
+      try {
+        await executeExit({
+          model,
+          symbol: c.coin.symbol,
+          decisionId: c.exit?.id ?? null,
+          marketPrice: lastPrice,
+          takerFeeRate: Number(c.coin.takerFeeRate),
+          quantityRatio: effectivePct / 100,
+          reason:
+            overridePct !== undefined
+              ? `llm decision (critic modified ${tier3Pct}%→${overridePct}%)`
+              : "llm decision",
+        });
+        exitsExecuted++;
+      } catch (err) {
+        logger.error({ err, symbol: c.coin.symbol }, "executeExit failed");
+        await notify({
+          level: "error",
+          title: `🚨 Exit 失敗 ${c.coin.symbol}`,
+          body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
+          fields: {
+            意図: `${effectivePct}% 決済`,
+            参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
+            影響: "ポジション保有継続、price-monitor SL に依存",
+          },
+        });
+      }
+    }
+
+    // Exit 後の cash refresh
+    const refreshedPortfolio = (
+      await db.select().from(portfolios).where(eq(portfolios.model, model)).limit(1)
+    )[0];
+    const cashAfterExits = Number(refreshedPortfolio?.cashJpy ?? 0);
+
+    const currentInvested = currentPositions.reduce((s, p) => s + p.qty * p.avgPrice, 0);
+    clipped = applyRiskClipper({
+      proposal: finalProposal,
+      availableCashJpy: cashAfterExits,
+      currentInvestedJpy: currentInvested,
+      perCoinMaxRatio: RISK_PER_COIN_MAX_RATIO,
+      perCoinMinJpy: RISK_PER_COIN_MIN_JPY,
+      totalMaxRatio: RISK_TOTAL_MAX_RATIO,
+    });
+    if (clipped.changes.length > 0) {
+      logger.info({ changes: clipped.changes }, "Risk Clipper applied");
+    }
+
+    // Entry 実行
+    for (const c of ctxs) {
+      const budget = clipped.proposal[c.coin.symbol];
+      if (!budget) continue;
+      const lastPrice = Number(c.snap.ticker.last) || 0;
+      if (lastPrice <= 0) continue;
+      try {
+        await executeEntry({
+          model,
+          symbol: c.coin.symbol,
+          decisionId: c.entry?.id ?? null,
+          marketPrice: lastPrice,
+          budgetJpy: budget,
+          takerFeeRate: Number(c.coin.takerFeeRate),
+          entryReason: c.entry?.reasoning ?? null,
+        });
+        entriesExecutedFinal++;
+      } catch (err) {
+        logger.error({ err, symbol: c.coin.symbol }, "executeEntry failed");
+        await notify({
+          level: "error",
+          title: `🚨 Entry 失敗 ${c.coin.symbol}`,
+          body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
+          fields: {
+            配分: `¥${budget.toLocaleString()}`,
+            参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
+            影響: "この銘柄の Entry をスキップ、次サイクル待ち",
+          },
+        });
+      }
     }
   }
 
@@ -750,8 +794,9 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   await checkAndTriggerKillSwitch({ model });
 
   const elapsedMs = Date.now() - startedAt;
-  const exitsTriggered = ctxs.filter((c) => c.exit?.result === "close").length;
-  const entriesExecuted = Object.keys(clipped.proposal).length;
+  // 実際に走った数 (veto なら 0)
+  const exitsTriggered = exitsExecuted;
+  const entriesExecuted = entriesExecutedFinal;
   const symbolsSkipped = ctxs.filter((c) => c.analyst === null).length;
   const symbolsProcessed = ctxs.length;
 
@@ -774,7 +819,9 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   const buys = ctxs
     .filter((c) => clipped.proposal[c.coin.symbol])
     .map((c) => `• ${c.coin.symbol}: ¥${(clipped.proposal[c.coin.symbol] ?? 0).toLocaleString()}`);
-  const closes = ctxs.filter((c) => c.exit?.result === "close").map((c) => `• ${c.coin.symbol}`);
+  // veto された場合 closes/buys は空 (Exit 実行スキップ済み)
+  const closes =
+    critic.output.decision === "veto" ? [] : exitsToRun.map((c) => `• ${c.coin.symbol}`);
 
   const refreshedAfterEntries = (
     await db.select().from(portfolios).where(eq(portfolios.model, model)).limit(1)

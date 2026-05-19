@@ -54,6 +54,7 @@ Buy の場合は **Entry 仮説** も合わせて返してください:
 - 一般論・憶測の埋め草は書かない
 
 # その他制約
+- 自由テキスト (reasoning / exit_condition) は **日本語**
 - "no" の時は expected_holding_days / target_price_jpy / exit_condition は null
 - JSON のみ返す`;
 

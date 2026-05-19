@@ -14,6 +14,8 @@ import {
   preAnalystOutputs,
   systemState,
 } from "@/db/schema";
+import { getTicker } from "@/lib/clients/gmo";
+import { createLogger } from "@/lib/logging";
 import type { AnalystOutput } from "@/lib/schemas/llm-outputs";
 import {
   type CycleIntervalHours,
@@ -21,6 +23,8 @@ import {
   isCycleIntervalHours,
 } from "@/lib/system-control/constants";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
+
+const logger = createLogger("cycle.queries");
 
 const MODEL = "opus-confidence";
 
@@ -34,13 +38,14 @@ export interface DashboardStats {
   initialCashJpy: number;
   realizedPnlJpy: number;
   cyclesToday: number;
+  cyclesTotal: number;
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const [state, portfolio, realizedAgg, cyclesTodayAgg] = await Promise.all([
+  const [state, portfolio, realizedAgg, cyclesTodayAgg, cyclesTotalAgg] = await Promise.all([
     db
       .select()
       .from(systemState)
@@ -52,10 +57,11 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       .where(eq(portfolios.model, MODEL))
       .limit(1)
       .then((r) => r[0]),
+    // open / closed 問わず全 position の確定損益を合算 (部分決済 → open のまま realized 累積される)
     db
       .select({ sum: sql<string>`COALESCE(SUM(${positions.realizedPnlJpy}), 0)` })
       .from(positions)
-      .where(and(eq(positions.model, MODEL), eq(positions.status, "closed")))
+      .where(eq(positions.model, MODEL))
       .then((r) => Number(r[0]?.sum ?? 0)),
     // critic_outputs.model は LLM モデル名なので portfolio モデルではフィルタしない
     // (現状 portfolio は1つなので全 critic = 全 cycle)
@@ -63,6 +69,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       .select({ count: sql<string>`COUNT(*)` })
       .from(criticOutputs)
       .where(gte(criticOutputs.createdAt, todayStart))
+      .then((r) => Number(r[0]?.count ?? 0)),
+    db
+      .select({ count: sql<string>`COUNT(*)` })
+      .from(criticOutputs)
       .then((r) => Number(r[0]?.count ?? 0)),
   ]);
 
@@ -81,6 +91,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     initialCashJpy: Number(portfolio?.initialCashJpy ?? 0),
     realizedPnlJpy: realizedAgg,
     cyclesToday: cyclesTodayAgg,
+    cyclesTotal: cyclesTotalAgg,
   };
 }
 
@@ -89,6 +100,9 @@ export interface OpenPositionRow {
   symbol: string;
   quantity: number;
   avgEntryPrice: number;
+  currentPrice: number;
+  marketValueJpy: number;
+  unrealizedPnlJpy: number;
   openedAt: Date;
 }
 
@@ -100,13 +114,34 @@ export async function getOpenPositions(): Promise<OpenPositionRow[]> {
     .where(and(eq(positions.model, MODEL), eq(positions.status, "open")))
     .orderBy(desc(positions.openedAt));
 
-  return rows.map((r) => ({
-    positionId: r.position.id,
-    symbol: r.coin.symbol,
-    quantity: Number(r.position.quantity),
-    avgEntryPrice: Number(r.position.avgEntryPrice),
-    openedAt: r.position.openedAt,
-  }));
+  if (rows.length === 0) return [];
+
+  // 全銘柄ティッカー一括取得 (GMO API 1 コール、N 銘柄分)
+  let priceMap = new Map<string, number>();
+  try {
+    const tickers = await getTicker();
+    priceMap = new Map(tickers.map((t) => [t.symbol, Number(t.last)]));
+  } catch (err) {
+    logger.warn({ err }, "Ticker fetch failed in getOpenPositions, falling back to avg price");
+  }
+
+  return rows.map((r) => {
+    const qty = Number(r.position.quantity);
+    const avg = Number(r.position.avgEntryPrice);
+    const current = priceMap.get(r.coin.symbol) ?? avg; // fallback: 建値で評価
+    const marketValueJpy = qty * current;
+    const unrealizedPnlJpy = (current - avg) * qty;
+    return {
+      positionId: r.position.id,
+      symbol: r.coin.symbol,
+      quantity: qty,
+      avgEntryPrice: avg,
+      currentPrice: current,
+      marketValueJpy,
+      unrealizedPnlJpy,
+      openedAt: r.position.openedAt,
+    };
+  });
 }
 
 export interface RecentCycleRow {

@@ -70,6 +70,7 @@ Entry 時の仮説は二次情報。
 - 一般論・憶測の埋め草は書かない
 
 # その他制約
+- 自由テキスト (reasoning) は **日本語**
 - JSON のみ返す`;
 
 export const EXIT_DECISION_USER_PROMPT = `# 銘柄
