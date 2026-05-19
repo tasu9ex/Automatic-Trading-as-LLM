@@ -80,11 +80,11 @@ export const ExitDecisionOutputSchema = z.object({
   confidence: z.number().min(0).max(1),
   reasoning: z.string(),
   /**
-   * close 時の決済比率 (0.1-1.0)。1.0 = 全決済、<1.0 = 部分決済。
+   * close 時の決済比率 (% 整数、10-100)。100 = 全決済、<100 = 部分決済。
    * decision === "hold" のときは無視 (LLM が値を入れても OK)。
-   * 省略時は 1.0 として扱う (後方互換)。
+   * 省略時は 100 として扱う (後方互換)。
    */
-  close_ratio: z.number().min(0.1).max(1.0).default(1.0),
+  close_pct: z.number().int().min(10).max(100).default(100),
 });
 export type ExitDecisionOutput = z.infer<typeof ExitDecisionOutputSchema>;
 
