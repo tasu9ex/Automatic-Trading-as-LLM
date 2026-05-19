@@ -31,7 +31,7 @@ Phase A/B/C は構築完了済み、現在は Phase 5a (ペーパー検証) 進�
 
 - Vercel デプロイ + GitHub auto-deploy
 - Supabase Cloud Pooler 接続
-- Inngest Cloud cron (1h、Marketplace 統合)
+- Inngest Cloud cron (Marketplace 統合)
 - 認証: Supabase Auth + GitHub OAuth + 事前 seed allowlist (signups 無効化)
 - ダッシュボード (`/`、`/cycles/[id]`) — stats / open positions / recent cycles / Tier 別判断詳細
 - 全 UI 日本語化、Discord 通知日本語化
@@ -83,15 +83,33 @@ Phase A/B/C は構築完了済み、現在は Phase 5a (ペーパー検証) 進�
 ## 📋 Phase 5a 締めて Phase 5b 移行前
 
 - [ ] `pnpm langfuse:register` で調整済みプロンプトを production label に
+- [ ] **Inngest step.run() で Tier ごとにランタイム分割** (下記参照)
 - [ ] 本番 DB で 19 銘柄全部 enable (`set-enabled-coins.ts -- 全銘柄`)
 - [ ] 数サイクル本番自動稼働を監視 (Discord 通知 + Inngest dashboard)
 - [ ] 1〜2 週間のデータ蓄積
+
+### Inngest step.run() per-Tier 分割 (Phase 5b 前提)
+
+**動機**:
+- Vercel function 60s timeout に 19 銘柄並列で当たる懸念
+- Anthropic per-model ITPM 制限 (Sonnet 30K、19 × 1.5K = 28.5K) のリトライ余裕確保
+- step ごとに Inngest 側で retry / observability が効く
+
+**設計**:
+- 1 サイクル = 5 step を順次実行 (各 step 内で 19 銘柄並列、各 step が個別の 60s 予算)
+  1. `tier0-snapshot` — Perplexity + Grok + GMO 価格
+  2. `tier1-pre-analyst` — Haiku、skip_flag 振り分け
+  3. `tier2-analyst` — Opus、skip 銘柄は除外済み
+  4. `tier3-decision` — Sonnet (entry/exit)
+  5. `tier4-execute` — Critic + Allocator + Executor
+- 銘柄ごとの中間結果は DB (snapshots/preanalyst/analyst/decisions) に都度保存し、次 step が DB から読む
+- 失敗 step だけ Inngest が retry、復旧後の再実行は冪等 (該当銘柄の最新行 upsert)
 
 ---
 
 ## 🚀 Phase 5b: 1d × 19 銘柄 本格稼働
 
-- [ ] Inngest cron を `0 * * * *` → `0 0 * * *` (UTC 0 時 = JST 朝 9 時) に変更
+- [x] Inngest cron を `0 * * * *` → `0 0 * * *` (UTC 0 時 = JST 朝 9 時) に変更
 - [ ] Prompt caching 有効化 (Anthropic SDK の `cache_control` を Tier 2 system prompt に)
   - Opus 入力単価 $15 → $1.50 (90% OFF)、月コスト数千円減
 - [ ] 4-12 週間運用、PnL / Sharpe / 最大 DD 観測
