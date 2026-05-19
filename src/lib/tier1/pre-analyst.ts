@@ -22,7 +22,7 @@ function buildPriceSnapshotText(s: Snapshot): string {
 
 /**
  * Tier 1 Pre-Analyst: Haiku で銘柄スクリーニング。
- * skip_flag は MVP 初期は記録のみ、Tier 2 は常時実行される。
+ * skip_flag=true なら Tier 2 以降スキップ (保有/未保有問わず)。
  */
 export async function runPreAnalyst(snapshot: Snapshot): Promise<PreAnalystResult> {
   const resolved = await getPrompt("tier1/pre-analyst", {

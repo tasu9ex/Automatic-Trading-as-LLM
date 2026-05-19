@@ -190,7 +190,21 @@ export async function runJudgmentCycle(
         })
         .returning();
 
-      // 既存ポジション確認 (skip 判定で参照)
+      // skip_flag を保有/未保有問わず尊重 (毎サイクル fresh decision、Hold は default)
+      if (preRes.output.skip_flag) {
+        return {
+          coin,
+          snap,
+          analyst: null,
+          entry: null,
+          entryDecisionId: null,
+          exit: null,
+          exitDecisionId: null,
+          openPos: null,
+          skipped: true as const,
+        };
+      }
+
       const openPosPre = (
         await db
           .select()
@@ -204,22 +218,6 @@ export async function runJudgmentCycle(
           )
           .limit(1)
       )[0];
-
-      // skip_flag が立っていて未保有なら Tier 2 以降スキップ (コスト削減)
-      // 保有中はメンテのため必ず Tier 2 + Exit を回す
-      if (preRes.output.skip_flag && !openPosPre) {
-        return {
-          coin,
-          snap,
-          analyst: null,
-          entry: null,
-          entryDecisionId: null,
-          exit: null,
-          exitDecisionId: null,
-          openPos: null,
-          skipped: true as const,
-        };
-      }
 
       const analystRes = await runAnalyst(snap, preRes);
       const [analystRow] = await db
