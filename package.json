@@ -29,6 +29,7 @@
     "smoke:gemini": "tsx --env-file=.env.local scripts/smoke/gemini.ts",
     "smoke:grok": "tsx --env-file=.env.local scripts/smoke/grok.ts",
     "smoke:anthropic": "tsx --env-file=.env.local scripts/smoke/anthropic.ts",
+    "smoke:perplexity": "tsx --env-file=.env.local scripts/smoke/perplexity.ts",
     "status": "tsx --env-file=.env.production.local scripts/dev/status.ts",
     "status:local": "tsx --env-file=.env.local scripts/dev/status.ts"
   },

@@ -5,7 +5,7 @@ LLM 駆動の仮想通貨自動売買システム (個人運用、ペーパー�
 ## ドキュメント
 
 - [要件定義](docs/requirements.md)
-- [MVP タスク分解](docs/mvp-tasks.md)
+- [TODO / 進行中タスク](docs/todo.md)
 
 ## セットアップ
 
