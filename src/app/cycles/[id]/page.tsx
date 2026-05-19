@@ -136,12 +136,44 @@ export default async function CycleDetailPage({ params }: PageProps) {
                     <p className="whitespace-pre-wrap text-muted-foreground">
                       {c.snapshot.perplexitySummary ?? "(取得失敗または未設定)"}
                     </p>
+                    {c.snapshot.perplexityCitations.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {c.snapshot.perplexityCitations.map((url) => (
+                          <li key={url} className="truncate">
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-500 hover:underline"
+                            >
+                              {url}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                   <div>
                     <div className="mb-1 font-semibold">Grok (X センチメント・KOL)</div>
                     <p className="whitespace-pre-wrap text-muted-foreground">
                       {c.snapshot.grokSummary ?? "(取得失敗または未設定)"}
                     </p>
+                    {c.snapshot.grokCitations.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {c.snapshot.grokCitations.map((url) => (
+                          <li key={url} className="truncate">
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-500 hover:underline"
+                            >
+                              {url}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                   <div className="text-muted-foreground">
                     取得時刻: {new Date(c.snapshot.fetchedAt).toLocaleString("ja-JP")}

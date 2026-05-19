@@ -29,6 +29,13 @@
       "when": 1779024670501,
       "tag": "0003_mute_cardiac",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779157540598,
+      "tag": "0004_wealthy_goliath",
+      "breakpoints": true
     }
   ]
 }

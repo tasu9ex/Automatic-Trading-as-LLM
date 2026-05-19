@@ -146,7 +146,9 @@ export interface CycleDetail {
     symbol: string;
     snapshot: {
       perplexitySummary: string | null;
+      perplexityCitations: string[];
       grokSummary: string | null;
+      grokCitations: string[];
       fetchedAt: Date;
     } | null;
     preAnalyst: {
@@ -209,7 +211,9 @@ export async function getCycleDetail(cycleId: string): Promise<CycleDetail | nul
         symbol: coin.symbol,
         snapshot: {
           perplexitySummary: snap.perplexitySummary,
+          perplexityCitations: (snap.perplexityCitations ?? []) as string[],
           grokSummary: snap.grokSummary,
+          grokCitations: (snap.grokCitations ?? []) as string[],
           fetchedAt: snap.fetchedAt,
         },
         preAnalyst: preAnalyst

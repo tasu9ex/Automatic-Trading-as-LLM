@@ -41,7 +41,9 @@ export interface Snapshot {
   symbol: string;
   fetchedAt: Date;
   perplexitySummary: string;
+  perplexityCitations: string[];
   grokSummary: string;
+  grokCitations: string[];
   ohlcv1m: OHLCBar[];
   ohlcv1d: OHLCBar[];
   ticker: { last: string; bid: string; ask: string; volume: string };
@@ -117,6 +119,7 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
         systemPrompt: sentimentPrompt.compiled.system,
         userPrompt: sentimentPrompt.compiled.user,
         maxTokens: sentimentPrompt.config.maxTokens,
+        useTools: true,
       }),
     ]);
 
@@ -153,7 +156,10 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
     fetchedAt: new Date(),
     perplexitySummary:
       perplexityRes.status === "fulfilled" ? perplexityRes.value.content : "情報なし",
+    perplexityCitations:
+      perplexityRes.status === "fulfilled" ? (perplexityRes.value.citations ?? []) : [],
     grokSummary: grokRes.status === "fulfilled" ? grokRes.value.content : "情報なし",
+    grokCitations: grokRes.status === "fulfilled" ? (grokRes.value.citations ?? []) : [],
     ohlcv1m: ohlcv1mRes.status === "fulfilled" ? ohlcv1mRes.value : [],
     ohlcv1d: ohlcv1dRes.status === "fulfilled" ? ohlcv1dRes.value : [],
     ticker: {

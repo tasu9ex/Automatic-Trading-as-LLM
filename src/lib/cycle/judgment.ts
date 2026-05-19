@@ -74,7 +74,9 @@ async function recordSnapshot(cycleId: string, coinId: string, snap: Snapshot) {
       ohlcv1m: snap.ohlcv1m,
       ohlcv1h: [],
       perplexitySummary: snap.perplexitySummary,
+      perplexityCitations: snap.perplexityCitations,
       grokSummary: snap.grokSummary,
+      grokCitations: snap.grokCitations,
       fetchedAt: snap.fetchedAt,
     })
     .returning();
