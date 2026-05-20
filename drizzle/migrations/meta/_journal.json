@@ -5,71 +5,22 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1778998938621,
-      "tag": "0000_rainy_the_renegades",
+      "when": 1779182474845,
+      "tag": "0000_broken_starjammers",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1779003161066,
+      "when": 1779182475000,
       "tag": "0001_enable_rls",
       "breakpoints": true
     },
     {
       "idx": 2,
       "version": "7",
-      "when": 1779023788272,
-      "tag": "0002_solid_white_queen",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1779024670501,
-      "tag": "0003_mute_cardiac",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1779157540598,
-      "tag": "0004_wealthy_goliath",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1779170517162,
-      "tag": "0005_certain_tusk",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1779176454551,
-      "tag": "0006_workable_leper_queen",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1779177272917,
-      "tag": "0007_wooden_boom_boom",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1779180663581,
-      "tag": "0008_natural_ricochet",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1779183600000,
-      "tag": "0009_rename_model_to_strategy_or_llm",
+      "when": 1779267706575,
+      "tag": "0002_steep_longshot",
       "breakpoints": true
     }
   ]

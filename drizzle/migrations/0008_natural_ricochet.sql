@@ -1,1 +1,0 @@
-ALTER TABLE "decisions" ADD COLUMN "close_pct" numeric(5, 2);

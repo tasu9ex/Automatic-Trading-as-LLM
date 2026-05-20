@@ -1,6 +1,6 @@
 {
-  "id": "a76c1587-3fd3-4b74-a74a-f35ebe288b4f",
-  "prevId": "620acb78-f50e-431d-bc7c-92f05642268e",
+  "id": "c9d5776d-8c70-4a4f-a1a8-298760f64bed",
+  "prevId": "f3b61dd8-3369-49d0-976a-565629c312d5",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -27,8 +27,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "model": {
-          "name": "model",
+        "llm_model": {
+          "name": "llm_model",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -88,7 +88,7 @@
               "nulls": "last"
             },
             {
-              "expression": "model",
+              "expression": "llm_model",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -230,8 +230,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "model": {
-          "name": "model",
+        "llm_model": {
+          "name": "llm_model",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -292,7 +292,7 @@
               "nulls": "last"
             },
             {
-              "expression": "model",
+              "expression": "llm_model",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -334,8 +334,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "model": {
-          "name": "model",
+        "llm_model": {
+          "name": "llm_model",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -359,6 +359,12 @@
           "type": "numeric(4, 3)",
           "primaryKey": false,
           "notNull": true
+        },
+        "close_pct": {
+          "name": "close_pct",
+          "type": "numeric(5, 2)",
+          "primaryKey": false,
+          "notNull": false
         },
         "reasoning": {
           "name": "reasoning",
@@ -397,7 +403,7 @@
               "nulls": "last"
             },
             {
-              "expression": "model",
+              "expression": "llm_model",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -499,11 +505,25 @@
           "primaryKey": false,
           "notNull": false
         },
+        "perplexity_citations": {
+          "name": "perplexity_citations",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
         "grok_summary": {
           "name": "grok_summary",
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "grok_citations": {
+          "name": "grok_citations",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
         },
         "fetched_at": {
           "name": "fetched_at",
@@ -601,8 +621,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "model": {
-          "name": "model",
+        "strategy_id": {
+          "name": "strategy_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -639,23 +659,27 @@
           "primaryKey": false,
           "notNull": true
         },
-        "fee": {
-          "name": "fee",
-          "type": "numeric(20, 4)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "slippage": {
-          "name": "slippage",
-          "type": "numeric(20, 4)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
         "reason": {
           "name": "reason",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ttl_hours": {
+          "name": "ttl_hours",
+          "type": "numeric(6, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -672,7 +696,7 @@
           "name": "orders_model_coin_idx",
           "columns": [
             {
-              "expression": "model",
+              "expression": "strategy_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -762,8 +786,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "model": {
-          "name": "model",
+        "strategy_id": {
+          "name": "strategy_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -912,8 +936,8 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "model": {
-          "name": "model",
+        "strategy_id": {
+          "name": "strategy_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -962,11 +986,11 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "portfolios_model_unique": {
-          "name": "portfolios_model_unique",
+        "portfolios_strategy_id_unique": {
+          "name": "portfolios_strategy_id_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "model"
+            "strategy_id"
           ]
         }
       },
@@ -985,8 +1009,8 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "model": {
-          "name": "model",
+        "strategy_id": {
+          "name": "strategy_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -1035,6 +1059,30 @@
           "primaryKey": false,
           "notNull": false
         },
+        "entry_expected_holding_days_min": {
+          "name": "entry_expected_holding_days_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "entry_expected_holding_days_max": {
+          "name": "entry_expected_holding_days_max",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "entry_target_price_jpy": {
+          "name": "entry_target_price_jpy",
+          "type": "numeric(20, 4)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "entry_exit_condition": {
+          "name": "entry_exit_condition",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "opened_at": {
           "name": "opened_at",
           "type": "timestamp with time zone",
@@ -1074,7 +1122,7 @@
           "name": "positions_model_coin_status_idx",
           "columns": [
             {
-              "expression": "model",
+              "expression": "strategy_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1136,8 +1184,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "model": {
-          "name": "model",
+        "llm_model": {
+          "name": "llm_model",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -1236,8 +1284,8 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "model": {
-          "name": "model",
+        "strategy_id": {
+          "name": "strategy_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -1364,6 +1412,26 @@
           "primaryKey": false,
           "notNull": false
         },
+        "cycle_interval_hours": {
+          "name": "cycle_interval_hours",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 24
+        },
+        "next_scheduled_at": {
+          "name": "next_scheduled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cumulative_cost_usd": {
+          "name": "cumulative_cost_usd",
+          "type": "numeric(12, 6)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp with time zone",
@@ -1409,8 +1477,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "model": {
-          "name": "model",
+        "strategy_id": {
+          "name": "strategy_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -1441,6 +1509,13 @@
           "notNull": true,
           "default": "'0'"
         },
+        "slippage": {
+          "name": "slippage",
+          "type": "numeric(20, 4)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
         "pnl_jpy": {
           "name": "pnl_jpy",
           "type": "numeric(20, 4)",
@@ -1466,7 +1541,7 @@
           "name": "trades_model_coin_idx",
           "columns": [
             {
-              "expression": "model",
+              "expression": "strategy_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1587,7 +1662,10 @@
       "name": "order_status",
       "schema": "public",
       "values": [
+        "placed",
         "filled",
+        "expired",
+        "cancelled",
         "rejected",
         "clipped"
       ]
@@ -1631,6 +1709,7 @@
         "critic_veto",
         "critic_modify",
         "llm_failure",
+        "cycle_aborted",
         "human_intervention",
         "price_monitor_triggered",
         "data_fetch_failed"

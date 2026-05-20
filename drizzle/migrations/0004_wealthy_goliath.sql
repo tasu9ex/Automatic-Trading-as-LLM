@@ -1,2 +1,0 @@
-ALTER TABLE "market_snapshots" ADD COLUMN "perplexity_citations" jsonb DEFAULT '[]'::jsonb NOT NULL;--> statement-breakpoint
-ALTER TABLE "market_snapshots" ADD COLUMN "grok_citations" jsonb DEFAULT '[]'::jsonb NOT NULL;

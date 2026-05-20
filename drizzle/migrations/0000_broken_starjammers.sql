@@ -2,9 +2,9 @@ CREATE TYPE "public"."critic_decision" AS ENUM('approve', 'veto', 'modify');--> 
 CREATE TYPE "public"."decision_kind" AS ENUM('entry', 'exit');--> statement-breakpoint
 CREATE TYPE "public"."decision_result" AS ENUM('buy', 'no', 'hold', 'close');--> statement-breakpoint
 CREATE TYPE "public"."order_side" AS ENUM('buy', 'sell');--> statement-breakpoint
-CREATE TYPE "public"."order_status" AS ENUM('filled', 'rejected', 'clipped');--> statement-breakpoint
+CREATE TYPE "public"."order_status" AS ENUM('placed', 'filled', 'expired', 'cancelled', 'rejected', 'clipped');--> statement-breakpoint
 CREATE TYPE "public"."pending_order_actor" AS ENUM('code', 'llm', 'human');--> statement-breakpoint
-CREATE TYPE "public"."pending_order_kind" AS ENUM('stop_loss_entry_based', 'stop_loss_peak_based');--> statement-breakpoint
+CREATE TYPE "public"."pending_order_kind" AS ENUM('stop_loss_entry_based', 'stop_loss_peak_based', 'stop_limit_primary', 'stop_market_entry', 'stop_market_peak');--> statement-breakpoint
 CREATE TYPE "public"."position_status" AS ENUM('open', 'closed');--> statement-breakpoint
 CREATE TYPE "public"."system_event_kind" AS ENUM('system_started', 'system_paused', 'system_resumed', 'kill_switch_triggered', 'critic_veto', 'critic_modify', 'llm_failure', 'human_intervention', 'price_monitor_triggered', 'data_fetch_failed');--> statement-breakpoint
 CREATE TYPE "public"."system_event_severity" AS ENUM('info', 'warning', 'error', 'critical');--> statement-breakpoint
@@ -13,7 +13,7 @@ CREATE TABLE "analyst_outputs" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"snapshot_id" uuid NOT NULL,
 	"pre_analyst_id" uuid,
-	"model" text NOT NULL,
+	"llm_model" text NOT NULL,
 	"fundamental" jsonb NOT NULL,
 	"sentiment" jsonb NOT NULL,
 	"technical" jsonb NOT NULL,
@@ -39,7 +39,7 @@ CREATE TABLE "coins" (
 CREATE TABLE "critic_outputs" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"cycle_id" uuid NOT NULL,
-	"model" text NOT NULL,
+	"llm_model" text NOT NULL,
 	"decision" "critic_decision" NOT NULL,
 	"allocation_proposal" jsonb NOT NULL,
 	"adjustments" jsonb,
@@ -53,10 +53,11 @@ CREATE TABLE "decisions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"analyst_id" uuid NOT NULL,
 	"coin_id" uuid NOT NULL,
-	"model" text NOT NULL,
+	"llm_model" text NOT NULL,
 	"kind" "decision_kind" NOT NULL,
 	"result" "decision_result" NOT NULL,
 	"confidence" numeric(4, 3) NOT NULL,
+	"close_pct" numeric(5, 2),
 	"reasoning" text,
 	"prompt_version" text,
 	"langfuse_trace_id" text,
@@ -70,7 +71,9 @@ CREATE TABLE "market_snapshots" (
 	"ohlcv_1m" jsonb NOT NULL,
 	"ohlcv_1h" jsonb NOT NULL,
 	"perplexity_summary" text,
+	"perplexity_citations" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"grok_summary" text,
+	"grok_citations" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"fetched_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -79,7 +82,7 @@ CREATE TABLE "orders" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"decision_id" uuid,
 	"coin_id" uuid NOT NULL,
-	"model" text NOT NULL,
+	"strategy_id" text NOT NULL,
 	"side" "order_side" NOT NULL,
 	"status" "order_status" NOT NULL,
 	"size_jpy" numeric(20, 4) NOT NULL,
@@ -88,6 +91,9 @@ CREATE TABLE "orders" (
 	"fee" numeric(20, 4) DEFAULT '0' NOT NULL,
 	"slippage" numeric(20, 4) DEFAULT '0' NOT NULL,
 	"reason" text,
+	"ttl_hours" numeric(6, 2),
+	"expires_at" timestamp with time zone,
+	"completed_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -95,9 +101,10 @@ CREATE TABLE "pending_orders" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"position_id" uuid NOT NULL,
 	"coin_id" uuid NOT NULL,
-	"model" text NOT NULL,
+	"strategy_id" text NOT NULL,
 	"kind" "pending_order_kind" NOT NULL,
 	"trigger_price" numeric(20, 4) NOT NULL,
+	"limit_price" numeric(20, 4),
 	"created_by" "pending_order_actor" DEFAULT 'code' NOT NULL,
 	"active" boolean DEFAULT true NOT NULL,
 	"triggered_at" timestamp with time zone,
@@ -108,19 +115,19 @@ CREATE TABLE "pending_orders" (
 --> statement-breakpoint
 CREATE TABLE "portfolios" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"model" text NOT NULL,
+	"strategy_id" text NOT NULL,
 	"description" text,
 	"initial_cash_jpy" numeric(20, 4) NOT NULL,
 	"cash_jpy" numeric(20, 4) NOT NULL,
 	"enabled" boolean DEFAULT true NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "portfolios_model_unique" UNIQUE("model")
+	CONSTRAINT "portfolios_strategy_id_unique" UNIQUE("strategy_id")
 );
 --> statement-breakpoint
 CREATE TABLE "positions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"model" text NOT NULL,
+	"strategy_id" text NOT NULL,
 	"coin_id" uuid NOT NULL,
 	"status" "position_status" DEFAULT 'open' NOT NULL,
 	"quantity" numeric(30, 10) NOT NULL,
@@ -128,6 +135,10 @@ CREATE TABLE "positions" (
 	"peak_price" numeric(20, 4) NOT NULL,
 	"trough_price" numeric(20, 4) NOT NULL,
 	"entry_reason" text,
+	"entry_expected_holding_days_min" integer,
+	"entry_expected_holding_days_max" integer,
+	"entry_target_price_jpy" numeric(20, 4),
+	"entry_exit_condition" text,
 	"opened_at" timestamp with time zone NOT NULL,
 	"closed_at" timestamp with time zone,
 	"realized_pnl_jpy" numeric(20, 4) DEFAULT '0' NOT NULL,
@@ -138,7 +149,7 @@ CREATE TABLE "positions" (
 CREATE TABLE "pre_analyst_outputs" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"snapshot_id" uuid NOT NULL,
-	"model" text NOT NULL,
+	"llm_model" text NOT NULL,
 	"summary" text NOT NULL,
 	"relevance_score" numeric(4, 3) NOT NULL,
 	"skip_flag" boolean DEFAULT false NOT NULL,
@@ -150,7 +161,7 @@ CREATE TABLE "pre_analyst_outputs" (
 --> statement-breakpoint
 CREATE TABLE "system_events" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"model" text,
+	"strategy_id" text,
 	"kind" "system_event_kind" NOT NULL,
 	"severity" "system_event_severity" DEFAULT 'info' NOT NULL,
 	"message" text NOT NULL,
@@ -167,6 +178,9 @@ CREATE TABLE "system_state" (
 	"killed_at" timestamp with time zone,
 	"last_cycle_id" uuid,
 	"last_cycle_at" timestamp with time zone,
+	"cycle_interval_hours" integer DEFAULT 24 NOT NULL,
+	"next_scheduled_at" timestamp with time zone,
+	"cumulative_cost_usd" numeric(12, 6) DEFAULT '0' NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -175,7 +189,7 @@ CREATE TABLE "trades" (
 	"position_id" uuid NOT NULL,
 	"order_id" uuid NOT NULL,
 	"coin_id" uuid NOT NULL,
-	"model" text NOT NULL,
+	"strategy_id" text NOT NULL,
 	"side" "order_side" NOT NULL,
 	"quantity" numeric(30, 10) NOT NULL,
 	"price" numeric(20, 4) NOT NULL,
@@ -199,18 +213,18 @@ ALTER TABLE "pre_analyst_outputs" ADD CONSTRAINT "pre_analyst_outputs_snapshot_i
 ALTER TABLE "trades" ADD CONSTRAINT "trades_position_id_positions_id_fk" FOREIGN KEY ("position_id") REFERENCES "public"."positions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "trades" ADD CONSTRAINT "trades_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "trades" ADD CONSTRAINT "trades_coin_id_coins_id_fk" FOREIGN KEY ("coin_id") REFERENCES "public"."coins"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "analyst_outputs_snapshot_model_idx" ON "analyst_outputs" USING btree ("snapshot_id","model");--> statement-breakpoint
-CREATE INDEX "critic_outputs_cycle_model_idx" ON "critic_outputs" USING btree ("cycle_id","model");--> statement-breakpoint
-CREATE INDEX "decisions_coin_model_idx" ON "decisions" USING btree ("coin_id","model");--> statement-breakpoint
+CREATE INDEX "analyst_outputs_snapshot_model_idx" ON "analyst_outputs" USING btree ("snapshot_id","llm_model");--> statement-breakpoint
+CREATE INDEX "critic_outputs_cycle_model_idx" ON "critic_outputs" USING btree ("cycle_id","llm_model");--> statement-breakpoint
+CREATE INDEX "decisions_coin_model_idx" ON "decisions" USING btree ("coin_id","llm_model");--> statement-breakpoint
 CREATE INDEX "decisions_created_at_idx" ON "decisions" USING btree ("created_at");--> statement-breakpoint
 CREATE INDEX "market_snapshots_cycle_coin_idx" ON "market_snapshots" USING btree ("cycle_id","coin_id");--> statement-breakpoint
 CREATE INDEX "market_snapshots_fetched_at_idx" ON "market_snapshots" USING btree ("fetched_at");--> statement-breakpoint
-CREATE INDEX "orders_model_coin_idx" ON "orders" USING btree ("model","coin_id");--> statement-breakpoint
+CREATE INDEX "orders_model_coin_idx" ON "orders" USING btree ("strategy_id","coin_id");--> statement-breakpoint
 CREATE INDEX "orders_created_at_idx" ON "orders" USING btree ("created_at");--> statement-breakpoint
 CREATE INDEX "pending_orders_active_idx" ON "pending_orders" USING btree ("active","coin_id");--> statement-breakpoint
 CREATE INDEX "pending_orders_position_idx" ON "pending_orders" USING btree ("position_id");--> statement-breakpoint
-CREATE INDEX "positions_model_coin_status_idx" ON "positions" USING btree ("model","coin_id","status");--> statement-breakpoint
+CREATE INDEX "positions_model_coin_status_idx" ON "positions" USING btree ("strategy_id","coin_id","status");--> statement-breakpoint
 CREATE INDEX "pre_analyst_outputs_snapshot_idx" ON "pre_analyst_outputs" USING btree ("snapshot_id");--> statement-breakpoint
 CREATE INDEX "system_events_kind_occurred_at_idx" ON "system_events" USING btree ("kind","occurred_at");--> statement-breakpoint
-CREATE INDEX "trades_model_coin_idx" ON "trades" USING btree ("model","coin_id");--> statement-breakpoint
+CREATE INDEX "trades_model_coin_idx" ON "trades" USING btree ("strategy_id","coin_id");--> statement-breakpoint
 CREATE INDEX "trades_executed_at_idx" ON "trades" USING btree ("executed_at");
