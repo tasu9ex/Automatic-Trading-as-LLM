@@ -16,6 +16,19 @@ function decisionVariant(result: string): "default" | "destructive" | "outline" 
   return "destructive";
 }
 
+const DECISION_JP: Record<string, string> = {
+  buy: "買い",
+  no: "見送り",
+  hold: "保持",
+  close: "決済",
+  approve: "承認",
+  modify: "修正",
+  veto: "拒否",
+};
+function jpDecision(v: string): string {
+  return DECISION_JP[v] ?? v;
+}
+
 function isAllocationMap(v: unknown): v is Record<string, number> {
   return (
     v !== null &&
@@ -88,7 +101,7 @@ export default async function CycleDetailPage({ params }: PageProps) {
                     : "destructive"
               }
             >
-              {detail.critic.decision}
+              {jpDecision(detail.critic.decision)}
             </Badge>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
@@ -277,7 +290,7 @@ export default async function CycleDetailPage({ params }: PageProps) {
                     <div className="mb-1 flex items-center gap-2">
                       <h4 className="font-semibold text-xs">Entry (新規)</h4>
                       <Badge variant={decisionVariant(c.entryDecision.result)}>
-                        {c.entryDecision.result}
+                        {jpDecision(c.entryDecision.result)}
                       </Badge>
                       <span className="text-muted-foreground text-xs">
                         確信度 {c.entryDecision.confidence.toFixed(2)}
@@ -301,7 +314,7 @@ export default async function CycleDetailPage({ params }: PageProps) {
                     <div className="mb-1 flex items-center gap-2">
                       <h4 className="font-semibold text-xs">Exit (決済)</h4>
                       <Badge variant={decisionVariant(c.exitDecision.result)}>
-                        {c.exitDecision.result}
+                        {jpDecision(c.exitDecision.result)}
                       </Badge>
                       <span className="text-muted-foreground text-xs">
                         確信度 {c.exitDecision.confidence.toFixed(2)}

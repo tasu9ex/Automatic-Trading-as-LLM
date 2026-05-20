@@ -67,13 +67,14 @@ export default async function Home() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>累計損益 (時価評価)</CardDescription>
-            <CardTitle
-              className={`font-mono text-lg ${totalPnl >= 0 ? "text-emerald-500" : "text-red-500"}`}
-            >
-              {jpy(totalPnl)} ({totalPnlPct.toFixed(2)}%)
-            </CardTitle>
+            <CardDescription>資産時価総額</CardDescription>
+            <CardTitle className="font-mono text-lg">{jpy(equity)}</CardTitle>
             <CardDescription className="pt-1 text-xs">
+              累計:{" "}
+              <span className={totalPnl >= 0 ? "text-emerald-500" : "text-red-500"}>
+                {jpy(totalPnl)} ({totalPnlPct.toFixed(2)}%)
+              </span>
+              {" / "}
               含み:{" "}
               <span className={unrealizedPnl >= 0 ? "text-emerald-500" : "text-red-500"}>
                 {jpy(unrealizedPnl)}
@@ -152,7 +153,13 @@ export default async function Home() {
                               : "destructive"
                         }
                       >
-                        {c.criticDecision}
+                        {c.criticDecision === "approve"
+                          ? "承認"
+                          : c.criticDecision === "modify"
+                            ? "修正"
+                            : c.criticDecision === "veto"
+                              ? "拒否"
+                              : c.criticDecision}
                       </Badge>
                     </div>
                   </Link>
