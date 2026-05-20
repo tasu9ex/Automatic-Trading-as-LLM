@@ -747,6 +747,8 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   // approve / modify: Exit 実行 → cash refresh → Risk Clipper + Entry 実行
   let exitsExecuted = 0;
   let entriesExecutedFinal = 0;
+  const executedEntries: Array<{ symbol: string; budget: number }> = [];
+  const skippedEntries: Array<{ symbol: string; budget: number; reason: string }> = [];
   let clipped: ReturnType<typeof applyRiskClipper> = {
     proposal: {},
     changes: [],
@@ -808,12 +810,23 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       logger.info({ changes: clipped.changes }, "Risk Clipper applied");
     }
 
-    // Entry 実行
+    // Entry 実行 (executedSymbols / skippedSymbols を集計して通知に反映)
     for (const c of ctxs) {
       const budget = clipped.proposal[c.coin.symbol];
       if (!budget) continue;
       const lastPrice = Number(c.snap.ticker.last) || 0;
-      if (lastPrice <= 0) continue;
+      if (lastPrice <= 0) {
+        skippedEntries.push({
+          symbol: c.coin.symbol,
+          budget,
+          reason: "1m bar 空で参考価格 0 円 (Tier 0 データ取得問題)",
+        });
+        logger.warn(
+          { symbol: c.coin.symbol, budget },
+          "executeEntry skipped: lastPrice <= 0 (1m bar empty)",
+        );
+        continue;
+      }
       try {
         await executeEntry({
           strategyId,
@@ -824,9 +837,15 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
           takerFeeRate: Number(c.coin.takerFeeRate),
           entryReason: c.entry?.reasoning ?? null,
         });
+        executedEntries.push({ symbol: c.coin.symbol, budget });
         entriesExecutedFinal++;
       } catch (err) {
         logger.error({ err, symbol: c.coin.symbol }, "executeEntry failed");
+        skippedEntries.push({
+          symbol: c.coin.symbol,
+          budget,
+          reason: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
+        });
         await notify({
           level: "error",
           title: `🚨 Entry 失敗 ${c.coin.symbol}`,
@@ -891,9 +910,11 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   );
 
   // 約定明細 + 現ポジ一覧を embed body (markdown) に詰める
-  const buys = ctxs
-    .filter((c) => clipped.proposal[c.coin.symbol])
-    .map((c) => `• ${c.coin.symbol}: ¥${(clipped.proposal[c.coin.symbol] ?? 0).toLocaleString()}`);
+  // buys は "実際に約定した銘柄" のみ。提案 (proposal) と実約定の差は skippedEntries に集約。
+  const buys = executedEntries.map((e) => `• ${e.symbol}: ¥${e.budget.toLocaleString()}`);
+  const skippedBuys = skippedEntries.map(
+    (e) => `• ${e.symbol}: ¥${e.budget.toLocaleString()} — ${e.reason}`,
+  );
   // veto された場合 closes/buys は空 (Exit 実行スキップ済み)
   const closes =
     critic.output.decision === "veto" ? [] : exitsToRun.map((c) => `• ${c.coin.symbol}`);
@@ -948,6 +969,9 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
 
   const bodyParts: string[] = [];
   if (buys.length > 0) bodyParts.push(`**📥 新規 Entry**\n${buys.join("\n")}`);
+  if (skippedBuys.length > 0) {
+    bodyParts.push(`**⚠️ Entry 未実行**\n${skippedBuys.join("\n")}`);
+  }
   if (closes.length > 0) bodyParts.push(`**📕 Close**\n${closes.join("\n")}`);
   if (positionLines.length > 0) {
     bodyParts.push(`**📊 保有ポジション (${positionLines.length})**\n${positionLines.join("\n")}`);

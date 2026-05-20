@@ -635,13 +635,45 @@
 
 ---
 
+### 31. Entry executor が `lastPrice <= 0` で silent skip + Discord 通知が提案を表示
+
+**症状**
+
+- 観測ケース: 2026-05-21 JST 06:01 のサイクル。Critic 承認の Entry 3 銘柄 (BTC / XRP / SOL @ ¥125,000 each) が提案され、Discord 「🔁 サイクル完了」に 3 件表示されたが、実際は **BTC のみ約定**、entry 件数フィールドも 1。残現金からも BTC 1 件のみ実行が確定。
+- `executeEntry` の前に `if (lastPrice <= 0) continue;` ([phases.ts:816](src/lib/cycle/phases.ts#L816)) があり、エラーログも通知も出さずに silent skip
+- Discord の `buys` リストは `clipped.proposal` (= Critic 承認後の **提案**) を showing しているので、実行されなかった分も表示
+
+**真因**
+
+- `lastPrice = 0` は `loadSnapshot` で 1m bars 配列が空 → `ticker.last = "0"` ([phases.ts:204](src/lib/cycle/phases.ts#L204))
+- §27 のフォールバックは GMO 404 のみカバー。**200 + 空配列** はフォールバックしないので空のまま DB に保存される
+
+**影響**
+
+- ユーザは「3 銘柄エントリ」と思い込むが実際は 1 銘柄のみ → 認知齟齬
+- 「Entry が走らなかった理由」が一切通知されず、Sentry にも出ない (warn ログのみ)
+- 累計コスト計算は問題なし（実約定のみ反映）だが UI 上の "新規 Entry" 内訳と矛盾
+
+**関連ファイル**
+
+- `src/lib/cycle/phases.ts` — `finalize` Entry ループ + `buys` 構築
+- `src/lib/tier0/fetch-snapshot.ts` — `getKlines1mWithFallback`
+
+**修正の方向性**
+
+- Tier 0: 1m kline が 200 でも空配列なら前日にフォールバック (`getKlines1mWithFallback` 拡張)
+- Executor: `lastPrice <= 0` のとき `skippedEntries` 配列に記録し、Discord body の `⚠️ Entry 未実行` セクションに reason 付きで出す
+- 約定エラーで catch した場合も `skippedEntries` に push し、同じ表記で見せる
+
+---
+
 ## 修正優先度（推奨）
 
 | 順 | ID | 内容 |
 |----|-----|------|
 | 1 | §1 | Entry 仮説の永続化 |
 | 2 | §26 | `recordCycleFailure` から kill-switch を呼ぶ（auto-pause が機能してない） |
-| 3 | §27 | GMO 1m kline 404 → 前日フォールバック |
+| 3 | §27, §31 | GMO 1m kline 404 / 空配列 → 前日フォールバック + Entry skip 表示 |
 | 4 | §28, §29 | Discord 推定原因の動的化 + counter 表示クランプ |
 | 5 | §30 | ダッシュボードに失敗 cycle を表示 |
 | 6 | §18 | 連続失敗 auto-pause の経路修正（§4 / §20 と同時） |
@@ -678,11 +710,3 @@
 - 作業リスト: `docs/todo.md`
 - パイプライン本体: `src/lib/cycle/phases.ts`
 - Inngest: `src/lib/inngest/functions.ts`
-
-
-
-最近のサイクル
-直近 0 サイクル
-まだ実行されていません
-
-になりエラーのやつが表示されないエラーも載せるで

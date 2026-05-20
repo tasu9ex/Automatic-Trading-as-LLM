@@ -101,17 +101,25 @@ function currentYear(): string {
 }
 
 /**
- * 1m kline は date が変わった直後に GMO が 404 を返すことがある (低流動性銘柄、早朝)。
- * 今日 → 失敗なら前日 にフォールバックすることでサイクル中断を回避。
+ * 1m kline は date が変わった直後に GMO が 404 もしくは 200 + 空配列を返すことがある
+ * (低流動性銘柄、早朝)。今日が 404 / 空 なら前日にフォールバックしてサイクル続行。
+ *
+ * 空のまま finalize に渡すと ticker.last が "0" に化け、executor が silent skip
+ * してしまうため (XRP / SOL 実観測)、ここで必ず非空にする。
  */
 async function getKlines1mWithFallback(symbol: string, todayDate: string): Promise<OHLCBar[]> {
+  const yesterday = yesterdayYyyymmdd();
   try {
-    return await getKlines(symbol, "1min", todayDate);
+    const bars = await getKlines(symbol, "1min", todayDate);
+    if (bars.length > 0) return bars;
+    logger.warn(
+      { symbol, todayDate, yesterday },
+      "1m kline empty for today (200 + empty), falling back to yesterday",
+    );
+    return await getKlines(symbol, "1min", yesterday);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // GMO 404 は "GMO 404: <body>" 形式で throw される (gmo.ts:67)
     if (!/GMO\s*404/i.test(msg)) throw err;
-    const yesterday = yesterdayYyyymmdd();
     logger.warn(
       { symbol, todayDate, yesterday },
       "1m kline 404 for today, falling back to yesterday",
