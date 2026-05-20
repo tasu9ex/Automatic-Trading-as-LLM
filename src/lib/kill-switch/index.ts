@@ -1,11 +1,18 @@
 import { db } from "@/db/client";
-import { coins, portfolios, positions, systemEvents, systemState } from "@/db/schema";
+import {
+  coins,
+  marketSnapshots,
+  portfolios,
+  positions,
+  systemEvents,
+  systemState,
+} from "@/db/schema";
 import { getTicker } from "@/lib/clients/gmo";
 import { AUTO_PAUSE_THRESHOLD, PORTFOLIO_DD_TRIGGER } from "@/lib/constants/risk";
 import { executeExit } from "@/lib/executor";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 const logger = createLogger("kill-switch");
 
@@ -39,15 +46,59 @@ export async function checkAndTriggerKillSwitch(
     .innerJoin(coins, eq(positions.coinId, coins.id))
     .where(and(eq(positions.strategyId, input.strategyId), eq(positions.status, "open")));
 
+  // §8: ticker 取得失敗時に position を silent skip すると DD が過小評価される。
+  // フォールバック順:
+  //   1. GMO ticker (現値)
+  //   2. 直近 market_snapshots の ohlcv_1m 最終 close
+  //   3. positions.peakPrice (保守的: trail で最も楽観的だがゼロよりマシ)
+  //   4. positions.avgEntryPrice (建値、最も楽観的)
   let marketValue = 0;
   for (const { position, coin } of open) {
+    let lastPrice = 0;
+    let source: "ticker" | "snapshot" | "peak" | "avg" = "ticker";
     try {
       const ticker = await getTicker(`${coin.symbol}_JPY`);
-      const lastPrice = Number(ticker[0]?.last ?? 0);
-      marketValue += Number(position.quantity) * lastPrice;
-    } catch {
-      // fail to estimate, skip
+      lastPrice = Number(ticker[0]?.last ?? 0);
+    } catch (err) {
+      logger.warn(
+        { symbol: coin.symbol, err },
+        "Kill-switch: ticker fetch failed, falling back to snapshot/position price",
+      );
     }
+    if (lastPrice <= 0) {
+      const snap = (
+        await db
+          .select({ ohlcv1m: marketSnapshots.ohlcv1m })
+          .from(marketSnapshots)
+          .where(eq(marketSnapshots.coinId, coin.id))
+          .orderBy(desc(marketSnapshots.fetchedAt))
+          .limit(1)
+      )[0];
+      const bars = (snap?.ohlcv1m as Array<{ close: string }> | null) ?? [];
+      const lastBar = bars.at(-1);
+      if (lastBar?.close) {
+        lastPrice = Number(lastBar.close);
+        source = "snapshot";
+      }
+    }
+    if (lastPrice <= 0) {
+      const peak = Number(position.peakPrice ?? 0);
+      if (peak > 0) {
+        lastPrice = peak;
+        source = "peak";
+      }
+    }
+    if (lastPrice <= 0) {
+      lastPrice = Number(position.avgEntryPrice);
+      source = "avg";
+    }
+    if (source !== "ticker") {
+      logger.warn(
+        { symbol: coin.symbol, source, lastPrice },
+        "Kill-switch: using fallback price for DD calc",
+      );
+    }
+    marketValue += Number(position.quantity) * lastPrice;
   }
   const totalValue = Number(portfolio.cashJpy) + marketValue;
   const initial = Number(portfolio.initialCashJpy);
