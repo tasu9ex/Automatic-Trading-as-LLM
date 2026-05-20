@@ -43,6 +43,13 @@
       "when": 1779277708113,
       "tag": "0005_vengeful_madame_masque",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779320995286,
+      "tag": "0006_open_kang",
+      "breakpoints": true
     }
   ]
 }

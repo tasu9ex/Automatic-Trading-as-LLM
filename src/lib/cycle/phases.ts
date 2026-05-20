@@ -446,6 +446,17 @@ export async function tier3Decisions(cycleId: string, strategyId: string): Promi
               confidence: entry.output.confidence.toFixed(3),
               reasoning: entry.output.reasoning,
               promptVersion: entry.promptVersion,
+              // §1: Entry 仮説 (Exit プロンプトが参考値として参照)
+              entryExpectedHoldingDaysMin:
+                entry.output.expected_holding_days?.min !== undefined
+                  ? String(entry.output.expected_holding_days.min)
+                  : null,
+              entryExpectedHoldingDaysMax:
+                entry.output.expected_holding_days?.max !== undefined
+                  ? String(entry.output.expected_holding_days.max)
+                  : null,
+              entryTargetPriceJpy: entry.output.target_price_jpy?.toFixed(4) ?? null,
+              entryExitCondition: entry.output.exit_condition ?? null,
             });
           }
 
@@ -903,6 +914,14 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
         continue;
       }
       try {
+        // §1: Entry 仮説を decisions row から拾って executor に渡す。positions.entry_*
+        // に書き込まれ、Exit プロンプトの reference として活用される。
+        const minDays = c.entry?.entryExpectedHoldingDaysMin
+          ? Number(c.entry.entryExpectedHoldingDaysMin)
+          : null;
+        const maxDays = c.entry?.entryExpectedHoldingDaysMax
+          ? Number(c.entry.entryExpectedHoldingDaysMax)
+          : null;
         await executeEntry({
           strategyId,
           symbol: c.coin.symbol,
@@ -911,6 +930,10 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
           budgetJpy: budget,
           takerFeeRate: Number(c.coin.takerFeeRate),
           entryReason: c.entry?.reasoning ?? null,
+          expectedHoldingDays:
+            minDays !== null && maxDays !== null ? { min: minDays, max: maxDays } : null,
+          targetPriceJpy: c.entry?.entryTargetPriceJpy ? Number(c.entry.entryTargetPriceJpy) : null,
+          exitCondition: c.entry?.entryExitCondition ?? null,
         });
         executedEntries.push({ symbol: c.coin.symbol, budget });
         entriesExecutedFinal++;

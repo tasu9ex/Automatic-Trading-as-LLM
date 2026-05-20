@@ -20,6 +20,19 @@ export const decisions = pgTable(
     confidence: numeric("confidence", { precision: 4, scale: 3 }).notNull(),
     /** Exit のみ: 決済比率 % (整数 10-100)。entry は null。100=全決済、<100=部分決済 */
     closePct: numeric("close_pct", { precision: 5, scale: 2 }),
+    /** Entry のみ: 保有想定日数 (LLM 仮説、参考値)。 */
+    entryExpectedHoldingDaysMin: numeric("entry_expected_holding_days_min", {
+      precision: 6,
+      scale: 0,
+    }),
+    entryExpectedHoldingDaysMax: numeric("entry_expected_holding_days_max", {
+      precision: 6,
+      scale: 0,
+    }),
+    /** Entry のみ: 目標価格 JPY。 */
+    entryTargetPriceJpy: numeric("entry_target_price_jpy", { precision: 20, scale: 4 }),
+    /** Entry のみ: 出口条件の自然文 (max 300 char)。 */
+    entryExitCondition: text("entry_exit_condition"),
     reasoning: text("reasoning"),
     promptVersion: text("prompt_version"),
     langfuseTraceId: text("langfuse_trace_id"),
