@@ -644,10 +644,15 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   const currentCashJpy = Number(currentPortfolio?.cashJpy ?? 0);
 
   const exitsToRun = ctxs.filter((c) => c.exit?.result === "close" && c.openPos);
+  // §10: taker fee を控除した手取りで cash を予測する (calculateFill と一致)。
+  // 過大評価していると Allocator が大きく配って Risk Clipper で削られるロスが出やすい。
   const expectedCloseCash = exitsToRun.reduce((sum, c) => {
     const price = Number(c.snap.ticker.last) || 0;
     const qty = Number(c.openPos?.quantity ?? 0);
-    return sum + qty * price;
+    const takerFee = Number(c.coin.takerFeeRate);
+    const grossCash = qty * price;
+    const netCash = grossCash * (1 - takerFee);
+    return sum + netCash;
   }, 0);
   const projectedCashJpy = currentCashJpy + expectedCloseCash;
 
@@ -877,13 +882,30 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       }
     }
 
-    // Exit 後の cash refresh
+    // Exit 後の cash + positions refresh (§19)
     const refreshedPortfolio = (
       await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
     )[0];
     const cashAfterExits = Number(refreshedPortfolio?.cashJpy ?? 0);
 
-    const currentInvested = currentPositions.reduce((s, p) => s + p.qty * p.avgPrice, 0);
+    // §19: in-memory ctxs ではなく DB から再取得 (Exit 約定が反映済の状態)
+    const refreshedPositions = await db
+      .select()
+      .from(positions)
+      .where(and(eq(positions.strategyId, strategyId), eq(positions.status, "open")));
+
+    // §11: 原価ベース (avgEntryPrice) ではなく mark-to-market (current price) で
+    // 実エクスポージャを評価。lastPriceByCoinId は finalize の後段で構築するため
+    // ここで先に作る (ctxs.snap.ticker.last ベース、fallback は建値)。
+    const priceByCoinId = new Map<string, number>(
+      ctxs.map((c) => [c.coin.id, Number(c.snap.ticker.last) || 0]),
+    );
+    const currentInvested = refreshedPositions.reduce((s, p) => {
+      const qty = Number(p.quantity);
+      const mtmPrice = priceByCoinId.get(p.coinId);
+      const price = mtmPrice && mtmPrice > 0 ? mtmPrice : Number(p.avgEntryPrice);
+      return s + qty * price;
+    }, 0);
     clipped = applyRiskClipper({
       proposal: finalProposal,
       availableCashJpy: cashAfterExits,
