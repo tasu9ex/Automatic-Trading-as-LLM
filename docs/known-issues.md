@@ -732,6 +732,84 @@
 
 ---
 
+### 33. Critic に "システム健全性サマリ" を渡してデータ不全銘柄を自動的に弾けるようにする
+
+**背景**
+
+- 現状の Critic 入力は trading 文脈のみ (proposal / analyst summaries / decisions / positions / cash / risk params)
+- システム健全性 (recent failures, data freshness, skipped executions) は Critic に見えない
+- §31 のような「`ticker.last = 0` で executor が silent skip」されるケース、Critic は提案を素通しで approve してしまう
+- 結果: ユーザが Discord で「3 件提案 / 1 件約定」の矛盾に気づくまで誰も止められない
+
+**設計方針 (Option C)**
+
+Critic に **trading 判断は委ねるが**、判断に必要な **決定論的なシステム健全性スナップ** を 1 フィールドとして注入する。
+
+別 LLM (supervisor / postmortem) は当面導入しない。Discord 通知 + kill-switch + Sentry でシステム監視は足りる前提。
+
+**注入する `systemHealth` (案)**
+
+```ts
+type SystemHealth = {
+  consecutiveFailures: number;      // 直近の連続失敗カウンタ
+  lastFailureKind: "transient" | "permanent" | "quota" | null;
+  killSwitchState: "running" | "paused" | "killed";
+
+  // 銘柄ごとのデータ取得状況。"fresh" / "stale" / "no_data"
+  dataFreshness: Record<string, "fresh" | "stale" | "no_data">;
+
+  // 当サイクルで executor が price=0 等で skip した銘柄 (もし事前判定で見える形にしたい場合)
+  knownSkipRisks: string[];
+
+  // 直近 N サイクルの成功率 (オプション)
+  recentSuccessRate?: number;
+};
+```
+
+Critic はこれを見て:
+- `dataFreshness[X] === "no_data"` の銘柄を含む配分は **modify で 0 円に**
+- `consecutiveFailures >= 2` の状態では新規 Entry を保守的に縮小、もしくは veto
+
+**期待効果**
+
+- §31 系の「データ無し銘柄に Entry 提案 → silent skip」の根本リスクが LLM 判断で抑制される
+- システム健全性は **決定論的に集計** されるので LLM のハルシネーションに依存しない
+- LLM コールは現状の Critic 1 回のみ、追加コストなし
+
+**関連ファイル**
+
+- `src/lib/critic/index.ts` — `CriticInput` に `systemHealth` 追加
+- `src/lib/cycle/phases.ts` — `finalize` で systemHealth を集計してから `runCritic` を呼ぶ
+- `src/lib/prompts/prompt-fallbacks/tier4/critic/` — プロンプトに systemHealth セクション追加
+- Langfuse `tier4/critic` プロンプト
+
+**修正の方向性**
+
+1. `SystemHealth` 型を `src/lib/schemas/llm-outputs.ts` か新規 `src/lib/schemas/system-health.ts` に定義
+2. `finalize` 内で systemHealth を集計するヘルパー (`buildSystemHealth(strategyId, ctxs)`) を追加
+   - `consecutiveFailures` / `lastFailureKind` は `system_state` から
+   - `dataFreshness` は `ctxs[i].snap.fetchedAt` と現在時刻、および `ticker.last` 値で判定
+   - `knownSkipRisks` は `ctxs[i].snap.ticker.last <= 0` の銘柄
+3. `CriticInput` に `systemHealth` 追加
+4. プロンプトに systemHealth セクション (JSON で渡す) と判断指針を追記:
+   - "data_freshness が `no_data` の銘柄に対する Entry は modify で 0 円にすること"
+   - "consecutive_failures が 2 以上なら新規 Entry を 50% に縮小、3 以上なら全 veto"
+5. Critic skip 条件 (§B の "0 buy + 0 exit") は維持 — systemHealth が悪くても trade 提案がゼロなら呼ぶ意味がない
+
+**スコープ感**
+
+- コード 50-80 行
+- プロンプト 1 ファイル変更
+- テスト: `buildSystemHealth` 単体 + Critic schema 検証
+- 1 コミットで収まる規模
+
+**今後検討 (本 issue では扱わない)**
+
+- ポストモーテム LLM (障害時のみ Haiku で起動して原因サマリを Discord に投げる) は別 issue で
+- supervisor LLM (毎サイクル監視役) は不採用
+
+---
+
 ## 修正優先度（推奨）
 
 | 順 | ID | 内容 |
@@ -739,9 +817,10 @@
 | 1 | §1 | Entry 仮説の永続化 |
 | 2 | §26 | `recordCycleFailure` から kill-switch を呼ぶ（auto-pause が機能してない） |
 | 3 | §32 | Tier 0 の TF をサイクル間隔から動的選択（1m 廃止 + 1h 追加で §31 の根治） |
-| 4 | §27, §31 | GMO 1m kline 404 / 空配列 → 前日フォールバック + Entry skip 表示（§32 までの暫定対策） |
-| 5 | §28, §29 | Discord 推定原因の動的化 + counter 表示クランプ |
-| 6 | §30 | ダッシュボードに失敗 cycle を表示 |
+| 4 | §33 | Critic に `systemHealth` を渡してデータ不全銘柄を modify で弾けるように |
+| 5 | §27, §31 | GMO 1m kline 404 / 空配列 → 前日フォールバック + Entry skip 表示（§32 までの暫定対策） |
+| 6 | §28, §29 | Discord 推定原因の動的化 + counter 表示クランプ |
+| 7 | §30 | ダッシュボードに失敗 cycle を表示 |
 | 6 | §18 | 連続失敗 auto-pause の経路修正（§4 / §20 と同時） |
 | 7 | §2 | 保有中の Exit / skip_flag ポリシー統一 |
 | 8 | §3 | Critic フェイルオープン |
@@ -776,3 +855,5 @@
 - 作業リスト: `docs/todo.md`
 - パイプライン本体: `src/lib/cycle/phases.ts`
 - Inngest: `src/lib/inngest/functions.ts`
+
+
