@@ -293,8 +293,13 @@ export async function tier1PreAnalyst(cycleId: string): Promise<void> {
   );
 }
 
-/** Phase 4: Tier 2 Analyst (skip_flag=false のコインのみ、ALL-or-NOTHING) */
-export async function tier2Analyst(cycleId: string): Promise<void> {
+/**
+ * Phase 4: Tier 2 Analyst (§2 ポリシー: 保有中は skip_flag を無視して必ず実行)。
+ *
+ * - 未保有銘柄: skip_flag=true なら Analyst skip (コスト節約)
+ * - 保有銘柄  : skip_flag に関わらず Analyst 実行 (Tier 3 Exit に渡すため必須)
+ */
+export async function tier2Analyst(cycleId: string, strategyId: string): Promise<void> {
   const enabledCoins = await getCycleCoins(cycleId);
 
   await Promise.all(
@@ -319,8 +324,27 @@ export async function tier2Analyst(cycleId: string): Promise<void> {
           )[0];
           if (!pre) throw new Error(`No pre-analyst for coin ${coin.symbol}`);
 
-          // skip_flag を保有/未保有問わず尊重 (毎サイクル fresh decision、Hold は default)
-          if (pre.skipFlag) return;
+          // skip_flag は **未保有銘柄のみ** 尊重。保有中の銘柄は Exit 判断のために必須。
+          if (pre.skipFlag) {
+            const openPos = (
+              await db
+                .select({ id: positions.id })
+                .from(positions)
+                .where(
+                  and(
+                    eq(positions.strategyId, strategyId),
+                    eq(positions.coinId, coin.id),
+                    eq(positions.status, "open"),
+                  ),
+                )
+                .limit(1)
+            )[0];
+            if (!openPos) return;
+            logger.info(
+              { symbol: coin.symbol },
+              "Tier 2 forced for held position despite skip_flag",
+            );
+          }
 
           const existing = (
             await db
@@ -384,7 +408,8 @@ export async function tier3Decisions(cycleId: string, strategyId: string): Promi
               .where(eq(analystOutputs.snapshotId, snapshot.id))
               .limit(1)
           )[0];
-          // analyst なし = Tier 2 が skip_flag で省略された → Tier 3 もスキップ
+          // analyst なし = Tier 2 が skip_flag で省略された (未保有銘柄のみ起こる、§2 ポリシー)
+          // → Entry/Exit 両方スキップ。保有中の銘柄は Tier 2 で必ず analyst が作られる。
           if (!analyst) return;
 
           const analystResLike = {

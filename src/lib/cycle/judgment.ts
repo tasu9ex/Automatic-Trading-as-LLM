@@ -95,7 +95,7 @@ async function runJudgmentCycleInner(
   try {
     await runPhase("tier0-snapshots", () => tier0Snapshots(cycleId, periodHours));
     await runPhase("tier1-pre-analyst", () => tier1PreAnalyst(cycleId));
-    await runPhase("tier2-analyst", () => tier2Analyst(cycleId));
+    await runPhase("tier2-analyst", () => tier2Analyst(cycleId, strategyId));
     await runPhase("tier3-decisions", () => tier3Decisions(cycleId, strategyId));
     const result: FinalizeResult = await runPhase("finalize", () =>
       finalize({ cycleId, strategyId, method, startedAt }),
