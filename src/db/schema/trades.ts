@@ -23,6 +23,8 @@ export const trades = pgTable(
     quantity: numeric("quantity", { precision: 30, scale: 10 }).notNull(),
     price: numeric("price", { precision: 20, scale: 4 }).notNull(),
     fee: numeric("fee", { precision: 20, scale: 4 }).notNull().default("0"),
+    /** スリッページコスト (JPY)。逆指値タッチ等の forced 約定時のみ非ゼロ。 */
+    slippage: numeric("slippage", { precision: 20, scale: 4 }).notNull().default("0"),
     pnlJpy: numeric("pnl_jpy", { precision: 20, scale: 4 }),
     executedAt: timestamp("executed_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),

@@ -30,6 +30,7 @@ import {
   preAnalystOutputs,
   systemEvents,
   systemState,
+  trades,
 } from "@/db/schema";
 import { type SizingMethod, allocate } from "@/lib/allocator";
 import { getExchangeStatus } from "@/lib/clients/gmo";
@@ -46,7 +47,7 @@ import { applyRiskClipper } from "@/lib/risk/clipper";
 import { type Snapshot, fetchSnapshot } from "@/lib/tier0/fetch-snapshot";
 import { runPreAnalyst } from "@/lib/tier1/pre-analyst";
 import { runAnalyst } from "@/lib/tier2/analyst";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 
 const logger = createLogger("cycle.phases");
 
@@ -102,7 +103,7 @@ export async function preflight(input: PreflightInput): Promise<PreflightResult>
     logger.error({ err }, "Price monitor failed (continuing cycle)");
     await notify({
       level: "error",
-      title: "⚠️ Price monitor 失敗 (サイクル継続)",
+      title: "🚨 Price monitor 失敗 (サイクル継続)",
       body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
       fields: {
         影響: "逆指値判定がスキップされた、ポジションは LLM Exit のみで判断",
@@ -641,11 +642,22 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       message: `Critic veto: ${critic.output.reasoning.slice(0, 200)}`,
       payload: { cycleId, proposal },
     });
+    const vetoBuyList =
+      Object.keys(proposal).length > 0
+        ? Object.entries(proposal)
+            .map(([sym, jpy]) => `${sym}: ¥${Math.round(jpy).toLocaleString()}`)
+            .join(", ")
+        : "なし";
+    const vetoExitList =
+      exitsToRun.length > 0 ? exitsToRun.map((c) => c.coin.symbol).join(", ") : "なし";
     await notify({
       level: "warning",
       title: "🛑 Critic 拒否 (VETO)",
       body: critic.output.reasoning.slice(0, 1000),
-      fields: { シグナル数: Object.keys(proposal).length },
+      fields: {
+        拒否買い: vetoBuyList.slice(0, 200),
+        拒否売り: vetoExitList.slice(0, 200),
+      },
     });
     finalProposal = {};
   } else if (critic.output.decision === "modify" && critic.output.adjustments) {
@@ -827,27 +839,64 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
   )[0];
   const cashAfter = Number(refreshedAfterEntries?.cashJpy ?? 0);
+  const initialCash = Number(refreshedAfterEntries?.initialCashJpy ?? 0);
   const openPositions = await db
     .select()
     .from(positions)
     .where(and(eq(positions.strategyId, strategyId), eq(positions.status, "open")));
+
+  // coinId → 最終価格 (このサイクルの snapshot から)
+  const lastPriceByCoinId = new Map<string, number>(
+    ctxs.map((c) => [c.coin.id, Number(c.snap.ticker.last) || 0]),
+  );
+
   const positionLines = await Promise.all(
     openPositions.map(async (p) => {
       const c = (await db.select().from(coins).where(eq(coins.id, p.coinId)).limit(1))[0];
       const sym = c?.symbol ?? "?";
-      const qty = Number(p.quantity).toFixed(6);
+      const qtyNum = Number(p.quantity);
+      const qty = qtyNum.toFixed(6);
       const avg = Math.round(Number(p.avgEntryPrice)).toLocaleString();
-      return `• ${sym}: ${qty} @ ¥${avg}`;
+      const price = lastPriceByCoinId.get(p.coinId) ?? 0;
+      const valueJpy = Math.round(qtyNum * price).toLocaleString();
+      return `• ${sym}: ${qty} @ ¥${avg} (¥${valueJpy})`;
     }),
   );
 
+  // 含み = Σ(qty × 直近価格)、資産時価総額 = 現金 + 含み
+  const marketValue = openPositions.reduce((sum, p) => {
+    const price = lastPriceByCoinId.get(p.coinId) ?? 0;
+    return sum + Number(p.quantity) * price;
+  }, 0);
+  const totalAssetJpy = cashAfter + marketValue;
+
+  // 今回サイクルの実現損益 = startedAt 以降に約定した trade の pnlJpy 合計
+  const cycleTrades = await db
+    .select({ pnl: trades.pnlJpy })
+    .from(trades)
+    .where(and(eq(trades.strategyId, strategyId), gte(trades.executedAt, new Date(startedAt))));
+  const realizedPnlCycle = cycleTrades.reduce((s, t) => s + Number(t.pnl ?? 0), 0);
+
+  // 累計損益 = 資産時価総額 − 初期資本 (実現 + 含み)
+  const cumulativePnl = totalAssetJpy - initialCash;
+
+  const fmtJpySigned = (v: number) =>
+    `${v >= 0 ? "+" : "-"}¥${Math.abs(Math.round(v)).toLocaleString()}`;
+
   const bodyParts: string[] = [];
   if (buys.length > 0) bodyParts.push(`**📥 新規 Entry**\n${buys.join("\n")}`);
-  if (closes.length > 0) bodyParts.push(`**📤 Close**\n${closes.join("\n")}`);
+  if (closes.length > 0) bodyParts.push(`**📕 Close**\n${closes.join("\n")}`);
   if (positionLines.length > 0) {
     bodyParts.push(`**📊 保有ポジション (${positionLines.length})**\n${positionLines.join("\n")}`);
   }
-  bodyParts.push(`**💰 現金**: ¥${Math.round(cashAfter).toLocaleString()}`);
+  bodyParts.push(
+    [
+      `**💰 現金**: ¥${Math.round(cashAfter).toLocaleString()}`,
+      `**🏦 資産時価総額**: ¥${Math.round(totalAssetJpy).toLocaleString()}`,
+      `**📈 実現損益 (今回)**: ${fmtJpySigned(realizedPnlCycle)}`,
+      `**🧮 累計損益**: ${fmtJpySigned(cumulativePnl)} (初期 ¥${Math.round(initialCash).toLocaleString()})`,
+    ].join("\n"),
+  );
 
   const CRITIC_JP: Record<string, string> = {
     approve: "承認",
@@ -862,9 +911,8 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     fields: {
       処理銘柄: `${symbolsProcessed}/${enabledCoins.length}`,
       Tier1スキップ: `${symbolsSkipped}/${enabledCoins.length}`,
-      買いシグナル: buySignals.length,
-      新規約定: entriesExecuted,
-      決済: exitsTriggered,
+      entry: `${entriesExecuted}件`,
+      exit: `${exitsTriggered}件`,
       Critic判定: CRITIC_JP[critic.output.decision] ?? critic.output.decision,
       所要時間: `${(elapsedMs / 1000).toFixed(1)}秒`,
     },
@@ -912,8 +960,7 @@ export async function recordCycleFailure(args: {
 
   await db.insert(systemEvents).values({
     strategyId: args.strategyId,
-    // 暫定: 専用 enum 値が未定義のため llm_failure 流用 (Inngest dashboard / 通知が主観測点)
-    kind: "llm_failure",
+    kind: "cycle_aborted",
     severity: "error",
     message: `Cycle ${args.cycleId.slice(0, 8)} aborted at ${args.phase}: ${errMsg.slice(0, 300)}`,
     payload: { cycleId: args.cycleId, phase: args.phase },

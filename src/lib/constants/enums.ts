@@ -62,6 +62,7 @@ export const SYSTEM_EVENT_KINDS = [
   "critic_veto",
   "critic_modify",
   "llm_failure",
+  "cycle_aborted",
   "human_intervention",
   "price_monitor_triggered",
   "data_fetch_failed",

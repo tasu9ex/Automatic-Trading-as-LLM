@@ -15,11 +15,12 @@ export const orders = pgTable(
     strategyId: text("strategy_id").notNull(),
     side: orderSideEnum("side").notNull(),
     status: orderStatusEnum("status").notNull(),
+    /** 発注時の予算 (buy) / 想定金額 (sell)。fill 後も更新しない (orders は intended、trades が executed)。 */
     sizeJpy: numeric("size_jpy", { precision: 20, scale: 4 }).notNull(),
+    /** 発注時の数量。market order は fill で完全一致するため一律 intended のまま。 */
     quantity: numeric("quantity", { precision: 30, scale: 10 }).notNull(),
+    /** 発注時の参考価格 (market price)。fill 後も更新しない。 */
     price: numeric("price", { precision: 20, scale: 4 }).notNull(),
-    fee: numeric("fee", { precision: 20, scale: 4 }).notNull().default("0"),
-    slippage: numeric("slippage", { precision: 20, scale: 4 }).notNull().default("0"),
     reason: text("reason"),
     /** 実マネー時の TTL (時間)。null = no expiry。ペーパー mode は記録するが評価しない */
     ttlHours: numeric("ttl_hours", { precision: 6, scale: 2 }),

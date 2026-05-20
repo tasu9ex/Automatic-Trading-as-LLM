@@ -102,6 +102,11 @@ async function placeEntryOrder(input: ExecuteEntryInput): Promise<{ orderId: str
   const coin = (await db.select().from(coins).where(eq(coins.symbol, input.symbol)).limit(1))[0];
   if (!coin) throw new Error(`Coin not found: ${input.symbol}`);
 
+  if (!input.decisionId) {
+    // 現状 buy は必ず LLM 由来 (auto-buy 機能なし)。null は呼び出し側のバグ可能性。
+    logger.warn({ symbol: input.symbol }, "placeEntryOrder: decisionId is null");
+  }
+
   const intendedQty = input.budgetJpy / Math.max(input.marketPrice, 1);
   const now = new Date();
   const expires = expiresAtFrom(now, input.ttlHours);
@@ -117,9 +122,9 @@ async function placeEntryOrder(input: ExecuteEntryInput): Promise<{ orderId: str
       sizeJpy: input.budgetJpy.toFixed(4),
       quantity: intendedQty.toFixed(10),
       price: input.marketPrice.toFixed(4),
-      fee: "0",
-      slippage: "0",
-      reason: input.entryReason,
+      // orders.reason は発生原因タグのみ (LLM 全文は decisions.reasoning / positions.entry_reason 側)。
+      // sell 側 (placeExitOrder) と非対称だった buy も同じタグ運用に統一。
+      reason: "llm decision",
       ttlHours: input.ttlHours?.toFixed(2) ?? null,
       expiresAt: expires,
     })
@@ -128,10 +133,12 @@ async function placeEntryOrder(input: ExecuteEntryInput): Promise<{ orderId: str
 
   await notify({
     level: "info",
-    title: `📤 発注 ${input.symbol} (buy)`,
+    title: `📤 発注 ${input.symbol} (買)`,
     fields: {
-      投入額: `¥${input.budgetJpy.toLocaleString()}`,
+      数量: intendedQty.toFixed(8),
       参考価格: `¥${Math.round(input.marketPrice).toLocaleString()}`,
+      想定金額: `¥${Math.round(intendedQty * input.marketPrice).toLocaleString()}`,
+      予算: `¥${input.budgetJpy.toLocaleString()}`,
       TTL: input.ttlHours ? `${input.ttlHours}h` : "無期限",
     },
   });
@@ -162,17 +169,10 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
     )[0];
     if (!portfolio) throw new Error(`Portfolio not found: ${strategyId}`);
 
+    // orders は intended のまま。executed 値は trades に。
     await tx
       .update(orders)
-      .set({
-        status: "filled",
-        sizeJpy: (fill.quantity * fill.executedPrice).toFixed(4),
-        quantity: fill.quantity.toFixed(10),
-        price: fill.executedPrice.toFixed(4),
-        fee: fill.feeJpy.toFixed(4),
-        slippage: fill.slippageJpy.toFixed(4),
-        completedAt: new Date(),
-      })
+      .set({ status: "filled", completedAt: new Date() })
       .where(eq(orders.id, orderId));
 
     const existing = (
@@ -191,12 +191,16 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
 
     let positionId: string;
     let newAvgPrice: number;
+    // avgEntryPrice は **手数料込みの平均取得コスト** = (gross + fee) / qty。
+    // これにより Exit 時の PnL = (sellPrice - avgEntry) × sellQty - sellFee が
+    // buy 側手数料を含めた正確な実現損益となる。
+    const buyCostPerUnit = fill.executedPrice + fill.feeJpy / Math.max(fill.quantity, 1e-12);
     if (existing) {
       // ピラミッディング: 加重平均で建値更新、Entry 仮説も最新で上書き
       const prevQty = Number(existing.quantity);
       const prevAvg = Number(existing.avgEntryPrice);
       const newQty = prevQty + fill.quantity;
-      newAvgPrice = (prevAvg * prevQty + fill.executedPrice * fill.quantity) / newQty;
+      newAvgPrice = (prevAvg * prevQty + buyCostPerUnit * fill.quantity) / newQty;
 
       await tx
         .update(positions)
@@ -214,7 +218,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
         .where(eq(positions.id, existing.id));
       positionId = existing.id;
     } else {
-      newAvgPrice = fill.executedPrice;
+      newAvgPrice = buyCostPerUnit;
       const [pos] = await tx
         .insert(positions)
         .values({
@@ -222,7 +226,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
           coinId: coin.id,
           status: "open",
           quantity: fill.quantity.toFixed(10),
-          avgEntryPrice: fill.executedPrice.toFixed(4),
+          avgEntryPrice: buyCostPerUnit.toFixed(4),
           peakPrice: fill.executedPrice.toFixed(4),
           troughPrice: fill.executedPrice.toFixed(4),
           entryReason: args.entryReason,
@@ -246,6 +250,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
       quantity: fill.quantity.toFixed(10),
       price: fill.executedPrice.toFixed(4),
       fee: fill.feeJpy.toFixed(4),
+      slippage: fill.slippageJpy.toFixed(4),
       executedAt: new Date(),
     });
 
@@ -304,13 +309,16 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
       "fillEntryOrder done",
     );
 
+    const grossJpy = fill.quantity * fill.executedPrice;
     await notify({
       level: "success",
-      title: `🟢 約定 (買) ${symbol}`,
+      title: `🟢 約定 ${symbol} (買)`,
       fields: {
         数量: fill.quantity.toFixed(8),
         価格: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
+        約定金額: `¥${Math.round(grossJpy).toLocaleString()}`,
         手数料: `¥${fill.feeJpy.toFixed(0)}`,
+        支払総額: `¥${Math.round(fill.netCashJpy).toLocaleString()}`,
         残現金: `¥${Math.round(newCash).toLocaleString()}`,
       },
     });
@@ -428,8 +436,6 @@ async function placeExitOrder(input: ExecuteExitInput): Promise<PlacedExitOrder 
       sizeJpy: (sellQty * input.marketPrice).toFixed(4),
       quantity: sellQty.toFixed(10),
       price: input.marketPrice.toFixed(4),
-      fee: "0",
-      slippage: "0",
       reason: input.reason ?? null,
       ttlHours: input.ttlHours?.toFixed(2) ?? null,
       expiresAt: expires,
@@ -443,11 +449,12 @@ async function placeExitOrder(input: ExecuteExitInput): Promise<PlacedExitOrder 
   if (!input.forced) {
     await notify({
       level: "info",
-      title: `📤 発注 ${input.symbol} (sell${isFull ? "" : ` ${Math.round(ratio * 100)}%`})`,
+      title: `📤 発注 ${input.symbol} (売${isFull ? "" : ` ${Math.round(ratio * 100)}%`})`,
       body: input.reason ?? undefined,
       fields: {
         数量: sellQty.toFixed(8),
         参考価格: `¥${Math.round(input.marketPrice).toLocaleString()}`,
+        想定金額: `¥${Math.round(sellQty * input.marketPrice).toLocaleString()}`,
         TTL: input.ttlHours ? `${input.ttlHours}h` : "無期限",
       },
     });
@@ -491,17 +498,10 @@ export async function fillExitOrder(args: FillExitArgs): Promise<void> {
 
     const pnlJpy = (fill.executedPrice - Number(position.avgEntryPrice)) * sellQty - fill.feeJpy;
 
+    // orders は intended のまま。executed 値は trades に。
     await tx
       .update(orders)
-      .set({
-        status: "filled",
-        sizeJpy: (sellQty * fill.executedPrice).toFixed(4),
-        quantity: sellQty.toFixed(10),
-        price: fill.executedPrice.toFixed(4),
-        fee: fill.feeJpy.toFixed(4),
-        slippage: fill.slippageJpy.toFixed(4),
-        completedAt: new Date(),
-      })
+      .set({ status: "filled", completedAt: new Date() })
       .where(eq(orders.id, orderId));
 
     await tx.insert(trades).values({
@@ -513,6 +513,7 @@ export async function fillExitOrder(args: FillExitArgs): Promise<void> {
       quantity: sellQty.toFixed(10),
       price: fill.executedPrice.toFixed(4),
       fee: fill.feeJpy.toFixed(4),
+      slippage: fill.slippageJpy.toFixed(4),
       pnlJpy: pnlJpy.toFixed(4),
       executedAt: new Date(),
     });
@@ -567,18 +568,24 @@ export async function fillExitOrder(args: FillExitArgs): Promise<void> {
 
     const isProfit = pnlJpy >= 0;
     const partialLabel = isFullClose ? "" : ` ${Math.round(ratio * 100)}%`;
+    const grossJpy = sellQty * fill.executedPrice;
+    const sellFields: Record<string, string> = {
+      数量: sellQty.toFixed(8),
+      価格: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
+      約定金額: `¥${Math.round(grossJpy).toLocaleString()}`,
+      手数料: `¥${fill.feeJpy.toFixed(0)}`,
+      受領額: `¥${Math.round(fill.netCashJpy).toLocaleString()}`,
+      損益: `${isProfit ? "+" : ""}¥${Math.round(pnlJpy).toLocaleString()}`,
+      残現金: `¥${Math.round(newCash).toLocaleString()}`,
+    };
+    if (args.forced) {
+      sellFields.スリッページ = `¥${fill.slippageJpy.toFixed(0)}`;
+    }
     await notify({
-      level: args.forced ? "warning" : isProfit ? "success" : "info",
-      title: `${isProfit ? "🔵" : "🔴"} 約定 (売${partialLabel}) ${symbol}${args.forced ? " 強制" : ""}`,
+      level: args.forced ? "warning" : isProfit ? "success" : "warning",
+      title: `${isProfit ? "🔵" : "🔴"} 約定 ${symbol} (売${partialLabel})${args.forced ? " 強制" : ""}`,
       body: args.reason ?? undefined,
-      fields: {
-        数量: sellQty.toFixed(8),
-        価格: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
-        損益: `${isProfit ? "+" : ""}¥${Math.round(pnlJpy).toLocaleString()}`,
-        手数料: `¥${fill.feeJpy.toFixed(0)}`,
-        スリッページ: args.forced ? `¥${fill.slippageJpy.toFixed(0)}` : "0",
-        残現金: `¥${Math.round(newCash).toLocaleString()}`,
-      },
+      fields: sellFields,
     });
   });
 }
@@ -603,10 +610,13 @@ export async function expireOrder(orderId: string): Promise<void> {
     .set({ status: "expired", completedAt: new Date() })
     .where(eq(orders.id, orderId));
   const coin = (await db.select().from(coins).where(eq(coins.id, order.coinId)).limit(1))[0];
+  const sideJp = order.side === "buy" ? "買" : "売";
   await notify({
     level: "warning",
-    title: `⏰ 期限切れ ${coin?.symbol ?? "?"} (${order.side})`,
+    title: `⏰ 期限切れ ${coin?.symbol ?? "?"} (${sideJp})`,
+    body: `TTL ${order.ttlHours ?? "—"}h 超過で自動失効`,
     fields: {
+      数量: Number(order.quantity).toFixed(8),
       参考価格: `¥${Math.round(Number(order.price)).toLocaleString()}`,
       TTL: order.ttlHours ? `${order.ttlHours}h` : "—",
     },
@@ -622,10 +632,15 @@ export async function rejectOrder(orderId: string, reason: string): Promise<void
     .set({ status: "rejected", completedAt: new Date(), reason })
     .where(eq(orders.id, orderId));
   const coin = (await db.select().from(coins).where(eq(coins.id, order.coinId)).limit(1))[0];
+  const sideJp = order.side === "buy" ? "買" : "売";
   await notify({
     level: "warning",
-    title: `🚫 拒否 ${coin?.symbol ?? "?"} (${order.side})`,
+    title: `🚫 拒否 ${coin?.symbol ?? "?"} (${sideJp})`,
     body: reason,
+    fields: {
+      数量: Number(order.quantity).toFixed(8),
+      参考価格: `¥${Math.round(Number(order.price)).toLocaleString()}`,
+    },
   });
 }
 
@@ -638,9 +653,14 @@ export async function cancelOrder(orderId: string, reason: string): Promise<void
     .set({ status: "cancelled", completedAt: new Date(), reason })
     .where(eq(orders.id, orderId));
   const coin = (await db.select().from(coins).where(eq(coins.id, order.coinId)).limit(1))[0];
+  const sideJp = order.side === "buy" ? "買" : "売";
   await notify({
     level: "info",
-    title: `❌ キャンセル ${coin?.symbol ?? "?"} (${order.side})`,
+    title: `❌ キャンセル ${coin?.symbol ?? "?"} (${sideJp})`,
     body: reason,
+    fields: {
+      数量: Number(order.quantity).toFixed(8),
+      参考価格: `¥${Math.round(Number(order.price)).toLocaleString()}`,
+    },
   });
 }
