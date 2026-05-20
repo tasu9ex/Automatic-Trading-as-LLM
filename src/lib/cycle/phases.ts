@@ -659,18 +659,24 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
 
   // Critic skip: 買い 0 + Exit 0 なら審査するものが無い → Opus 呼び出しを節約
   const hasNothingToDo = buySignals.length === 0 && exitsToRun.length === 0;
-  const critic: Awaited<ReturnType<typeof runCritic>> = hasNothingToDo
-    ? {
-        output: {
-          decision: "approve",
-          adjustments: null,
-          reasoning:
-            "No buy signals and no exits to evaluate — Critic auto-approved (skipped LLM call)",
-        },
-        promptVersion: null,
-        llmModel: "auto-skip",
-      }
-    : await runCritic({
+  let critic: Awaited<ReturnType<typeof runCritic>>;
+  if (hasNothingToDo) {
+    critic = {
+      output: {
+        decision: "approve",
+        adjustments: null,
+        reasoning:
+          "No buy signals and no exits to evaluate — Critic auto-approved (skipped LLM call)",
+      },
+      promptVersion: null,
+      llmModel: "auto-skip",
+    };
+    logger.info("Critic skipped (no buy / no exit) — Opus call saved");
+  } else {
+    // §3 フェイルオープン: Critic API が落ちてもサイクル全体を中断せず、
+    // Allocator の提案をそのまま採用して進める (要件 §4.3.3.1)。
+    try {
+      critic = await runCritic({
         proposal,
         analystSummariesBySymbol,
         decisionsBySymbol,
@@ -682,8 +688,46 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
           killSwitchDdRatio: PORTFOLIO_DD_TRIGGER,
         },
       });
-  if (hasNothingToDo) {
-    logger.info("Critic skipped (no buy / no exit) — Opus call saved");
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      logger.error({ err }, "Critic API failed — fail-open with allocator proposal");
+      critic = {
+        output: {
+          decision: "approve",
+          adjustments: null,
+          reasoning: `Critic API failure → fail-open: ${errMsg.slice(0, 200)}`,
+        },
+        promptVersion: null,
+        llmModel: "fail-open",
+      };
+      await db.insert(systemEvents).values({
+        strategyId,
+        kind: "llm_failure",
+        severity: "warning",
+        message: `Critic fail-open at cycle ${cycleId.slice(0, 8)}: ${errMsg.slice(0, 200)}`,
+        payload: { cycleId, phase: "critic", errMsg: errMsg.slice(0, 500) },
+      });
+      await notify({
+        level: "warning",
+        title: "⚠️ Critic 失敗 — フェイルオープン",
+        body: [
+          "**エラー**",
+          `\`\`\`\n${errMsg.slice(0, 600)}\n\`\`\``,
+          "**挙動**: Allocator 提案をそのまま採用してサイクル続行",
+          "**推奨**: Anthropic 状況 / Langfuse の Critic prompt 確認",
+        ].join("\n"),
+        fields: {
+          サイクル: cycleId.slice(0, 8),
+          採用配分:
+            Object.keys(proposal).length > 0
+              ? Object.entries(proposal)
+                  .map(([s, v]) => `${s}: ¥${Math.round(v).toLocaleString()}`)
+                  .join(", ")
+                  .slice(0, 200)
+              : "なし",
+        },
+      });
+    }
   }
 
   await db.insert(criticOutputs).values({
