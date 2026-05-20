@@ -111,6 +111,8 @@ export const judgmentCron = inngest.createFunction(
       const method = DEFAULT_METHOD;
 
       // 2-6. 各 Tier step.run (失敗時は recordCycleFailure → throw → Inngest 側で retry/abort)
+      // finalize も同じパターンで包んで、Critic / Executor 失敗時に連続失敗カウンタ / Discord 通知が
+      // CLI 経由 (judgment.ts) と同じになるようにする (§4)。
       const runStep = async (name: string, fn: () => Promise<void>) => {
         try {
           await step.run(name, () => withSession(cycleId, fn));
@@ -127,9 +129,18 @@ export const judgmentCron = inngest.createFunction(
       await runStep("tier2-analyst", () => tier2Analyst(cycleId));
       await runStep("tier3-decisions", () => tier3Decisions(cycleId, strategyId));
 
-      const result = await step.run("finalize", () =>
-        withSession(cycleId, () => finalize({ cycleId, strategyId, method, startedAt })),
-      );
+      // finalize は値を返すので runStep 経由にせず個別 try/catch (§4)
+      let result: Awaited<ReturnType<typeof finalize>>;
+      try {
+        result = await step.run("finalize", () =>
+          withSession(cycleId, () => finalize({ cycleId, strategyId, method, startedAt })),
+        );
+      } catch (err) {
+        await step.run("finalize-record-failure", () =>
+          recordCycleFailure({ cycleId, strategyId, phase: "finalize", err }),
+        );
+        throw err;
+      }
 
       await step.run("advance-schedule", () => advanceNextScheduledAt(new Date(startedAt)));
 

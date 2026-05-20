@@ -1114,6 +1114,15 @@ export async function recordCycleFailure(args: {
     });
   }
 
+  // 通知の前に kill-switch チェックを走らせ、auto-pause が発動した場合は
+  // 通知文面に正確な状態 (now paused) を反映できるようにする。
+  // quota は recordCycleFailure 内で既に paused にしているので追加チェック不要。
+  let autoPausedNow = false;
+  if (kind !== "quota") {
+    const result = await checkAndTriggerKillSwitch({ strategyId: args.strategyId });
+    if (result === "paused") autoPausedNow = true;
+  }
+
   await sendFailureNotification({
     kind,
     phase: args.phase,
@@ -1121,13 +1130,8 @@ export async function recordCycleFailure(args: {
     errMsg,
     newCount,
     nextScheduledAt: state?.nextScheduledAt ?? null,
+    autoPausedNow,
   });
-
-  // quota は recordCycleFailure 内で既に paused にしているので不要
-  // それ以外は kill-switch チェック (consecutiveFailures >= 3 で system_state を paused に)
-  if (kind !== "quota") {
-    await checkAndTriggerKillSwitch({ strategyId: args.strategyId });
-  }
 }
 
 async function sendFailureNotification(args: {
@@ -1137,6 +1141,8 @@ async function sendFailureNotification(args: {
   errMsg: string;
   newCount: number;
   nextScheduledAt: Date | null;
+  /** 本コール時点で auto-pause が既に発動済 (checkAndTriggerKillSwitch が paused を返した) */
+  autoPausedNow: boolean;
 }): Promise<void> {
   const cycleShort = args.cycleId.slice(0, 8);
   const nextScheduledAt = args.nextScheduledAt
@@ -1172,9 +1178,7 @@ async function sendFailureNotification(args: {
       ].join("\n"),
       fields: {
         サイクル: cycleShort,
-        連続失敗: `${args.newCount}/${AUTO_PAUSE_THRESHOLD}${
-          AUTO_PAUSE_THRESHOLD - args.newCount === 0 ? " (次回 auto pause)" : ""
-        }`,
+        連続失敗: formatFailureCounter(args.newCount, args.autoPausedNow),
       },
     });
     return;
@@ -1189,9 +1193,6 @@ async function sendFailureNotification(args: {
       cause: "外部 API の一時障害の可能性",
       action: "ログ確認、次サイクル待ち",
     };
-  // counter 表示は AUTO_PAUSE_THRESHOLD でクランプ (3 で実 pause しているので 4 以上はあり得ない、防御)
-  const displayCount = Math.min(args.newCount, AUTO_PAUSE_THRESHOLD);
-  const remaining = Math.max(0, AUTO_PAUSE_THRESHOLD - displayCount);
   await notify({
     level: "error",
     title: `🌐 サイクル中断 (${args.phase}) — 外部 API 一時障害`,
@@ -1203,12 +1204,25 @@ async function sendFailureNotification(args: {
     ].join("\n"),
     fields: {
       サイクル: cycleShort,
-      連続失敗: `${displayCount}/${AUTO_PAUSE_THRESHOLD}${
-        remaining === 0 ? " (次回 auto pause)" : ` (あと ${remaining})`
-      }`,
+      連続失敗: formatFailureCounter(args.newCount, args.autoPausedNow),
       次サイクル: nextScheduledAt,
     },
   });
+}
+
+/**
+ * 連続失敗カウンタの表示文字列。
+ *   - 既に auto-pause が発動済 → "3/3 (auto-pause 発動)"
+ *   - 閾値到達寸前 (残 0) → "3/3 (次サイクルで auto-pause)" (kill-switch がエラー等で動かなかった保険表記)
+ *   - それ以前 → "1/3 (あと 2)"
+ * AUTO_PAUSE_THRESHOLD でクランプして 4/3 のような不整合は出さない。
+ */
+function formatFailureCounter(newCount: number, autoPausedNow: boolean): string {
+  const displayCount = Math.min(newCount, AUTO_PAUSE_THRESHOLD);
+  const remaining = Math.max(0, AUTO_PAUSE_THRESHOLD - displayCount);
+  if (autoPausedNow) return `${displayCount}/${AUTO_PAUSE_THRESHOLD} (auto-pause 発動)`;
+  if (remaining === 0) return `${displayCount}/${AUTO_PAUSE_THRESHOLD} (次サイクルで auto-pause)`;
+  return `${displayCount}/${AUTO_PAUSE_THRESHOLD} (あと ${remaining})`;
 }
 
 /**
