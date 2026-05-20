@@ -35,6 +35,13 @@ import {
 } from "@/db/schema";
 import { type SizingMethod, allocate } from "@/lib/allocator";
 import { getExchangeStatus } from "@/lib/clients/gmo";
+import {
+  AUTO_PAUSE_THRESHOLD,
+  PER_COIN_MAX_RATIO,
+  PER_COIN_MIN_JPY,
+  PORTFOLIO_DD_TRIGGER,
+  TOTAL_MAX_RATIO,
+} from "@/lib/constants/risk";
 import { runCritic } from "@/lib/critic";
 import { type ErrorKind, classifyError, withRetry } from "@/lib/cycle/retry";
 import { runEntryDecision } from "@/lib/decision/entry";
@@ -51,10 +58,6 @@ import { runAnalyst } from "@/lib/tier2/analyst";
 import { and, eq, gte, sql } from "drizzle-orm";
 
 const logger = createLogger("cycle.phases");
-
-const RISK_PER_COIN_MAX_RATIO = 0.25;
-const RISK_PER_COIN_MIN_JPY = 5000;
-const RISK_TOTAL_MAX_RATIO = 1.0;
 
 export type CycleSkipReason = "exchange_closed" | "not_running" | "no_coins";
 
@@ -620,8 +623,8 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     buySignals,
     availableCashJpy: projectedCashJpy,
     maxAllocationRatio: 1.0,
-    perCoinMaxRatio: RISK_PER_COIN_MAX_RATIO,
-    perCoinMinJpy: RISK_PER_COIN_MIN_JPY,
+    perCoinMaxRatio: PER_COIN_MAX_RATIO,
+    perCoinMinJpy: PER_COIN_MIN_JPY,
     method,
   });
 
@@ -674,7 +677,10 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
         currentPositions,
         symbolToName,
         cashJpy: projectedCashJpy,
-        riskParams: { perCoinMaxRatio: RISK_PER_COIN_MAX_RATIO, killSwitchDdRatio: 0.5 },
+        riskParams: {
+          perCoinMaxRatio: PER_COIN_MAX_RATIO,
+          killSwitchDdRatio: PORTFOLIO_DD_TRIGGER,
+        },
       });
   if (hasNothingToDo) {
     logger.info("Critic skipped (no buy / no exit) — Opus call saved");
@@ -802,9 +808,9 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       proposal: finalProposal,
       availableCashJpy: cashAfterExits,
       currentInvestedJpy: currentInvested,
-      perCoinMaxRatio: RISK_PER_COIN_MAX_RATIO,
-      perCoinMinJpy: RISK_PER_COIN_MIN_JPY,
-      totalMaxRatio: RISK_TOTAL_MAX_RATIO,
+      perCoinMaxRatio: PER_COIN_MAX_RATIO,
+      perCoinMinJpy: PER_COIN_MIN_JPY,
+      totalMaxRatio: TOTAL_MAX_RATIO,
     });
     if (clipped.changes.length > 0) {
       logger.info({ changes: clipped.changes }, "Risk Clipper applied");
@@ -1041,8 +1047,6 @@ const PHASE_HINTS: Record<string, { cause: string; action: string }> = {
     action: "ログとダッシュボード状態を確認",
   },
 };
-
-const AUTO_PAUSE_THRESHOLD = 3;
 
 /** サイクル中断時の通知 + 連続失敗カウント更新 (エラー種別ごとに対応分岐) */
 export async function recordCycleFailure(args: {

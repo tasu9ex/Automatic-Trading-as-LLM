@@ -1,15 +1,13 @@
 import { db } from "@/db/client";
 import { coins, portfolios, positions, systemEvents, systemState } from "@/db/schema";
 import { getTicker } from "@/lib/clients/gmo";
+import { AUTO_PAUSE_THRESHOLD, PORTFOLIO_DD_TRIGGER } from "@/lib/constants/risk";
 import { executeExit } from "@/lib/executor";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { and, eq } from "drizzle-orm";
 
 const logger = createLogger("kill-switch");
-
-const PORTFOLIO_DD_TRIGGER = 0.5; // -50%
-const CONSECUTIVE_FAILURES_TRIGGER = 3;
 
 export interface KillSwitchCheckInput {
   strategyId: string;
@@ -55,7 +53,7 @@ export async function checkAndTriggerKillSwitch(
   const initial = Number(portfolio.initialCashJpy);
   const ddRatio = (initial - totalValue) / initial;
 
-  const failureTriggered = state && state.consecutiveFailures >= CONSECUTIVE_FAILURES_TRIGGER;
+  const failureTriggered = state && state.consecutiveFailures >= AUTO_PAUSE_THRESHOLD;
   const ddTriggered = ddRatio >= PORTFOLIO_DD_TRIGGER;
 
   if (ddTriggered) {

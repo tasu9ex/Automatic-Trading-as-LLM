@@ -633,6 +633,10 @@
 - `completed_at IS NULL` の行は「失敗 / 進行中」として表示（badge 出し分け）
 - `criticDecision` が null の行は失敗扱い、reason 用に `system_events` から `cycle_aborted` を引いてもよい
 
+
+今は実行中として表示される？？？
+押すと404に飛びます
+
 ---
 
 ### 31. Entry executor が `lastPrice <= 0` で silent skip + Discord 通知が提案を表示
@@ -857,3 +861,8 @@ Critic はこれを見て:
 - Inngest: `src/lib/inngest/functions.ts`
 
 
+サイクルページを開くのが遅い問題
+(https://automatic-trading-as-llm.vercel.app/cycles/1cf45929-8940-466f-8b82-195f59d8fee5)
+スケルトンだしておく？
+
+そもそものクエリの問題？
