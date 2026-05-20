@@ -527,20 +527,132 @@
 
 ---
 
+### 26. `checkAndTriggerKillSwitch` が失敗パスで呼ばれない（auto-pause が永遠に来ない）
+
+**問題**
+
+- `recordCycleFailure` は `consecutiveFailures++` するが、**kill-switch チェックを呼んでいない**（[src/lib/cycle/phases.ts:1027-1080](src/lib/cycle/phases.ts#L1027-L1080)）
+- `checkAndTriggerKillSwitch` は `finalize` の成功パスにしかない（[src/lib/cycle/phases.ts:869](src/lib/cycle/phases.ts#L869)）
+- 結果、Discord 通知に「3/3 (次回 auto pause)」「4/3 (次回 auto pause)」が出ても **pause は来ない**（実観測: 2026-05-21 早朝 3〜5 時、ETH の 1m kline 404 で 4 連続失敗 + state=running のまま）
+- 次に成功サイクルが来ると `consecutiveFailures = 0` リセット → kill-switch チェック発火 → でも counter は 0 なので発動しない（成功時に発動するのは不整合）
+
+**関連**
+
+- `src/lib/cycle/phases.ts:1027-1080` — `recordCycleFailure`
+- `src/lib/kill-switch/index.ts:58` — `failureTriggered` 判定
+- §18, §4 と関連
+
+**修正の方向性**
+
+- `recordCycleFailure` の最後で `checkAndTriggerKillSwitch({ strategyId })` を呼ぶ
+- これで `consecutiveFailures >= 3` の瞬間に system_state を pause + Discord 通知
+
+---
+
+### 27. GMO `/v1/klines?interval=1min` が早朝に 404 を返してサイクル中断
+
+**問題**
+
+- 観測ケース: 2026-05-21 JST 03:04 / 04:02 / 05:02 に ETH の `1min` kline が 404
+- Sentry breadcrumbs で確定: 同じ URL に対して 4 回連続 404、1d kline は 200
+- 仮説: GMO は `interval=1min&date=YYYYMMDD` でその date に 1m バーが 0 件のとき 404 を返す
+- 早朝 JST は新しい date が始まったばかりで低流動性銘柄は bar が無い時間帯がある
+- `tier0` の必須ソースに含まれているのでサイクル全体 abort
+
+**関連**
+
+- `src/lib/clients/gmo.ts:121` — `getKlines`
+- `src/lib/tier0/fetch-snapshot.ts:116` — 1min を `kline1mDate ?? todayYyyymmdd()` で叩く
+- §26 のカウンタが進む原因
+
+**修正の方向性**
+
+- `getKlines` で 404 を捕捉して空配列 `[]` 扱いにする（または）
+- `fetch-snapshot.ts` 内で 1min が空 → 前日 (JST yesterday) を再 fetch して結合
+- 推奨は **「今日 + 前日」の 1m を取得して 1 本配列に統合**（早朝でも 24h 分くらいは確保できる）
+
+---
+
+### 28. Discord「推定原因」が固定文言で実エラーと矛盾する
+
+**問題**
+
+- `PHASE_HINTS["tier0-snapshots"]` は `"Perplexity / Grok / GMO API の一時障害"` 固定（[src/lib/cycle/phases.ts:984-1006](src/lib/cycle/phases.ts#L984-L1006)）
+- 実際は GMO 1m kline だけ 404 だったが、通知では Perplexity / Grok まで疑わせる文面
+- `error.message` には `"Tier 0 required sources failed for ETH: 1m kline"` と具体的に出ている
+
+**関連**
+
+- `src/lib/cycle/phases.ts:984-1006` — `PHASE_HINTS`
+- `src/lib/cycle/phases.ts:1135-1170` — transient 通知
+
+**修正の方向性**
+
+- `error.message` から失敗ソース名を抽出（`Tier 0 required sources failed for X: SRC1, SRC2`）し、固定 hint より優先表示
+- 該当ソースが推測できない場合のみ PHASE_HINTS にフォールバック
+
+---
+
+### 29. 連続失敗カウンタ表示が `4/3` まで進む（auto pause 表記が嘘）
+
+**問題**
+
+- `AUTO_PAUSE_THRESHOLD = 3` に対し `newCount` が 4, 5 ... と進む（§26 で実 pause しないため）
+- Discord 表示は「4/3 (次回 auto pause)」を繰り返す
+- ユーザから見て「次回」が永遠に来ない
+
+**関連**
+
+- §26
+- `src/lib/cycle/phases.ts:1141-1170`
+
+**修正の方向性**
+
+- §26 と同時に修正される（3 で実際に pause すれば 4 以上にならない）
+- フォールバックで表示用に `min(newCount, AUTO_PAUSE_THRESHOLD)` でクランプ
+
+---
+
+### 30. ダッシュボード「最近のサイクル」に失敗サイクルが出ない
+
+**問題**
+
+- `getRecentCycles` は `critic_outputs` 行を起点に作っている（[src/lib/cycle/queries.ts:209-237](src/lib/cycle/queries.ts#L209-L237)）
+- 失敗サイクルは tier0/1/2/3 で abort するので `critic_outputs` 行を持たない
+- 4 サイクル連続失敗中に「直近 0 サイクル / まだ実行されていません」となり、UI 上で何も起きてないように見える
+
+**関連**
+
+- `src/lib/cycle/queries.ts:188-237` — `RecentCycleRow` / `getRecentCycles`
+- `src/db/schema/cycles.ts` — `cycles` テーブル（全サイクル分入っている）
+- C2 で導入した `dashboard` cache の revalidate も関係
+
+**修正の方向性**
+
+- `cycles` テーブルを起点に LEFT JOIN `critic_outputs`
+- `completed_at IS NULL` の行は「失敗 / 進行中」として表示（badge 出し分け）
+- `criticDecision` が null の行は失敗扱い、reason 用に `system_events` から `cycle_aborted` を引いてもよい
+
+---
+
 ## 修正優先度（推奨）
 
 | 順 | ID | 内容 |
 |----|-----|------|
 | 1 | §1 | Entry 仮説の永続化 |
-| 2 | §18 | 連続失敗 auto-pause の経路修正（§4 / §20 と同時） |
-| 3 | §2 | 保有中の Exit / skip_flag ポリシー統一 |
-| 4 | §3 | Critic フェイルオープン |
-| 5 | §4 | Inngest finalize の `recordCycleFailure` |
-| 6 | §7–§9 | price-monitor / Kill Switch / 部分決済 SL（方針決定後） |
-| 7 | §10–§11, §19 | 配分・リスク計算の精緻化（時価ベース + Exit 後 refresh） |
-| 8 | §20, §24 | 重複定数・責務重複の集約 |
-| 9 | §21–§23, §25 | レガシー列・死コード・小さな整合性 |
-| 10 | §12–§17 | ドキュメント・env・テスト・リファクタ |
+| 2 | §26 | `recordCycleFailure` から kill-switch を呼ぶ（auto-pause が機能してない） |
+| 3 | §27 | GMO 1m kline 404 → 前日フォールバック |
+| 4 | §28, §29 | Discord 推定原因の動的化 + counter 表示クランプ |
+| 5 | §30 | ダッシュボードに失敗 cycle を表示 |
+| 6 | §18 | 連続失敗 auto-pause の経路修正（§4 / §20 と同時） |
+| 7 | §2 | 保有中の Exit / skip_flag ポリシー統一 |
+| 8 | §3 | Critic フェイルオープン |
+| 9 | §4 | Inngest finalize の `recordCycleFailure` |
+| 10 | §7–§9 | price-monitor / Kill Switch / 部分決済 SL（方針決定後） |
+| 11 | §10–§11, §19 | 配分・リスク計算の精緻化（時価ベース + Exit 後 refresh） |
+| 12 | §20, §24 | 重複定数・責務重複の集約 |
+| 13 | §21–§23, §25 | レガシー列・死コード・小さな整合性 |
+| 14 | §12–§17 | ドキュメント・env・テスト・リファクタ |
 
 ---
 
@@ -566,3 +678,11 @@
 - 作業リスト: `docs/todo.md`
 - パイプライン本体: `src/lib/cycle/phases.ts`
 - Inngest: `src/lib/inngest/functions.ts`
+
+
+
+最近のサイクル
+直近 0 サイクル
+まだ実行されていません
+
+になりエラーのやつが表示されないエラーも載せるで

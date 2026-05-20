@@ -84,14 +84,40 @@ function summarizeMicro(book: Orderbook, trades: PublicTrade[]): MicroMarket | n
 }
 
 function todayYyyymmdd(): string {
-  const now = new Date();
-  // JST 換算で YYYYMMDD
-  const jst = new Date(now.getTime() + 9 * 3600_000);
+  return yyyymmddJst(new Date());
+}
+
+function yesterdayYyyymmdd(): string {
+  return yyyymmddJst(new Date(Date.now() - 24 * 3600_000));
+}
+
+function yyyymmddJst(d: Date): string {
+  const jst = new Date(d.getTime() + 9 * 3600_000);
   return `${jst.getUTCFullYear()}${String(jst.getUTCMonth() + 1).padStart(2, "0")}${String(jst.getUTCDate()).padStart(2, "0")}`;
 }
 
 function currentYear(): string {
   return String(new Date().getUTCFullYear());
+}
+
+/**
+ * 1m kline は date が変わった直後に GMO が 404 を返すことがある (低流動性銘柄、早朝)。
+ * 今日 → 失敗なら前日 にフォールバックすることでサイクル中断を回避。
+ */
+async function getKlines1mWithFallback(symbol: string, todayDate: string): Promise<OHLCBar[]> {
+  try {
+    return await getKlines(symbol, "1min", todayDate);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // GMO 404 は "GMO 404: <body>" 形式で throw される (gmo.ts:67)
+    if (!/GMO\s*404/i.test(msg)) throw err;
+    const yesterday = yesterdayYyyymmdd();
+    logger.warn(
+      { symbol, todayDate, yesterday },
+      "1m kline 404 for today, falling back to yesterday",
+    );
+    return await getKlines(symbol, "1min", yesterday);
+  }
 }
 
 /**
@@ -113,7 +139,7 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
   const [tickerRes, ohlcv1mRes, ohlcv1dRes, orderbookRes, tradesRes, perplexityRes, grokRes] =
     await Promise.allSettled([
       getTicker(symbolJpy),
-      getKlines(symbolJpy, "1min", input.kline1mDate ?? todayYyyymmdd()),
+      getKlines1mWithFallback(symbolJpy, input.kline1mDate ?? todayYyyymmdd()),
       getKlines(symbolJpy, "1day", input.klineYear ?? currentYear()),
       getOrderbook(symbolJpy),
       getRecentTrades(symbolJpy, 1, 100),

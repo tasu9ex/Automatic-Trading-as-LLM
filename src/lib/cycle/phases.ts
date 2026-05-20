@@ -1094,6 +1094,12 @@ export async function recordCycleFailure(args: {
     newCount,
     nextScheduledAt: state?.nextScheduledAt ?? null,
   });
+
+  // quota は recordCycleFailure 内で既に paused にしているので不要
+  // それ以外は kill-switch チェック (consecutiveFailures >= 3 で system_state を paused に)
+  if (kind !== "quota") {
+    await checkAndTriggerKillSwitch({ strategyId: args.strategyId });
+  }
 }
 
 async function sendFailureNotification(args: {
@@ -1147,11 +1153,17 @@ async function sendFailureNotification(args: {
   }
 
   // transient (リトライ尽き)
-  const hint = PHASE_HINTS[args.phase] ?? {
-    cause: "外部 API の一時障害の可能性",
-    action: "ログ確認、次サイクル待ち",
-  };
-  const remaining = Math.max(0, AUTO_PAUSE_THRESHOLD - args.newCount);
+  // 1. error.message から失敗ソースが読み取れればそれを優先 (例: "Tier 0 required sources failed for ETH: 1m kline")
+  // 2. 読み取れなければ phase 単位の固定 hint にフォールバック
+  const dynamicHint = extractFailureHint(args.errMsg);
+  const hint = dynamicHint ??
+    PHASE_HINTS[args.phase] ?? {
+      cause: "外部 API の一時障害の可能性",
+      action: "ログ確認、次サイクル待ち",
+    };
+  // counter 表示は AUTO_PAUSE_THRESHOLD でクランプ (3 で実 pause しているので 4 以上はあり得ない、防御)
+  const displayCount = Math.min(args.newCount, AUTO_PAUSE_THRESHOLD);
+  const remaining = Math.max(0, AUTO_PAUSE_THRESHOLD - displayCount);
   await notify({
     level: "error",
     title: `🌐 サイクル中断 (${args.phase}) — 外部 API 一時障害`,
@@ -1163,10 +1175,40 @@ async function sendFailureNotification(args: {
     ].join("\n"),
     fields: {
       サイクル: cycleShort,
-      連続失敗: `${args.newCount}/${AUTO_PAUSE_THRESHOLD}${
+      連続失敗: `${displayCount}/${AUTO_PAUSE_THRESHOLD}${
         remaining === 0 ? " (次回 auto pause)" : ` (あと ${remaining})`
       }`,
       次サイクル: nextScheduledAt,
     },
   });
+}
+
+/**
+ * Tier 0 系のエラーメッセージから失敗ソースを抜き出して、具体的な原因 / 対応を組み立てる。
+ *   "Tier 0 required sources failed for ETH: 1m kline" → kline 由来とみなす
+ * 抽出できないなら null (呼び元が PHASE_HINTS にフォールバック)
+ */
+function extractFailureHint(errMsg: string): { cause: string; action: string } | null {
+  // "Tier 0 required sources failed for <SYMBOL>: <SOURCE1>, <SOURCE2>" を捕捉
+  const m = errMsg.match(/Tier 0 required sources failed for (\w+):\s*([^\n]+)/i);
+  if (!m) return null;
+  const symbol = m[1];
+  const sources = (m[2] ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (sources.length === 0) return null;
+
+  const causeBySource: Record<string, string> = {
+    "1m kline": "GMO の 1m kline がデータ未公開 (早朝など date が変わった直後に発生しやすい)",
+    "1d kline": "GMO の 1d kline 取得失敗",
+    Ticker: "GMO Ticker API の障害",
+    Perplexity: "Perplexity API の障害 (status 確認: https://status.perplexity.ai)",
+    Grok: "xAI Grok API の障害 (status 確認: https://status.x.ai)",
+  };
+  const causes = sources.map((s) => causeBySource[s] ?? `${s} 取得失敗`);
+  return {
+    cause: `${symbol}: ${causes.join(" / ")}`,
+    action: "次サイクルで自動リトライ。連発するなら API status と periodHours 設定を確認",
+  };
 }

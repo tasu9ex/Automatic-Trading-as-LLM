@@ -159,7 +159,7 @@ export default async function Home() {
                         variant={
                           c.criticDecision === "approve"
                             ? "default"
-                            : c.criticDecision === "modify"
+                            : c.criticDecision === "modify" || c.criticDecision === "in_flight"
                               ? "outline"
                               : "destructive"
                         }
@@ -170,7 +170,11 @@ export default async function Home() {
                             ? "修正"
                             : c.criticDecision === "veto"
                               ? "拒否"
-                              : c.criticDecision}
+                              : c.criticDecision === "failed"
+                                ? "失敗"
+                                : c.criticDecision === "in_flight"
+                                  ? "実行中"
+                                  : c.criticDecision}
                       </Badge>
                     </div>
                   </Link>

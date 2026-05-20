@@ -187,6 +187,7 @@ async function getOpenPositionsImpl(): Promise<OpenPositionRow[]> {
 
 export interface RecentCycleRow {
   cycleId: string;
+  /** "approve" / "veto" / "modify" / "failed" / "in_flight" */
   criticDecision: string;
   criticReasoning: string | null;
   createdAt: Date;
@@ -204,36 +205,35 @@ export async function getRecentCycles(limit = 15): Promise<RecentCycleRow[]> {
   return rows.map((r) => ({ ...r, createdAt: reviveDate(r.createdAt) ?? new Date(0) }));
 }
 
+/**
+ * cycles テーブル起点に LEFT JOIN critic_outputs。
+ * 失敗 cycle (critic_outputs 行なし) は "failed" (completed_at あり) または "in_flight" (completed_at なし) として表示。
+ */
 async function getRecentCyclesImpl(limit = 15): Promise<RecentCycleRow[]> {
-  // critic_outputs.model は LLM モデル名なのでフィルタしない
-  const critics = await db
-    .select()
-    .from(criticOutputs)
-    .orderBy(desc(criticOutputs.createdAt))
+  const rows = await db
+    .select({
+      id: cycles.id,
+      startedAt: cycles.startedAt,
+      completedAt: cycles.completedAt,
+      coinIds: cycles.coinIds,
+      criticDecision: criticOutputs.decision,
+      criticReasoning: criticOutputs.reasoning,
+    })
+    .from(cycles)
+    .leftJoin(criticOutputs, eq(criticOutputs.cycleId, cycles.id))
+    .orderBy(desc(cycles.startedAt))
     .limit(limit);
 
-  if (critics.length === 0) return [];
-
-  const cycleIds = critics.map((c) => c.cycleId);
-
-  // 各 cycleId に対する銘柄数を集計
-  const symbolCounts = await db
-    .select({
-      cycleId: marketSnapshots.cycleId,
-      count: sql<string>`COUNT(*)`,
-    })
-    .from(marketSnapshots)
-    .where(sql`${marketSnapshots.cycleId} IN ${cycleIds}`)
-    .groupBy(marketSnapshots.cycleId);
-  const countByCycle = new Map(symbolCounts.map((r) => [r.cycleId, Number(r.count)]));
-
-  return critics.map((c) => ({
-    cycleId: c.cycleId,
-    criticDecision: c.decision,
-    criticReasoning: c.reasoning,
-    createdAt: c.createdAt,
-    symbolCount: countByCycle.get(c.cycleId) ?? 0,
-  }));
+  return rows.map((r) => {
+    const decision = r.criticDecision ?? (r.completedAt ? "failed" : "in_flight");
+    return {
+      cycleId: r.id,
+      criticDecision: decision,
+      criticReasoning: r.criticReasoning,
+      createdAt: r.startedAt,
+      symbolCount: Array.isArray(r.coinIds) ? r.coinIds.length : 0,
+    };
+  });
 }
 
 export interface CycleDetail {
