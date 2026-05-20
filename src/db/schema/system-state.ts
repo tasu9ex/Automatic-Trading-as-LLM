@@ -12,6 +12,12 @@ export const systemState = pgTable("system_state", {
   id: text("id").primaryKey().default("singleton"),
   state: systemStateEnum("state").notNull().default("stopped"),
   consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  /**
+   * 直近失敗の分類 ("transient" / "permanent" / "quota")。
+   * consecutiveFailures はこれと同じ kind が続く間だけカウントする (異種が来たらリセット)。
+   * 成功サイクル後は null。
+   */
+  lastFailureKind: text("last_failure_kind"),
   killReason: text("kill_reason"),
   killedAt: timestamp("killed_at", { withTimezone: true }),
   lastCycleId: uuid("last_cycle_id"),

@@ -1,0 +1,1 @@
+ALTER TABLE "system_state" ADD COLUMN "last_failure_kind" text;

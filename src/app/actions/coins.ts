@@ -2,9 +2,10 @@
 
 import { db } from "@/db/client";
 import { coins } from "@/db/schema";
+import { DASHBOARD_CACHE_TAG } from "@/lib/cycle/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { eq } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 
 async function requireUser() {
   const supabase = await createSupabaseServerClient();
@@ -26,6 +27,7 @@ export async function setCoinEnabledAction(
   try {
     await requireUser();
     await db.update(coins).set({ enabled, updatedAt: new Date() }).where(eq(coins.id, coinId));
+    updateTag(DASHBOARD_CACHE_TAG);
     revalidatePath("/");
     return { ok: true };
   } catch (err) {

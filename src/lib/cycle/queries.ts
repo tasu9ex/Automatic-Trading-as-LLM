@@ -24,6 +24,15 @@ import {
   isCycleIntervalHours,
 } from "@/lib/system-control/constants";
 import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
+import { unstable_cache } from "next/cache";
+
+/**
+ * ダッシュボードクエリ用のキャッシュタグ。
+ * 30 秒 TTL で読み出しを軽量化。手動操作 (start/pause/銘柄 toggle) 後は
+ * server action 側で `revalidateTag(DASHBOARD_CACHE_TAG)` を呼ぶことで即時無効化。
+ */
+export const DASHBOARD_CACHE_TAG = "dashboard";
+const CACHE_REVALIDATE_SECONDS = 30;
 
 const logger = createLogger("cycle.queries");
 
@@ -42,7 +51,13 @@ export interface DashboardStats {
   cyclesTotal: number;
 }
 
-export async function getDashboardStats(): Promise<DashboardStats> {
+export const getDashboardStats = unstable_cache(
+  () => getDashboardStatsImpl(),
+  ["dashboard.stats"],
+  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+);
+
+async function getDashboardStatsImpl(): Promise<DashboardStats> {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
@@ -107,7 +122,13 @@ export interface OpenPositionRow {
   openedAt: Date;
 }
 
-export async function getOpenPositions(): Promise<OpenPositionRow[]> {
+export const getOpenPositions = unstable_cache(
+  () => getOpenPositionsImpl(),
+  ["dashboard.open-positions"],
+  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+);
+
+async function getOpenPositionsImpl(): Promise<OpenPositionRow[]> {
   const rows = await db
     .select({ position: positions, coin: coins })
     .from(positions)
@@ -153,7 +174,13 @@ export interface RecentCycleRow {
   symbolCount: number;
 }
 
-export async function getRecentCycles(limit = 15): Promise<RecentCycleRow[]> {
+export const getRecentCycles = unstable_cache(
+  (limit = 15) => getRecentCyclesImpl(limit),
+  ["dashboard.recent-cycles"],
+  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+);
+
+async function getRecentCyclesImpl(limit = 15): Promise<RecentCycleRow[]> {
   // critic_outputs.model は LLM モデル名なのでフィルタしない
   const critics = await db
     .select()
@@ -324,7 +351,13 @@ export interface CoinChecklistRow {
   enabled: boolean;
 }
 
-export async function getCoinChecklist(): Promise<CoinChecklistRow[]> {
+export const getCoinChecklist = unstable_cache(
+  () => getCoinChecklistImpl(),
+  ["dashboard.coin-checklist"],
+  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+);
+
+async function getCoinChecklistImpl(): Promise<CoinChecklistRow[]> {
   const rows = await db
     .select({
       id: coins.id,
@@ -337,8 +370,14 @@ export async function getCoinChecklist(): Promise<CoinChecklistRow[]> {
   return rows;
 }
 
+export const isCycleInFlight = unstable_cache(
+  () => isCycleInFlightImpl(),
+  ["dashboard.in-flight"],
+  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+);
+
 /** completed_at が未セットで、開始から 30 分以内の cycle 行があれば実行中とみなす */
-export async function isCycleInFlight(): Promise<boolean> {
+async function isCycleInFlightImpl(): Promise<boolean> {
   const since = new Date(Date.now() - 30 * 60_000);
   const row = (
     await db

@@ -48,7 +48,7 @@ import { applyRiskClipper } from "@/lib/risk/clipper";
 import { type Snapshot, fetchSnapshot } from "@/lib/tier0/fetch-snapshot";
 import { runPreAnalyst } from "@/lib/tier1/pre-analyst";
 import { runAnalyst } from "@/lib/tier2/analyst";
-import { and, eq, gte, inArray } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 
 const logger = createLogger("cycle.phases");
 
@@ -142,12 +142,38 @@ export async function preflight(input: PreflightInput): Promise<PreflightResult>
   return { proceed: true, periodHours, coinIdsCount: enabledCoins.length };
 }
 
-/** サイクル行に凍結された coin_ids をもとに coins レコードを取得 (phase 間で共有) */
+/**
+ * サイクル行に凍結された coin_ids をもとに coins レコードを取得 (phase 間で共有)。
+ * cycles テーブルから coin_ids を取って coins を引く 2 クエリではなく、
+ * postgres の `id = ANY(coin_ids)` を 1 クエリで叩く。
+ */
 async function getCycleCoins(cycleId: string) {
-  const cycle = (await db.select().from(cycles).where(eq(cycles.id, cycleId)).limit(1))[0];
-  if (!cycle) throw new Error(`Cycle not found: ${cycleId}`);
-  if (cycle.coinIds.length === 0) return [];
-  return await db.select().from(coins).where(inArray(coins.id, cycle.coinIds));
+  const rows = await db
+    .select({
+      id: coins.id,
+      symbol: coins.symbol,
+      name: coins.name,
+      minOrderSize: coins.minOrderSize,
+      makerFeeRate: coins.makerFeeRate,
+      takerFeeRate: coins.takerFeeRate,
+      enabled: coins.enabled,
+      createdAt: coins.createdAt,
+      updatedAt: coins.updatedAt,
+    })
+    .from(coins)
+    .innerJoin(
+      cycles,
+      sql`${coins.id}::text = ANY(SELECT jsonb_array_elements_text(${cycles.coinIds}))`,
+    )
+    .where(eq(cycles.id, cycleId));
+  if (rows.length === 0) {
+    // cycle 行が無い、もしくは coin_ids が空 → 区別したいので明示チェック
+    const cycle = (
+      await db.select({ id: cycles.id }).from(cycles).where(eq(cycles.id, cycleId)).limit(1)
+    )[0];
+    if (!cycle) throw new Error(`Cycle not found: ${cycleId}`);
+  }
+  return rows;
 }
 
 /** Phase 2: Tier 0 全コイン snapshot 取得 (ALL-or-NOTHING) */
@@ -815,13 +841,14 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     }
   }
 
-  // system_state 更新 (連続失敗カウンタリセット)
+  // system_state 更新 (連続失敗カウンタ + last_failure_kind をリセット)
   await db
     .insert(systemState)
     .values({
       id: "singleton",
       state: "running",
       consecutiveFailures: 0,
+      lastFailureKind: null,
       lastCycleId: cycleId,
       lastCycleAt: new Date(),
       updatedAt: new Date(),
@@ -830,6 +857,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       target: systemState.id,
       set: {
         consecutiveFailures: 0,
+        lastFailureKind: null,
         lastCycleId: cycleId,
         lastCycleAt: new Date(),
         updatedAt: new Date(),
@@ -1008,9 +1036,17 @@ export async function recordCycleFailure(args: {
   )[0];
 
   // quota: 即 system pause (連続失敗カウンタを通さず特別扱い)
-  // permanent / transient: 連続失敗カウンタ ++
-  const newCount =
-    kind === "quota" ? (state?.consecutiveFailures ?? 0) : (state?.consecutiveFailures ?? 0) + 1;
+  // それ以外: 連続失敗カウンタは "同じ kind が続く間だけ" カウント (異種が来たらリセット)
+  const previousKind = state?.lastFailureKind ?? null;
+  const previousCount = state?.consecutiveFailures ?? 0;
+  let newCount: number;
+  if (kind === "quota") {
+    newCount = previousCount; // quota は streak の計算に含めない
+  } else if (previousKind === kind) {
+    newCount = previousCount + 1;
+  } else {
+    newCount = 1; // 異 kind に切り替わったらリセット
+  }
   const nextStateValue = kind === "quota" ? "paused" : (state?.state ?? "running");
 
   await db
@@ -1019,6 +1055,7 @@ export async function recordCycleFailure(args: {
       id: "singleton",
       state: nextStateValue,
       consecutiveFailures: newCount,
+      lastFailureKind: kind,
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
@@ -1026,6 +1063,7 @@ export async function recordCycleFailure(args: {
       set: {
         state: nextStateValue,
         consecutiveFailures: newCount,
+        lastFailureKind: kind,
         updatedAt: new Date(),
       },
     });

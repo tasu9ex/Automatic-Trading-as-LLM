@@ -1,5 +1,6 @@
 "use server";
 
+import { DASHBOARD_CACHE_TAG } from "@/lib/cycle/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   pauseSystem,
@@ -8,7 +9,7 @@ import {
   startSystem,
 } from "@/lib/system-control";
 import { type CycleIntervalHours, isCycleIntervalHours } from "@/lib/system-control/constants";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 
 async function requireUser() {
   const supabase = await createSupabaseServerClient();
@@ -27,6 +28,7 @@ export type SystemControlActionResult = { ok: true } | { ok: false; error: strin
 function withResult(fn: () => Promise<unknown>): Promise<SystemControlActionResult> {
   return fn()
     .then(() => {
+      updateTag(DASHBOARD_CACHE_TAG);
       revalidatePath("/");
       return { ok: true as const };
     })

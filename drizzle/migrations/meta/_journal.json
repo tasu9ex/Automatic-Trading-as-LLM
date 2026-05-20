@@ -36,6 +36,13 @@
       "when": 1779277353589,
       "tag": "0004_spicy_onslaught",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779277708113,
+      "tag": "0005_vengeful_madame_masque",
+      "breakpoints": true
     }
   ]
 }
