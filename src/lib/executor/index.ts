@@ -36,6 +36,46 @@ const STOP_LIMIT_LIMIT_RATIO = 0.73; // -27%
 const STOP_MARKET_ENTRY_RATIO = 0.65; // -35%
 const STOP_MARKET_PEAK_RATIO = 0.5; // -50%
 
+/**
+ * 3 種類の SL pending_orders を作成。
+ * Entry 新規 / Pyramid / 部分決済後 のいずれからも呼ぶ。
+ * 呼び出し側は事前に既存 active を deactivate しておくこと。
+ */
+async function insertStopLossOrders(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  positionId: string,
+  coinId: string,
+  strategyId: string,
+  avgPrice: number,
+  peakPrice: number,
+) {
+  await tx.insert(pendingOrders).values({
+    positionId,
+    coinId,
+    strategyId,
+    kind: "stop_limit_primary",
+    triggerPrice: (avgPrice * STOP_LIMIT_TRIGGER_RATIO).toFixed(4),
+    limitPrice: (avgPrice * STOP_LIMIT_LIMIT_RATIO).toFixed(4),
+    createdBy: "code",
+  });
+  await tx.insert(pendingOrders).values({
+    positionId,
+    coinId,
+    strategyId,
+    kind: "stop_market_entry",
+    triggerPrice: (avgPrice * STOP_MARKET_ENTRY_RATIO).toFixed(4),
+    createdBy: "code",
+  });
+  await tx.insert(pendingOrders).values({
+    positionId,
+    coinId,
+    strategyId,
+    kind: "stop_market_peak",
+    triggerPrice: (peakPrice * STOP_MARKET_PEAK_RATIO).toFixed(4),
+    createdBy: "code",
+  });
+}
+
 function isPaperMode(): boolean {
   return (process.env.PAPER_TRADE ?? "true").toLowerCase() !== "false";
 }
@@ -208,6 +248,8 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
           quantity: newQty.toFixed(10),
           avgEntryPrice: newAvgPrice.toFixed(4),
           peakPrice: Math.max(Number(existing.peakPrice), fill.executedPrice).toFixed(4),
+          // §25: peak と対称に trough も更新 (新規 fill が既存最安値より低い場合のみ動く)
+          troughPrice: Math.min(Number(existing.troughPrice), fill.executedPrice).toFixed(4),
           entryReason: args.entryReason,
           entryExpectedHoldingDaysMin: args.expectedHoldingDays?.min ?? null,
           entryExpectedHoldingDaysMax: args.expectedHoldingDays?.max ?? null,
@@ -264,31 +306,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
 
     const currentPeak = Math.max(Number(existing?.peakPrice ?? 0), fill.executedPrice);
 
-    await tx.insert(pendingOrders).values({
-      positionId,
-      coinId: coin.id,
-      strategyId,
-      kind: "stop_limit_primary",
-      triggerPrice: (newAvgPrice * STOP_LIMIT_TRIGGER_RATIO).toFixed(4),
-      limitPrice: (newAvgPrice * STOP_LIMIT_LIMIT_RATIO).toFixed(4),
-      createdBy: "code",
-    });
-    await tx.insert(pendingOrders).values({
-      positionId,
-      coinId: coin.id,
-      strategyId,
-      kind: "stop_market_entry",
-      triggerPrice: (newAvgPrice * STOP_MARKET_ENTRY_RATIO).toFixed(4),
-      createdBy: "code",
-    });
-    await tx.insert(pendingOrders).values({
-      positionId,
-      coinId: coin.id,
-      strategyId,
-      kind: "stop_market_peak",
-      triggerPrice: (currentPeak * STOP_MARKET_PEAK_RATIO).toFixed(4),
-      createdBy: "code",
-    });
+    await insertStopLossOrders(tx, positionId, coin.id, strategyId, newAvgPrice, currentPeak);
 
     const newCash = Number(portfolio.cashJpy) - fill.netCashJpy;
     await tx
@@ -544,6 +562,21 @@ export async function fillExitOrder(args: FillExitArgs): Promise<void> {
           updatedAt: new Date(),
         })
         .where(eq(positions.id, position.id));
+
+      // §9: 部分決済後の SL rearm。avgPrice / peakPrice は不変だが、ピラミ時と挙動を
+      // 揃えて再配置 (deactivate → re-insert)。将来 SL 式を変更したとき自動的に両側に効くため。
+      await tx
+        .update(pendingOrders)
+        .set({ active: false, updatedAt: new Date() })
+        .where(and(eq(pendingOrders.positionId, position.id), eq(pendingOrders.active, true)));
+      await insertStopLossOrders(
+        tx,
+        position.id,
+        position.coinId,
+        strategyId,
+        Number(position.avgEntryPrice),
+        Number(position.peakPrice),
+      );
     }
 
     const newCash = Number(portfolio.cashJpy) + fill.netCashJpy;
