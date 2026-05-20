@@ -667,15 +667,81 @@
 
 ---
 
+### 32. Tier 0 が渡す TF が実行レートと無関係に固定 (1m + 1d)
+
+**症状**
+
+- `fetchSnapshot` は **常に `1min` + `1day`** を取得 ([src/lib/tier0/fetch-snapshot.ts:116-117](src/lib/tier0/fetch-snapshot.ts#L116-L117))
+- 一方サイクル間隔は 1h / 3h / 6h / 24h から選べる ([src/lib/system-control/constants.ts](src/lib/system-control/constants.ts))
+- 1h サイクルでも 24h サイクルでも、LLM に渡る kline は **同じ 1m と 1d**
+
+**設計上の問題**
+
+- 1h サイクルなのに 1h kline が存在しない → エントリポイント判断の主役 TF が無い
+- 24h サイクルに 1m を渡してもノイズしか入らない
+- 1m はそもそも LLM のパターン抽出に向かず、§31 で見たように **早朝に空配列 → price=0 化** の事故源
+- ticker.last を `loadSnapshot` で 1m 最後の close から疑似再構成しているのも、同じ依存
+
+**あるべき形 (案)**
+
+サイクル間隔ベースで「メイン TF (サイクル相当)」 + 「長期 TF (4-8 倍粗)」を動的に選ぶ。GMO interval 対応:
+
+| サイクル | メイン TF | 長期 TF |
+|---|---|---|
+| 1h | `1hour` (~72 本 = 3 日) | `1day` (~30 本) |
+| 3h | `4hour` (~60 本 = 10 日) | `1day` |
+| 6h | `4hour` (~60 本 = 10 日) | `1day` |
+| 24h | `1day` (~30 本) | (なし or `4hour` ~24 本) |
+
+**影響**
+
+- LLM の判断品質 (サイクル間隔と TF の整合)
+- API コール数とトークン消費の削減 (1m 廃止)
+- §31 の根本原因消滅 (ticker.last を kline 経由で再構成しなくなる)
+
+**関連ファイル**
+
+- `src/lib/tier0/fetch-snapshot.ts` — kline 取得ロジック
+- `src/lib/cycle/phases.ts` — `loadSnapshot` (ticker 再構成)
+- `src/db/schema/market-snapshots.ts` — `ohlcv_1m` / `ohlcv_1d` 列
+- `src/lib/prompts/prompt-fallbacks/tier1/`, `tier2/` — kline を扱うプロンプト本体
+- Langfuse 上の `tier1/pre-analyst` / `tier2/analyst` プロンプト
+
+**修正の方向性 (段階的に)**
+
+**Phase 1 (最小、価値の大半を取れる)**
+- `fetchSnapshot` の `1min` 取得を廃止し、`1hour` (interval=`1hour`、date=YYYY 形式) に置換
+- `getTicker` のレスポンスを直接 `market_snapshots.ticker_*` に保存 (もしくは新列 `ticker` jsonb)
+- `loadSnapshot` の ticker 再構成ロジックを削除
+- Tier 1/2 プロンプトの 1m 参照を 1h に置換
+
+**Phase 2 (動的化)**
+- `fetchSnapshot` に `cycleIntervalHours` を渡し、上表のマッピングで TF を選択
+- `market_snapshots` に `primary_interval` / `long_interval` (text) を追加し、保存値が何の TF か明示
+- Tier 1/2 プロンプトを「primary_bars / long_bars + interval メタ」前提に書き直す
+
+**Phase 3 (任意)**
+- 1m を取りたいユースケース (micro context) があれば別カラムで残す
+- 長期 TF を 4-8 倍ルールではなく LLM 出力 (Tier 1 で要求) で動的指定
+
+**スコープ感**
+
+- Phase 1 のみ: schema 変更 1 件 + コード 50 行程度 + Langfuse プロンプト書き換え
+- Phase 2 まで: schema 変更 1 件 + コード 100 行 + プロンプト全面書き換え (動的 TF 名展開)
+- Phase 3: 別 PR
+
+---
+
 ## 修正優先度（推奨）
 
 | 順 | ID | 内容 |
 |----|-----|------|
 | 1 | §1 | Entry 仮説の永続化 |
 | 2 | §26 | `recordCycleFailure` から kill-switch を呼ぶ（auto-pause が機能してない） |
-| 3 | §27, §31 | GMO 1m kline 404 / 空配列 → 前日フォールバック + Entry skip 表示 |
-| 4 | §28, §29 | Discord 推定原因の動的化 + counter 表示クランプ |
-| 5 | §30 | ダッシュボードに失敗 cycle を表示 |
+| 3 | §32 | Tier 0 の TF をサイクル間隔から動的選択（1m 廃止 + 1h 追加で §31 の根治） |
+| 4 | §27, §31 | GMO 1m kline 404 / 空配列 → 前日フォールバック + Entry skip 表示（§32 までの暫定対策） |
+| 5 | §28, §29 | Discord 推定原因の動的化 + counter 表示クランプ |
+| 6 | §30 | ダッシュボードに失敗 cycle を表示 |
 | 6 | §18 | 連続失敗 auto-pause の経路修正（§4 / §20 と同時） |
 | 7 | §2 | 保有中の Exit / skip_flag ポリシー統一 |
 | 8 | §3 | Critic フェイルオープン |
