@@ -1,3 +1,4 @@
+import { withClientRetry } from "@/lib/clients/retry";
 import { createLogger } from "@/lib/logging";
 import { runWith } from "@/lib/rate-limit";
 
@@ -51,12 +52,12 @@ export async function callGrok(req: GrokRequest): Promise<GrokResponse> {
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) throw new Error("XAI_API_KEY is not set");
 
-  return runWith("grok", async () => {
-    if (req.useTools) {
-      return callGrokWithTools(req, apiKey);
-    }
-    return callGrokChat(req, apiKey);
-  });
+  return runWith("grok", () =>
+    withClientRetry(
+      () => (req.useTools ? callGrokWithTools(req, apiKey) : callGrokChat(req, apiKey)),
+      { label: req.useTools ? "grok-responses" : "grok-chat" },
+    ),
+  );
 }
 
 async function callGrokChat(req: GrokRequest, apiKey: string): Promise<GrokResponse> {

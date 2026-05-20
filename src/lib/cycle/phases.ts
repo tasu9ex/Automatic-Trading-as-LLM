@@ -36,7 +36,7 @@ import {
 import { type SizingMethod, allocate } from "@/lib/allocator";
 import { getExchangeStatus } from "@/lib/clients/gmo";
 import { runCritic } from "@/lib/critic";
-import { withRetry } from "@/lib/cycle/retry";
+import { type ErrorKind, classifyError, withRetry } from "@/lib/cycle/retry";
 import { runEntryDecision } from "@/lib/decision/entry";
 import { runExitDecision } from "@/lib/decision/exit";
 import { executeEntry, executeExit } from "@/lib/executor";
@@ -947,7 +947,33 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   };
 }
 
-/** サイクル中断時の通知 + 連続失敗カウント更新 */
+/** Phase 名から推定原因 + 推奨対応 (transient 用ヒント) */
+const PHASE_HINTS: Record<string, { cause: string; action: string }> = {
+  "tier0-snapshots": {
+    cause: "Perplexity / Grok / GMO API の一時障害",
+    action: "API status 確認後、次サイクル待ち",
+  },
+  "tier1-pre-analyst": {
+    cause: "Anthropic 過負荷 (overloaded_error) の可能性",
+    action: "https://status.anthropic.com 確認、次サイクル待ち",
+  },
+  "tier2-analyst": {
+    cause: "Anthropic Opus 過負荷 or ITPM レート超過",
+    action: "Langfuse で詳細確認、次サイクル待ち",
+  },
+  "tier3-decisions": {
+    cause: "Anthropic Sonnet 過負荷 or ITPM レート超過",
+    action: "Langfuse で詳細確認、次サイクル待ち",
+  },
+  finalize: {
+    cause: "Critic 失敗 / DB 接続 / Executor バグ",
+    action: "ログとダッシュボード状態を確認",
+  },
+};
+
+const AUTO_PAUSE_THRESHOLD = 3;
+
+/** サイクル中断時の通知 + 連続失敗カウント更新 (エラー種別ごとに対応分岐) */
 export async function recordCycleFailure(args: {
   cycleId: string;
   strategyId: string;
@@ -955,80 +981,134 @@ export async function recordCycleFailure(args: {
   err: unknown;
 }): Promise<void> {
   const errMsg = args.err instanceof Error ? args.err.message : String(args.err);
-  logger.error({ cycleId: args.cycleId, phase: args.phase, err: args.err }, "Cycle aborted");
+  const kind = classifyError(args.err);
+  logger.error({ cycleId: args.cycleId, phase: args.phase, kind, err: args.err }, "Cycle aborted");
 
   const state = (
     await db.select().from(systemState).where(eq(systemState.id, "singleton")).limit(1)
   )[0];
-  const newCount = (state?.consecutiveFailures ?? 0) + 1;
+
+  // quota: 即 system pause (連続失敗カウンタを通さず特別扱い)
+  // permanent / transient: 連続失敗カウンタ ++
+  const newCount =
+    kind === "quota" ? (state?.consecutiveFailures ?? 0) : (state?.consecutiveFailures ?? 0) + 1;
+  const nextStateValue = kind === "quota" ? "paused" : (state?.state ?? "running");
+
   await db
     .insert(systemState)
     .values({
       id: "singleton",
-      state: state?.state ?? "running",
+      state: nextStateValue,
       consecutiveFailures: newCount,
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
       target: systemState.id,
-      set: { consecutiveFailures: newCount, updatedAt: new Date() },
+      set: {
+        state: nextStateValue,
+        consecutiveFailures: newCount,
+        updatedAt: new Date(),
+      },
     });
 
   await db.insert(systemEvents).values({
     strategyId: args.strategyId,
     kind: "cycle_aborted",
     severity: "error",
-    message: `Cycle ${args.cycleId.slice(0, 8)} aborted at ${args.phase}: ${errMsg.slice(0, 300)}`,
-    payload: { cycleId: args.cycleId, phase: args.phase },
+    message: `Cycle ${args.cycleId.slice(0, 8)} aborted at ${args.phase} (${kind}): ${errMsg.slice(0, 300)}`,
+    payload: { cycleId: args.cycleId, phase: args.phase, kind },
   });
 
-  // Phase 名から推定原因 + 推奨対応
-  const PHASE_HINTS: Record<string, { cause: string; action: string }> = {
-    "tier0-snapshots": {
-      cause: "Perplexity / Grok / GMO API 一時障害の可能性",
-      action: "API status 確認後、次サイクル待ち",
-    },
-    "tier1-pre-analyst": {
-      cause: "Anthropic 過負荷 (overloaded_error) の可能性",
-      action: "https://status.anthropic.com 確認、次サイクル待ち",
-    },
-    "tier2-analyst": {
-      cause: "Anthropic Opus 過負荷 or ITPM レート超過",
-      action: "Langfuse で詳細確認、次サイクル待ち",
-    },
-    "tier3-decisions": {
-      cause: "Anthropic Sonnet 過負荷 or ITPM レート超過",
-      action: "Langfuse で詳細確認、次サイクル待ち",
-    },
-    finalize: {
-      cause: "Critic 失敗 / DB 接続 / Executor バグ",
-      action: "ログとダッシュボード状態を確認",
-    },
-  };
-  const hint = PHASE_HINTS[args.phase] ?? {
-    cause: "不明",
-    action: "ログ確認",
-  };
+  if (kind === "quota") {
+    await db.insert(systemEvents).values({
+      strategyId: args.strategyId,
+      kind: "system_paused",
+      severity: "warning",
+      message: `Auto-paused due to quota / billing error at ${args.phase}`,
+      payload: { reason: "quota", phase: args.phase, errMsg: errMsg.slice(0, 300) },
+    });
+  }
 
-  // 自動 pause 閾値 (kill-switch CONSECUTIVE_FAILURES_TRIGGER と同期)
-  const AUTO_PAUSE_THRESHOLD = 3;
-  const remaining = Math.max(0, AUTO_PAUSE_THRESHOLD - newCount);
-  const nextScheduledAt = state?.nextScheduledAt
-    ? state.nextScheduledAt.toISOString().slice(0, 16).replace("T", " ")
+  await sendFailureNotification({
+    kind,
+    phase: args.phase,
+    cycleId: args.cycleId,
+    errMsg,
+    newCount,
+    nextScheduledAt: state?.nextScheduledAt ?? null,
+  });
+}
+
+async function sendFailureNotification(args: {
+  kind: ErrorKind;
+  phase: string;
+  cycleId: string;
+  errMsg: string;
+  newCount: number;
+  nextScheduledAt: Date | null;
+}): Promise<void> {
+  const cycleShort = args.cycleId.slice(0, 8);
+  const nextScheduledAt = args.nextScheduledAt
+    ? args.nextScheduledAt.toISOString().slice(0, 16).replace("T", " ")
     : "未設定";
 
+  if (args.kind === "quota") {
+    await notify({
+      level: "error",
+      title: "💸 自動 pause — クォータ切れ",
+      body: [
+        "**エラー**",
+        `\`\`\`\n${args.errMsg.slice(0, 800)}\n\`\`\``,
+        "**状態**: system_state = paused (自動)",
+        "**推奨**: 残高補充 → ダッシュボード「再開」",
+      ].join("\n"),
+      fields: {
+        サイクル: cycleShort,
+        Phase: args.phase,
+      },
+    });
+    return;
+  }
+
+  if (args.kind === "permanent") {
+    await notify({
+      level: "error",
+      title: `🐛 サイクル中断 (${args.phase}) — 設定 / コードエラー`,
+      body: [
+        "**エラー (リトライ不要)**",
+        `\`\`\`\n${args.errMsg.slice(0, 800)}\n\`\`\``,
+        "**推奨**: 環境変数 / コード修正後にデプロイ → 手動再開",
+      ].join("\n"),
+      fields: {
+        サイクル: cycleShort,
+        連続失敗: `${args.newCount}/${AUTO_PAUSE_THRESHOLD}${
+          AUTO_PAUSE_THRESHOLD - args.newCount === 0 ? " (次回 auto pause)" : ""
+        }`,
+      },
+    });
+    return;
+  }
+
+  // transient (リトライ尽き)
+  const hint = PHASE_HINTS[args.phase] ?? {
+    cause: "外部 API の一時障害の可能性",
+    action: "ログ確認、次サイクル待ち",
+  };
+  const remaining = Math.max(0, AUTO_PAUSE_THRESHOLD - args.newCount);
   await notify({
     level: "error",
-    title: `🛑 サイクル中断 (${args.phase})`,
+    title: `🌐 サイクル中断 (${args.phase}) — 外部 API 一時障害`,
     body: [
       "**エラー**",
-      `\`\`\`\n${errMsg.slice(0, 800)}\n\`\`\``,
+      `\`\`\`\n${args.errMsg.slice(0, 800)}\n\`\`\``,
       `**推定原因**: ${hint.cause}`,
       `**推奨対応**: ${hint.action}`,
     ].join("\n"),
     fields: {
-      サイクル: args.cycleId.slice(0, 8),
-      連続失敗: `${newCount}/${AUTO_PAUSE_THRESHOLD}${remaining === 0 ? " (次回 auto pause)" : ` (あと ${remaining})`}`,
+      サイクル: cycleShort,
+      連続失敗: `${args.newCount}/${AUTO_PAUSE_THRESHOLD}${
+        remaining === 0 ? " (次回 auto pause)" : ` (あと ${remaining})`
+      }`,
       次サイクル: nextScheduledAt,
     },
   });
