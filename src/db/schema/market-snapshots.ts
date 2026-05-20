@@ -12,6 +12,10 @@ export const marketSnapshots = pgTable(
       .references(() => coins.id, { onDelete: "cascade" }),
     ohlcv1m: jsonb("ohlcv_1m").notNull(),
     ohlcv1h: jsonb("ohlcv_1h").notNull(),
+    /** Tier 0 で取得した 1d 足。Tier 1/2 prompt の長期トレンド用 */
+    ohlcv1d: jsonb("ohlcv_1d"),
+    /** Orderbook + 直近約定から計算した micro market 指標 (Tier 2 用) */
+    micro: jsonb("micro"),
     perplexitySummary: text("perplexity_summary"),
     perplexityCitations: jsonb("perplexity_citations").$type<string[]>().notNull().default([]),
     grokSummary: text("grok_summary"),

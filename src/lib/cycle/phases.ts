@@ -178,6 +178,8 @@ export async function tier0Snapshots(cycleId: string, periodHours: number): Prom
             coinId: coin.id,
             ohlcv1m: snap.ohlcv1m,
             ohlcv1h: [],
+            ohlcv1d: snap.ohlcv1d,
+            micro: snap.micro,
             perplexitySummary: snap.perplexitySummary,
             perplexityCitations: snap.perplexityCitations,
             grokSummary: snap.grokSummary,
@@ -197,8 +199,8 @@ async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: st
     await db.select().from(marketSnapshots).where(eq(marketSnapshots.id, snapshotId)).limit(1)
   )[0];
   if (!row) throw new Error(`Snapshot not found: ${snapshotId}`);
-  // ticker / micro は snapshot 保存時に落ちてるので、Tier 2 用に最小限フィールドのみ復元
   const bars = (row.ohlcv1m as Snapshot["ohlcv1m"]) ?? [];
+  const bars1d = (row.ohlcv1d as Snapshot["ohlcv1d"] | null) ?? [];
   const lastBar = bars.at(-1);
   const lastClose = lastBar?.close ?? "0";
   const snap: Snapshot = {
@@ -210,9 +212,10 @@ async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: st
     grokSummary: row.grokSummary ?? "情報なし",
     grokCitations: row.grokCitations,
     ohlcv1m: bars,
-    ohlcv1d: [], // Tier 2 内では使われない (formatBars で 1m のみ参照)
+    ohlcv1d: bars1d,
+    // ticker は snapshot 保存時に落としているので 1m 終値で再構成 (Tier 2 の文脈には十分)
     ticker: { last: lastClose, bid: lastClose, ask: lastClose, volume: "0" },
-    micro: null,
+    micro: (row.micro as Snapshot["micro"] | null) ?? null,
   };
   return { snapshotRow: row, snap };
 }
@@ -625,15 +628,31 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     }));
   const symbolToName = Object.fromEntries(ctxs.map((c) => [c.coin.symbol, c.coin.name]));
 
-  const critic = await runCritic({
-    proposal,
-    analystSummariesBySymbol,
-    decisionsBySymbol,
-    currentPositions,
-    symbolToName,
-    cashJpy: projectedCashJpy,
-    riskParams: { perCoinMaxRatio: RISK_PER_COIN_MAX_RATIO, killSwitchDdRatio: 0.5 },
-  });
+  // Critic skip: 買い 0 + Exit 0 なら審査するものが無い → Opus 呼び出しを節約
+  const hasNothingToDo = buySignals.length === 0 && exitsToRun.length === 0;
+  const critic: Awaited<ReturnType<typeof runCritic>> = hasNothingToDo
+    ? {
+        output: {
+          decision: "approve",
+          adjustments: null,
+          reasoning:
+            "No buy signals and no exits to evaluate — Critic auto-approved (skipped LLM call)",
+        },
+        promptVersion: null,
+        llmModel: "auto-skip",
+      }
+    : await runCritic({
+        proposal,
+        analystSummariesBySymbol,
+        decisionsBySymbol,
+        currentPositions,
+        symbolToName,
+        cashJpy: projectedCashJpy,
+        riskParams: { perCoinMaxRatio: RISK_PER_COIN_MAX_RATIO, killSwitchDdRatio: 0.5 },
+      });
+  if (hasNothingToDo) {
+    logger.info("Critic skipped (no buy / no exit) — Opus call saved");
+  }
 
   await db.insert(criticOutputs).values({
     cycleId,

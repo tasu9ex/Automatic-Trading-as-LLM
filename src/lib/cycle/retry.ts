@@ -66,7 +66,8 @@ export interface RetryOptions {
  * 永続エラーで同じ API を maxAttempts 回叩く無駄を排除。
  */
 export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions): Promise<T> {
-  const maxAttempts = opts.maxAttempts ?? 3;
+  // クライアント単体で 1 retry / Inngest step も 1 retry するので、ここは控えめに 2 (init + 1)
+  const maxAttempts = opts.maxAttempts ?? 2;
   const baseDelay = opts.baseDelayMs ?? 1000;
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
