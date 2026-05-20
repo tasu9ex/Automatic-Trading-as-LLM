@@ -37,7 +37,12 @@ export function classifyError(err: unknown): ErrorKind {
 
   // Env / 認証 / リクエスト不正: コード or 設定を直さない限り永久失敗
   if (
-    /api[_ ]?key.*not set|missing.*api[_ ]?key|invalid[_ ]?api[_ ]?key|invalid_api_key/.test(msg)
+    /(api[_ -]?key|x-api-key|authorization).*(not set|missing|required|invalid|empty)/.test(msg) ||
+    /(missing|required|invalid|no|empty).*(api[_ -]?key|x-api-key|authorization|bearer)/.test(
+      msg,
+    ) ||
+    /\bx-api-key\b/.test(msg) ||
+    /invalid_api_key|invalid_authorization|invalid_credentials|incorrect_api_key/.test(msg)
   ) {
     return "permanent";
   }

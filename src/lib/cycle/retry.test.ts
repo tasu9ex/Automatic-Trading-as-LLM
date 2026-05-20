@@ -19,6 +19,12 @@ describe("classifyError", () => {
     expect(classifyError(new Error("Grok 400: invalid_request_error"))).toBe("permanent");
     expect(classifyError(new Error("Grok 404: model not found"))).toBe("permanent");
     expect(classifyError(new Error("422 unprocessable entity"))).toBe("permanent");
+
+    // 実際に踏んだ Anthropic のエラー
+    expect(classifyError(new Error("x-api-key header is required"))).toBe("permanent");
+    expect(classifyError(new Error("Authorization header is missing"))).toBe("permanent");
+    expect(classifyError(new Error("API key not found in request"))).toBe("permanent");
+    expect(classifyError(new Error("incorrect_api_key"))).toBe("permanent");
   });
 
   it("transient: 5xx / 429 / timeout / overloaded / network", () => {
