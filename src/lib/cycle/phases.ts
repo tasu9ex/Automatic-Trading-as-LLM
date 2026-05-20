@@ -23,6 +23,7 @@ import {
   analystOutputs,
   coins,
   criticOutputs,
+  cycles,
   decisions,
   marketSnapshots,
   portfolios,
@@ -47,7 +48,7 @@ import { applyRiskClipper } from "@/lib/risk/clipper";
 import { type Snapshot, fetchSnapshot } from "@/lib/tier0/fetch-snapshot";
 import { runPreAnalyst } from "@/lib/tier1/pre-analyst";
 import { runAnalyst } from "@/lib/tier2/analyst";
-import { and, eq, gte } from "drizzle-orm";
+import { and, eq, gte, inArray } from "drizzle-orm";
 
 const logger = createLogger("cycle.phases");
 
@@ -122,6 +123,16 @@ export async function preflight(input: PreflightInput): Promise<PreflightResult>
     return { proceed: false, skipped: "no_coins" };
   }
 
+  // サイクル開始時点の有効銘柄を凍結 (cycle 進行中の coins.enabled 編集に影響されない)
+  await db
+    .insert(cycles)
+    .values({
+      id: input.cycleId,
+      strategyId: input.strategyId,
+      coinIds: enabledCoins.map((c) => c.id),
+    })
+    .onConflictDoNothing({ target: cycles.id });
+
   // Tier 0 の検索対象期間: 前回サイクルから経過時間 (下限 6h、上限 168h)
   const hoursSinceLast = state.lastCycleAt
     ? (Date.now() - state.lastCycleAt.getTime()) / 3_600_000
@@ -131,14 +142,17 @@ export async function preflight(input: PreflightInput): Promise<PreflightResult>
   return { proceed: true, periodHours, coinIdsCount: enabledCoins.length };
 }
 
-/** 有効コインのリストを DB から取得 (phase 間で共有) */
-async function getEnabledCoins() {
-  return await db.select().from(coins).where(eq(coins.enabled, true));
+/** サイクル行に凍結された coin_ids をもとに coins レコードを取得 (phase 間で共有) */
+async function getCycleCoins(cycleId: string) {
+  const cycle = (await db.select().from(cycles).where(eq(cycles.id, cycleId)).limit(1))[0];
+  if (!cycle) throw new Error(`Cycle not found: ${cycleId}`);
+  if (cycle.coinIds.length === 0) return [];
+  return await db.select().from(coins).where(inArray(coins.id, cycle.coinIds));
 }
 
 /** Phase 2: Tier 0 全コイン snapshot 取得 (ALL-or-NOTHING) */
 export async function tier0Snapshots(cycleId: string, periodHours: number): Promise<void> {
-  const enabledCoins = await getEnabledCoins();
+  const enabledCoins = await getCycleCoins(cycleId);
 
   await Promise.all(
     enabledCoins.map((coin) =>
@@ -205,7 +219,7 @@ async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: st
 
 /** Phase 3: Tier 1 Pre-Analyst (ALL-or-NOTHING) */
 export async function tier1PreAnalyst(cycleId: string): Promise<void> {
-  const enabledCoins = await getEnabledCoins();
+  const enabledCoins = await getCycleCoins(cycleId);
 
   await Promise.all(
     enabledCoins.map((coin) =>
@@ -249,7 +263,7 @@ export async function tier1PreAnalyst(cycleId: string): Promise<void> {
 
 /** Phase 4: Tier 2 Analyst (skip_flag=false のコインのみ、ALL-or-NOTHING) */
 export async function tier2Analyst(cycleId: string): Promise<void> {
-  const enabledCoins = await getEnabledCoins();
+  const enabledCoins = await getCycleCoins(cycleId);
 
   await Promise.all(
     enabledCoins.map((coin) =>
@@ -316,7 +330,7 @@ export async function tier2Analyst(cycleId: string): Promise<void> {
 
 /** Phase 5: Tier 3 Entry/Exit Decision (ALL-or-NOTHING) */
 export async function tier3Decisions(cycleId: string, strategyId: string): Promise<void> {
-  const enabledCoins = await getEnabledCoins();
+  const enabledCoins = await getCycleCoins(cycleId);
 
   await Promise.all(
     enabledCoins.map((coin) =>
@@ -480,7 +494,7 @@ interface FinalizeInput {
 /** Phase 6: Exit 実行 → Critic → Risk Clipper → Entry 実行 → state 更新 → kill switch */
 export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   const { cycleId, strategyId, method, startedAt } = input;
-  const enabledCoins = await getEnabledCoins();
+  const enabledCoins = await getCycleCoins(cycleId);
 
   // 全コインのコンテキストを DB から組み立て
   type CoinCtx = {
@@ -802,6 +816,8 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
         updatedAt: new Date(),
       },
     });
+
+  await db.update(cycles).set({ completedAt: new Date() }).where(eq(cycles.id, cycleId));
 
   await checkAndTriggerKillSwitch({ strategyId });
 

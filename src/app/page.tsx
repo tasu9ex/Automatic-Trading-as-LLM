@@ -1,7 +1,14 @@
+import { CoinChecklist } from "@/components/dashboard/coin-checklist";
 import { SystemControls } from "@/components/dashboard/system-controls";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { getDashboardStats, getOpenPositions, getRecentCycles } from "@/lib/cycle/queries";
+import {
+  getCoinChecklist,
+  getDashboardStats,
+  getOpenPositions,
+  getRecentCycles,
+  isCycleInFlight,
+} from "@/lib/cycle/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import Link from "next/link";
 
@@ -18,10 +25,12 @@ export default async function Home() {
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const [stats, openPositions, recentCycles] = await Promise.all([
+  const [stats, openPositions, recentCycles, coinChecklist, cycleInFlight] = await Promise.all([
     getDashboardStats(),
     getOpenPositions(),
     getRecentCycles(20),
+    getCoinChecklist(),
+    isCycleInFlight(),
   ]);
 
   // 時価評価: 現金 + 全 open position の (現在価格 × qty) - 元本
@@ -45,6 +54,8 @@ export default async function Home() {
         cycleIntervalHours={stats.cycleIntervalHours}
         nextScheduledAt={stats.nextScheduledAt?.toISOString() ?? null}
       />
+
+      <CoinChecklist coins={coinChecklist} cycleInFlight={cycleInFlight} />
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Card>

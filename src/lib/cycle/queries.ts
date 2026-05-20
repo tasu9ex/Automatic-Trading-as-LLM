@@ -7,6 +7,7 @@ import {
   analystOutputs,
   coins,
   criticOutputs,
+  cycles,
   decisions,
   marketSnapshots,
   portfolios,
@@ -22,7 +23,7 @@ import {
   DEFAULT_CYCLE_INTERVAL_HOURS,
   isCycleIntervalHours,
 } from "@/lib/system-control/constants";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 
 const logger = createLogger("cycle.queries");
 
@@ -314,4 +315,37 @@ export async function getCycleDetail(cycleId: string): Promise<CycleDetail | nul
       : null,
     coins: coinSections,
   };
+}
+
+export interface CoinChecklistRow {
+  id: string;
+  symbol: string;
+  name: string;
+  enabled: boolean;
+}
+
+export async function getCoinChecklist(): Promise<CoinChecklistRow[]> {
+  const rows = await db
+    .select({
+      id: coins.id,
+      symbol: coins.symbol,
+      name: coins.name,
+      enabled: coins.enabled,
+    })
+    .from(coins)
+    .orderBy(coins.symbol);
+  return rows;
+}
+
+/** completed_at が未セットで、開始から 30 分以内の cycle 行があれば実行中とみなす */
+export async function isCycleInFlight(): Promise<boolean> {
+  const since = new Date(Date.now() - 30 * 60_000);
+  const row = (
+    await db
+      .select({ id: cycles.id })
+      .from(cycles)
+      .where(and(isNull(cycles.completedAt), gte(cycles.startedAt, since)))
+      .limit(1)
+  )[0];
+  return !!row;
 }
