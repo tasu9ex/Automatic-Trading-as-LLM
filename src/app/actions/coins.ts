@@ -29,6 +29,7 @@ export async function setCoinEnabledAction(
     revalidatePath("/");
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : "操作に失敗しました" };
+    console.error("[coins action error]", err);
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
