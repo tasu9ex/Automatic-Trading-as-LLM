@@ -532,12 +532,15 @@
 | 順 | ID | 内容 |
 |----|-----|------|
 | 1 | §1 | Entry 仮説の永続化 |
-| 2 | §2 | 保有中の Exit / skip_flag ポリシー統一 |
-| 3 | §3 | Critic フェイルオープン |
-| 4 | §4 | Inngest finalize の `recordCycleFailure` |
-| 5 | §7–§9 | price-monitor / Kill Switch / 部分決済 SL（方針決定後） |
-| 6 | §10–§11 | 配分・リスク計算の精緻化 |
-| 7 | §12–§17 | ドキュメント・env・テスト・リファクタ |
+| 2 | §18 | 連続失敗 auto-pause の経路修正（§4 / §20 と同時） |
+| 3 | §2 | 保有中の Exit / skip_flag ポリシー統一 |
+| 4 | §3 | Critic フェイルオープン |
+| 5 | §4 | Inngest finalize の `recordCycleFailure` |
+| 6 | §7–§9 | price-monitor / Kill Switch / 部分決済 SL（方針決定後） |
+| 7 | §10–§11, §19 | 配分・リスク計算の精緻化（時価ベース + Exit 後 refresh） |
+| 8 | §20, §24 | 重複定数・責務重複の集約 |
+| 9 | §21–§23, §25 | レガシー列・死コード・小さな整合性 |
+| 10 | §12–§17 | ドキュメント・env・テスト・リファクタ |
 
 ---
 
