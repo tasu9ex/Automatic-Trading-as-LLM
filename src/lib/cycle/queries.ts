@@ -51,11 +51,25 @@ export interface DashboardStats {
   cyclesTotal: number;
 }
 
-export const getDashboardStats = unstable_cache(
-  () => getDashboardStatsImpl(),
-  ["dashboard.stats"],
-  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
-);
+const _cachedDashboardStats = unstable_cache(() => getDashboardStatsImpl(), ["dashboard.stats"], {
+  revalidate: CACHE_REVALIDATE_SECONDS,
+  tags: [DASHBOARD_CACHE_TAG],
+});
+
+/** cache 越しに Date が string に化けるので Date に戻す */
+export async function getDashboardStats(): Promise<DashboardStats> {
+  const cached = await _cachedDashboardStats();
+  return {
+    ...cached,
+    nextScheduledAt: reviveDate(cached.nextScheduledAt),
+    lastCycleAt: reviveDate(cached.lastCycleAt),
+  };
+}
+
+function reviveDate(v: Date | string | null): Date | null {
+  if (!v) return null;
+  return v instanceof Date ? v : new Date(v);
+}
 
 async function getDashboardStatsImpl(): Promise<DashboardStats> {
   const todayStart = new Date();
@@ -122,11 +136,16 @@ export interface OpenPositionRow {
   openedAt: Date;
 }
 
-export const getOpenPositions = unstable_cache(
+const _cachedOpenPositions = unstable_cache(
   () => getOpenPositionsImpl(),
   ["dashboard.open-positions"],
   { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
 );
+
+export async function getOpenPositions(): Promise<OpenPositionRow[]> {
+  const rows = await _cachedOpenPositions();
+  return rows.map((r) => ({ ...r, openedAt: reviveDate(r.openedAt) ?? new Date(0) }));
+}
 
 async function getOpenPositionsImpl(): Promise<OpenPositionRow[]> {
   const rows = await db
@@ -174,11 +193,16 @@ export interface RecentCycleRow {
   symbolCount: number;
 }
 
-export const getRecentCycles = unstable_cache(
+const _cachedRecentCycles = unstable_cache(
   (limit = 15) => getRecentCyclesImpl(limit),
   ["dashboard.recent-cycles"],
   { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
 );
+
+export async function getRecentCycles(limit = 15): Promise<RecentCycleRow[]> {
+  const rows = await _cachedRecentCycles(limit);
+  return rows.map((r) => ({ ...r, createdAt: reviveDate(r.createdAt) ?? new Date(0) }));
+}
 
 async function getRecentCyclesImpl(limit = 15): Promise<RecentCycleRow[]> {
   // critic_outputs.model は LLM モデル名なのでフィルタしない
