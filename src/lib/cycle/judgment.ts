@@ -80,8 +80,9 @@ async function runJudgmentCycleInner(
     };
   }
 
-  // periodHours は preflight が確定 (proceed=true なら必ず存在)
+  // periodHours / cycleIntervalHours は preflight が確定 (proceed=true なら必ず存在)
   const periodHours = pre.periodHours ?? 24;
+  const cycleIntervalHours = pre.cycleIntervalHours ?? 24;
 
   const runPhase = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
     try {
@@ -93,7 +94,9 @@ async function runJudgmentCycleInner(
   };
 
   try {
-    await runPhase("tier0-snapshots", () => tier0Snapshots(cycleId, periodHours));
+    await runPhase("tier0-snapshots", () =>
+      tier0Snapshots(cycleId, periodHours, cycleIntervalHours),
+    );
     await runPhase("tier1-pre-analyst", () => tier1PreAnalyst(cycleId));
     await runPhase("tier2-analyst", () => tier2Analyst(cycleId, strategyId));
     await runPhase("tier3-decisions", () => tier3Decisions(cycleId, strategyId));

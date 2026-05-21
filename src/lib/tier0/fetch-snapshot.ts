@@ -2,6 +2,7 @@ import {
   type OHLCBar,
   type Orderbook,
   type PublicTrade,
+  type Ticker,
   getKlines,
   getOrderbook,
   getRecentTrades,
@@ -15,16 +16,20 @@ import { withGenerationSpan } from "@/lib/telemetry";
 
 const logger = createLogger("tier0.fetch-snapshot");
 
+/** GMO がサポートする kline interval のうち本プロジェクトで使う subset */
+export type KlineInterval = "1min" | "5min" | "15min" | "1hour" | "4hour" | "1day";
+
 export interface FetchSnapshotInput {
   symbol: string; // 例: "BTC"
   /** プロジェクト正式名称 (例: "Bitcoin")、Tier 0 検索品質向上のため */
   name?: string;
   /** Tier 0 の検索対象期間 (時間)。デフォルト 24h。サイクル頻度に応じて呼出側で設定。 */
   periodHours?: number;
-  /** 1d 足の取得対象年 (YYYY, デフォルト現在年) */
-  klineYear?: string;
-  /** 1m 足の取得対象日 (YYYYMMDD, デフォルト本日 JST) */
-  kline1mDate?: string;
+  /**
+   * §32: サイクル間隔。primary/long TF の選択に使う。
+   * 未指定なら 1h サイクル想定 (=primary 1hour / long 1day)。
+   */
+  cycleIntervalHours?: number;
 }
 
 export interface MicroMarket {
@@ -51,36 +56,42 @@ export interface Snapshot {
   perplexityCitations: string[];
   grokSummary: string;
   grokCitations: string[];
-  ohlcv1m: OHLCBar[];
-  ohlcv1d: OHLCBar[];
+  /** メイン TF (サイクル間隔と同じか近い粒度) */
+  ohlcvPrimary: OHLCBar[];
+  primaryInterval: KlineInterval;
+  /** 長期 TF (中長期トレンド用、24h サイクルでは null) */
+  ohlcvLong: OHLCBar[];
+  longInterval: KlineInterval | null;
   ticker: { last: string; bid: string; ask: string; volume: string };
   /** 板情報 + 直近約定から計算したマイクロマーケット指標 */
   micro: MicroMarket | null;
 }
 
-function summarizeMicro(book: Orderbook, trades: PublicTrade[]): MicroMarket | null {
-  const topBid = Number(book.bids[0]?.price ?? 0);
-  const topAsk = Number(book.asks[0]?.price ?? 0);
-  if (topBid <= 0 || topAsk <= 0) return null;
+/**
+ * サイクル間隔 → primary / long TF のマッピング。
+ *   1h  → primary 1hour  (~72 本 = 3 日) + long 1day (~30 本)
+ *   3h  → primary 4hour  (~60 本 = 10 日) + long 1day
+ *   6h  → primary 4hour  + long 1day
+ *   24h → primary 1day   (~30 本) + long なし
+ */
+export function pickIntervals(cycleHours?: number): {
+  primary: KlineInterval;
+  long: KlineInterval | null;
+} {
+  if (!cycleHours || cycleHours <= 1) return { primary: "1hour", long: "1day" };
+  if (cycleHours <= 6) return { primary: "4hour", long: "1day" };
+  return { primary: "1day", long: null };
+}
 
-  const mid = (topBid + topAsk) / 2;
-  const spreadPct = ((topAsk - topBid) / mid) * 100;
-  const bidDepth5 = book.bids.slice(0, 5).reduce((s, e) => s + Number(e.size), 0);
-  const askDepth5 = book.asks.slice(0, 5).reduce((s, e) => s + Number(e.size), 0);
-  const totalDepth = bidDepth5 + askDepth5;
-  const bidBias = totalDepth > 0 ? bidDepth5 / totalDepth : 0.5;
-
-  const buyCount = trades.filter((t) => t.side === "BUY").length;
-  const tradeBuyRatio = trades.length > 0 ? buyCount / trades.length : 0.5;
-
-  return {
-    spreadPct: Number(spreadPct.toFixed(4)),
-    bidDepth5: Number(bidDepth5.toFixed(6)),
-    askDepth5: Number(askDepth5.toFixed(6)),
-    bidBias: Number(bidBias.toFixed(4)),
-    tradeBuyRatio: Number(tradeBuyRatio.toFixed(4)),
-    tradeCount: trades.length,
-  };
+/**
+ * GMO kline は interval により date format が違う:
+ *   1min/5min/15min/30min → YYYYMMDD (日付指定)
+ *   1hour/4hour/8hour/12hour → YYYY (年指定)
+ *   1day → YYYY
+ */
+function dateParamFor(interval: KlineInterval): string {
+  const isDate = interval === "1min" || interval === "5min" || interval === "15min";
+  return isDate ? todayYyyymmdd() : currentYear();
 }
 
 function todayYyyymmdd(): string {
@@ -101,57 +112,57 @@ function currentYear(): string {
 }
 
 /**
- * 1m kline は date が変わった直後に GMO が 404 もしくは 200 + 空配列を返すことがある
- * (低流動性銘柄、早朝)。今日が 404 / 空 なら前日にフォールバックしてサイクル続行。
- *
- * 空のまま finalize に渡すと ticker.last が "0" に化け、executor が silent skip
- * してしまうため (XRP / SOL 実観測)、ここで必ず非空にする。
+ * kline 取得 + フォールバック。
+ * 日付指定 TF (1min/5min/15min) は早朝に 404 / 空配列が起きやすいため、空なら前日に再 fetch。
+ * 年指定 TF (1hour 以上) は単純に取得。
  */
-async function getKlines1mWithFallback(symbol: string, todayDate: string): Promise<OHLCBar[]> {
-  const yesterday = yesterdayYyyymmdd();
+async function getKlinesWithFallback(symbol: string, interval: KlineInterval): Promise<OHLCBar[]> {
+  const isDateBased = interval === "1min" || interval === "5min" || interval === "15min";
+  const param = dateParamFor(interval);
   try {
-    const bars = await getKlines(symbol, "1min", todayDate);
-    if (bars.length > 0) return bars;
+    const bars = await getKlines(symbol, interval, param);
+    if (bars.length > 0 || !isDateBased) return bars;
+    const yesterday = yesterdayYyyymmdd();
     logger.warn(
-      { symbol, todayDate, yesterday },
-      "1m kline empty for today (200 + empty), falling back to yesterday",
+      { symbol, interval, param, yesterday },
+      `${interval} kline empty for today, falling back to yesterday`,
     );
-    return await getKlines(symbol, "1min", yesterday);
+    return await getKlines(symbol, interval, yesterday);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (!/GMO\s*404/i.test(msg)) throw err;
+    if (!isDateBased || !/GMO\s*404/i.test(msg)) throw err;
+    const yesterday = yesterdayYyyymmdd();
     logger.warn(
-      { symbol, todayDate, yesterday },
-      "1m kline 404 for today, falling back to yesterday",
+      { symbol, interval, param, yesterday },
+      `${interval} kline 404, falling back to yesterday`,
     );
-    return await getKlines(symbol, "1min", yesterday);
+    return await getKlines(symbol, interval, yesterday);
   }
 }
 
 /**
  * 1 銘柄のスナップショット (価格 + ニュース + センチメント) を並列取得。
- * 失敗時は部分的なデータと "情報なし" マーカーを返す(LLM 側で慎重判断する想定)。
+ * 失敗時は必須ソース throw でサイクル中断、Orderbook/Trades は degraded で続行。
  */
 export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot> {
   const { symbol } = input;
-  const name = input.name ?? symbol; // フルネーム未指定なら symbol を fallback
+  const name = input.name ?? symbol;
   const periodHours = input.periodHours ?? 24;
   const symbolJpy = `${symbol}_JPY`;
+  const { primary, long } = pickIntervals(input.cycleIntervalHours);
 
-  // Tier 0 プロンプト + config を Langfuse / fallback から取得
   const [newsPrompt, sentimentPrompt] = await Promise.all([
     getPrompt("tier0/news", { symbol, name, period_hours: periodHours }),
     getPrompt("tier0/sentiment", { symbol, name, period_hours: periodHours }),
   ]);
 
-  const [tickerRes, ohlcv1mRes, ohlcv1dRes, orderbookRes, tradesRes, perplexityRes, grokRes] =
+  const [tickerRes, primaryBarsRes, longBarsRes, orderbookRes, tradesRes, perplexityRes, grokRes] =
     await Promise.allSettled([
       getTicker(symbolJpy),
-      getKlines1mWithFallback(symbolJpy, input.kline1mDate ?? todayYyyymmdd()),
-      getKlines(symbolJpy, "1day", input.klineYear ?? currentYear()),
+      getKlinesWithFallback(symbolJpy, primary),
+      long ? getKlinesWithFallback(symbolJpy, long) : Promise.resolve([] as OHLCBar[]),
       getOrderbook(symbolJpy),
       getRecentTrades(symbolJpy, 1, 100),
-      // Tier 0 は AI SDK 経由ではないため、Langfuse cost 集計のため明示的に generation span を作る
       withGenerationSpan(
         { modelId: newsPrompt.config.model, feature: "tier0.news", extraMetadata: { symbol } },
         async () => {
@@ -183,15 +194,15 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
       ),
     ]);
 
-  // 必須ソース: 1 つでも失敗で throw → tier0 step の withRetry が retry → 全敗で ALL-or-NOTHING
-  // (Orderbook/Trades は micro market 用のオプション、null 許容なので除外)
-  const requiredResults: ReadonlyArray<readonly [string, PromiseSettledResult<unknown>]> = [
+  // 必須ソース: Ticker + primary kline + (long があれば long) + Perplexity + Grok
+  const requiredResults: Array<readonly [string, PromiseSettledResult<unknown>]> = [
     ["Ticker", tickerRes],
-    ["1m kline", ohlcv1mRes],
-    ["1d kline", ohlcv1dRes],
+    [`${primary} kline`, primaryBarsRes],
     ["Perplexity", perplexityRes],
     ["Grok", grokRes],
   ];
+  if (long) requiredResults.push([`${long} kline`, longBarsRes]);
+
   const failures = requiredResults.filter(([, res]) => res.status !== "fulfilled");
   if (failures.length > 0) {
     for (const [label, res] of failures) {
@@ -204,7 +215,6 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
     throw new Error(`Tier 0 required sources failed for ${symbol}: ${labels}`);
   }
 
-  // Orderbook / Trades は失敗しても micro = null で続行 (degraded)
   for (const [label, res] of [
     ["Orderbook", orderbookRes],
     ["Trades", tradesRes],
@@ -214,7 +224,8 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
     }
   }
 
-  const ticker = tickerRes.status === "fulfilled" ? tickerRes.value[0] : undefined;
+  const ticker: Ticker | undefined =
+    tickerRes.status === "fulfilled" ? tickerRes.value[0] : undefined;
   const micro =
     orderbookRes.status === "fulfilled" && tradesRes.status === "fulfilled"
       ? summarizeMicro(orderbookRes.value, tradesRes.value.list)
@@ -230,8 +241,10 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
       perplexityRes.status === "fulfilled" ? (perplexityRes.value.citations ?? []) : [],
     grokSummary: grokRes.status === "fulfilled" ? grokRes.value.content : "情報なし",
     grokCitations: grokRes.status === "fulfilled" ? (grokRes.value.citations ?? []) : [],
-    ohlcv1m: ohlcv1mRes.status === "fulfilled" ? ohlcv1mRes.value : [],
-    ohlcv1d: ohlcv1dRes.status === "fulfilled" ? ohlcv1dRes.value : [],
+    ohlcvPrimary: primaryBarsRes.status === "fulfilled" ? primaryBarsRes.value : [],
+    primaryInterval: primary,
+    ohlcvLong: longBarsRes.status === "fulfilled" ? longBarsRes.value : [],
+    longInterval: long,
     ticker: {
       last: ticker?.last ?? "0",
       bid: ticker?.bid ?? "0",
@@ -239,5 +252,30 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
       volume: ticker?.volume ?? "0",
     },
     micro,
+  };
+}
+
+function summarizeMicro(book: Orderbook, trades: PublicTrade[]): MicroMarket | null {
+  const topBid = Number(book.bids[0]?.price ?? 0);
+  const topAsk = Number(book.asks[0]?.price ?? 0);
+  if (topBid <= 0 || topAsk <= 0) return null;
+
+  const mid = (topBid + topAsk) / 2;
+  const spreadPct = ((topAsk - topBid) / mid) * 100;
+  const bidDepth5 = book.bids.slice(0, 5).reduce((s, e) => s + Number(e.size), 0);
+  const askDepth5 = book.asks.slice(0, 5).reduce((s, e) => s + Number(e.size), 0);
+  const totalDepth = bidDepth5 + askDepth5;
+  const bidBias = totalDepth > 0 ? bidDepth5 / totalDepth : 0.5;
+
+  const buyCount = trades.filter((t) => t.side === "BUY").length;
+  const tradeBuyRatio = trades.length > 0 ? buyCount / trades.length : 0.5;
+
+  return {
+    spreadPct: Number(spreadPct.toFixed(4)),
+    bidDepth5: Number(bidDepth5.toFixed(6)),
+    askDepth5: Number(askDepth5.toFixed(6)),
+    bidBias: Number(bidBias.toFixed(4)),
+    tradeBuyRatio: Number(tradeBuyRatio.toFixed(4)),
+    tradeCount: trades.length,
   };
 }

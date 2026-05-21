@@ -10,7 +10,7 @@ export interface AnalystResult {
   llmModel: string;
 }
 
-function formatBars(bars: Snapshot["ohlcv1m"], maxRows: number): string {
+function formatBars(bars: Snapshot["ohlcvPrimary"], maxRows: number): string {
   if (bars.length === 0) return "(データなし)";
   const recent = bars.slice(-maxRows);
   return recent
@@ -49,8 +49,15 @@ export async function runAnalyst(
     pre_analyst_summary: JSON.stringify(preAnalyst.output, null, 2),
     perplexity_summary: snapshot.perplexitySummary,
     grok_summary: snapshot.grokSummary,
-    ohlcv_1m_brief: formatBars(snapshot.ohlcv1m, 60),
-    ohlcv_1d_brief: formatBars(snapshot.ohlcv1d, 30),
+    // §32: 動的 TF。プロンプトには primary/long の interval 名と本数も渡す。
+    primary_interval: snapshot.primaryInterval,
+    primary_bars_count: snapshot.ohlcvPrimary.length,
+    ohlcv_primary_brief: formatBars(snapshot.ohlcvPrimary, 60),
+    long_interval: snapshot.longInterval ?? "(なし)",
+    ohlcv_long_brief: formatBars(snapshot.ohlcvLong, 30),
+    // 旧変数名 (Langfuse 旧プロンプトの後方互換)
+    ohlcv_1m_brief: formatBars(snapshot.ohlcvPrimary, 60),
+    ohlcv_1d_brief: formatBars(snapshot.ohlcvLong, 30),
     micro_market: microMarket,
   });
 

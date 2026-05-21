@@ -88,11 +88,11 @@ export const ANALYST_USER_PROMPT = `# 銘柄
 # X センチメント (Grok)
 {{grok_summary}}
 
-# 1m 足 (直近 60 本 = 過去 1 時間)
-{{ohlcv_1m_brief}}
+# メイン TF: {{primary_interval}} 足 (直近 {{primary_bars_count}} 本)
+{{ohlcv_primary_brief}}
 
-# 1d 足 (直近 30 本 = 過去 1 ヶ月)
-{{ohlcv_1d_brief}}
+# 長期 TF: {{long_interval}} 足 (直近 30 本)
+{{ohlcv_long_brief}}
 
 # マイクロマーケット指標 (板情報 + 直近 100 約定)
 {{micro_market}}

@@ -71,6 +71,8 @@ export interface PreflightResult {
   proceed: boolean;
   skipped?: CycleSkipReason;
   periodHours?: number;
+  /** §32: tier0Snapshots に渡す。system_state.cycleIntervalHours を伝播する */
+  cycleIntervalHours?: number;
   coinIdsCount?: number;
 }
 
@@ -142,7 +144,12 @@ export async function preflight(input: PreflightInput): Promise<PreflightResult>
     : 24;
   const periodHours = Math.round(Math.max(6, Math.min(168, hoursSinceLast)));
 
-  return { proceed: true, periodHours, coinIdsCount: enabledCoins.length };
+  return {
+    proceed: true,
+    periodHours,
+    cycleIntervalHours: state.cycleIntervalHours,
+    coinIdsCount: enabledCoins.length,
+  };
 }
 
 /**
@@ -180,7 +187,11 @@ async function getCycleCoins(cycleId: string) {
 }
 
 /** Phase 2: Tier 0 全コイン snapshot 取得 (ALL-or-NOTHING) */
-export async function tier0Snapshots(cycleId: string, periodHours: number): Promise<void> {
+export async function tier0Snapshots(
+  cycleId: string,
+  periodHours: number,
+  cycleIntervalHours: number,
+): Promise<void> {
   const enabledCoins = await getCycleCoins(cycleId);
 
   await Promise.all(
@@ -201,13 +212,19 @@ export async function tier0Snapshots(cycleId: string, periodHours: number): Prom
             symbol: coin.symbol,
             name: coin.name,
             periodHours,
+            cycleIntervalHours,
           });
           await db.insert(marketSnapshots).values({
             cycleId,
             coinId: coin.id,
-            ohlcv1m: snap.ohlcv1m,
+            // §32: primary / long の新カラム (1m/1d はレガシー、新規行は null)
+            ohlcvPrimary: snap.ohlcvPrimary,
+            ohlcvLong: snap.ohlcvLong,
+            primaryInterval: snap.primaryInterval,
+            longInterval: snap.longInterval,
+            ticker: snap.ticker,
+            // §21: ohlcv_1h は notNull 制約があるため当面 [] で埋める (drop は次の clean-up)
             ohlcv1h: [],
-            ohlcv1d: snap.ohlcv1d,
             micro: snap.micro,
             perplexitySummary: snap.perplexitySummary,
             perplexityCitations: snap.perplexityCitations,
@@ -228,10 +245,29 @@ async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: st
     await db.select().from(marketSnapshots).where(eq(marketSnapshots.id, snapshotId)).limit(1)
   )[0];
   if (!row) throw new Error(`Snapshot not found: ${snapshotId}`);
-  const bars = (row.ohlcv1m as Snapshot["ohlcv1m"]) ?? [];
-  const bars1d = (row.ohlcv1d as Snapshot["ohlcv1d"] | null) ?? [];
-  const lastBar = bars.at(-1);
-  const lastClose = lastBar?.close ?? "0";
+  // §32: 新カラム (ohlcv_primary / ohlcv_long / primary_interval / long_interval / ticker) を優先。
+  //   旧カラム (ohlcv_1m / ohlcv_1d) は古い行を読む場合のみ fallback で参照。
+  const primary =
+    (row.ohlcvPrimary as Snapshot["ohlcvPrimary"] | null) ??
+    (row.ohlcv1m as Snapshot["ohlcvPrimary"] | null) ??
+    [];
+  const long =
+    (row.ohlcvLong as Snapshot["ohlcvLong"] | null) ??
+    (row.ohlcv1d as Snapshot["ohlcvLong"] | null) ??
+    [];
+  const primaryInterval = (row.primaryInterval as Snapshot["primaryInterval"] | null) ?? "1hour";
+  const longInterval = (row.longInterval as Snapshot["longInterval"]) ?? "1day";
+
+  // ticker は新規行は DB に直接保存 (§31 根治)。旧行は最終 bar の close で再構成 fallback。
+  const tickerRow = row.ticker as Snapshot["ticker"] | null;
+  let ticker: Snapshot["ticker"];
+  if (tickerRow) {
+    ticker = tickerRow;
+  } else {
+    const lastClose = primary.at(-1)?.close ?? "0";
+    ticker = { last: lastClose, bid: lastClose, ask: lastClose, volume: "0" };
+  }
+
   const snap: Snapshot = {
     symbol: coin.symbol,
     name: coin.name,
@@ -240,10 +276,11 @@ async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: st
     perplexityCitations: row.perplexityCitations,
     grokSummary: row.grokSummary ?? "情報なし",
     grokCitations: row.grokCitations,
-    ohlcv1m: bars,
-    ohlcv1d: bars1d,
-    // ticker は snapshot 保存時に落としているので 1m 終値で再構成 (Tier 2 の文脈には十分)
-    ticker: { last: lastClose, bid: lastClose, ask: lastClose, volume: "0" },
+    ohlcvPrimary: primary,
+    primaryInterval,
+    ohlcvLong: long,
+    longInterval,
+    ticker,
     micro: (row.micro as Snapshot["micro"] | null) ?? null,
   };
   return { snapshotRow: row, snap };

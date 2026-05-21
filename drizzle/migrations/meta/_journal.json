@@ -50,6 +50,13 @@
       "when": 1779320995286,
       "tag": "0006_open_kang",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1779321879062,
+      "tag": "0007_fantastic_pride",
+      "breakpoints": true
     }
   ]
 }
