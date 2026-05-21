@@ -13,8 +13,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
-  CYCLE_INTERVAL_HOURS,
-  type CycleIntervalHours,
+  CYCLE_INTERVAL_MINUTES,
+  type CycleIntervalMinutes,
   formatIntervalLabel,
 } from "@/lib/system-control/constants";
 import { useRouter } from "next/navigation";
@@ -23,7 +23,7 @@ import { useEffect, useState, useTransition } from "react";
 export interface SystemControlsProps {
   state: string;
   killReason: string | null;
-  cycleIntervalHours: CycleIntervalHours;
+  cycleIntervalMinutes: CycleIntervalMinutes;
   nextScheduledAt: string | null;
   /** BB-2: 緊急停止フラグが立っているか (UI バッジ + 再開ボタン文言) */
   emergencyStop: boolean;
@@ -45,7 +45,7 @@ function stateBadgeVariant(state: string): "default" | "destructive" | "outline"
 export function SystemControls({
   state,
   killReason,
-  cycleIntervalHours,
+  cycleIntervalMinutes,
   nextScheduledAt,
   emergencyStop,
 }: SystemControlsProps) {
@@ -56,13 +56,13 @@ export function SystemControls({
   const [actionPending, startActionTransition] = useTransition();
   const [intervalPending, startIntervalTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [interval, setIntervalHours] = useState<CycleIntervalHours>(cycleIntervalHours);
+  const [interval, setIntervalSel] = useState<CycleIntervalMinutes>(cycleIntervalMinutes);
   // ロック解除しないと操作できない (誤操作防止)
   const [unlocked, setUnlocked] = useState(false);
 
   useEffect(() => {
-    setIntervalHours(cycleIntervalHours);
-  }, [cycleIntervalHours]);
+    setIntervalSel(cycleIntervalMinutes);
+  }, [cycleIntervalMinutes]);
 
   // I: 楽観更新。click 直後に表示状態を切り替えて、router.refresh() を待たずに反応する。
   // server の state が optimistic と一致したら勝手に解消する (state を優先)。
@@ -118,10 +118,10 @@ export function SystemControls({
     });
   }
 
-  function onIntervalChange(hours: CycleIntervalHours) {
-    setIntervalHours(hours);
-    if (hours === cycleIntervalHours) return;
-    const label = formatIntervalLabel(hours);
+  function onIntervalChange(minutes: CycleIntervalMinutes) {
+    setIntervalSel(minutes);
+    if (minutes === cycleIntervalMinutes) return;
+    const label = formatIntervalLabel(minutes);
     setConfirm({
       title: `実行レートを「${label}」に変更`,
       message: isRunning ? "次のスケジュール枠から反映されます。" : "再開後に反映されます。",
@@ -130,10 +130,10 @@ export function SystemControls({
         setConfirm(null);
         setError(null);
         startIntervalTransition(async () => {
-          const res = await setCycleIntervalAction(hours);
+          const res = await setCycleIntervalAction(minutes);
           if (!res.ok) {
             setError(res.error);
-            setIntervalHours(cycleIntervalHours);
+            setIntervalSel(cycleIntervalMinutes);
             return;
           }
           router.refresh();
@@ -141,7 +141,7 @@ export function SystemControls({
       },
       onCancel: () => {
         setConfirm(null);
-        setIntervalHours(cycleIntervalHours);
+        setIntervalSel(cycleIntervalMinutes);
       },
     });
   }
@@ -192,11 +192,11 @@ export function SystemControls({
                 className="h-8 rounded-lg border border-border bg-background px-2 text-sm disabled:opacity-50"
                 value={interval}
                 disabled={selectDisabled || isKilled}
-                onChange={(e) => onIntervalChange(Number(e.target.value) as CycleIntervalHours)}
+                onChange={(e) => onIntervalChange(Number(e.target.value) as CycleIntervalMinutes)}
               >
-                {CYCLE_INTERVAL_HOURS.map((h) => (
-                  <option key={h} value={h}>
-                    {formatIntervalLabel(h)}
+                {CYCLE_INTERVAL_MINUTES.map((m) => (
+                  <option key={m} value={m}>
+                    {formatIntervalLabel(m)}
                   </option>
                 ))}
               </select>

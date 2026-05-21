@@ -100,7 +100,7 @@ export const judgmentCron = inngest.createFunction(
           cycleId,
           startedAt,
           periodHours: result.periodHours ?? 24,
-          cycleIntervalHours: result.cycleIntervalHours ?? 24,
+          cycleIntervalMinutes: result.cycleIntervalMinutes ?? 1440,
         };
       });
 
@@ -108,7 +108,7 @@ export const judgmentCron = inngest.createFunction(
         return { outcome: "skipped", reason: pre.reason };
       }
 
-      const { cycleId, periodHours, cycleIntervalHours, startedAt } = pre;
+      const { cycleId, periodHours, cycleIntervalMinutes, startedAt } = pre;
       const strategyId = DEFAULT_STRATEGY_ID;
       const method = DEFAULT_METHOD;
 
@@ -134,7 +134,7 @@ export const judgmentCron = inngest.createFunction(
       };
 
       await runStep("tier0-snapshots", () =>
-        tier0Snapshots(cycleId, periodHours, cycleIntervalHours),
+        tier0Snapshots(cycleId, periodHours, cycleIntervalMinutes),
       );
       await runStep("tier1-pre-analyst", () => tier1PreAnalyst(cycleId));
       await runStep("tier2-analyst", () => tier2Analyst(cycleId, strategyId));

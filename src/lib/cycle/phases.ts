@@ -68,8 +68,8 @@ export interface PreflightResult {
   proceed: boolean;
   skipped?: CycleSkipReason;
   periodHours?: number;
-  /** §32: tier0Snapshots に渡す。system_state.cycleIntervalHours を伝播する */
-  cycleIntervalHours?: number;
+  /** tier0Snapshots に渡す。system_state.cycleIntervalMinutes を伝播する */
+  cycleIntervalMinutes?: number;
   coinIdsCount?: number;
 }
 
@@ -136,7 +136,7 @@ export async function preflight(input: PreflightInput): Promise<PreflightResult>
   return {
     proceed: true,
     periodHours,
-    cycleIntervalHours: state.cycleIntervalHours,
+    cycleIntervalMinutes: state.cycleIntervalMinutes,
     coinIdsCount: enabledCoins.length,
   };
 }
@@ -179,7 +179,7 @@ async function getCycleCoins(cycleId: string) {
 export async function tier0Snapshots(
   cycleId: string,
   periodHours: number,
-  cycleIntervalHours: number,
+  cycleIntervalMinutes: number,
 ): Promise<void> {
   await assertNotEmergencyStop("tier0-snapshots");
   const enabledCoins = await getCycleCoins(cycleId);
@@ -202,16 +202,13 @@ export async function tier0Snapshots(
             symbol: coin.symbol,
             name: coin.name,
             periodHours,
-            cycleIntervalHours,
+            cycleIntervalMinutes,
           });
           await db.insert(marketSnapshots).values({
             cycleId,
             coinId: coin.id,
-            // §32: primary / long の動的 TF を保存
-            ohlcvPrimary: snap.ohlcvPrimary,
-            ohlcvLong: snap.ohlcvLong,
-            primaryInterval: snap.primaryInterval,
-            longInterval: snap.longInterval,
+            ohlcv: snap.ohlcv,
+            klineInterval: snap.klineInterval,
             ticker: snap.ticker,
             micro: snap.micro,
             perplexitySummary: snap.perplexitySummary,
@@ -233,11 +230,8 @@ async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: st
     await db.select().from(marketSnapshots).where(eq(marketSnapshots.id, snapshotId)).limit(1)
   )[0];
   if (!row) throw new Error(`Snapshot not found: ${snapshotId}`);
-  // §32: 動的 TF カラムから復元 (旧 ohlcv_1m / ohlcv_1d は §21 で drop 済)
-  const primary = (row.ohlcvPrimary as Snapshot["ohlcvPrimary"] | null) ?? [];
-  const long = (row.ohlcvLong as Snapshot["ohlcvLong"] | null) ?? [];
-  const primaryInterval = (row.primaryInterval as Snapshot["primaryInterval"] | null) ?? "1hour";
-  const longInterval = (row.longInterval as Snapshot["longInterval"]) ?? "1day";
+  const ohlcv = (row.ohlcv as Snapshot["ohlcv"] | null) ?? [];
+  const klineInterval = (row.klineInterval as Snapshot["klineInterval"] | null) ?? "1day";
 
   // ticker は新規行は DB に直接保存 (§31 根治)。旧行は最終 bar の close で再構成 fallback。
   const tickerRow = row.ticker as Snapshot["ticker"] | null;
@@ -245,7 +239,7 @@ async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: st
   if (tickerRow) {
     ticker = tickerRow;
   } else {
-    const lastClose = primary.at(-1)?.close ?? "0";
+    const lastClose = ohlcv.at(-1)?.close ?? "0";
     ticker = { last: lastClose, bid: lastClose, ask: lastClose, volume: "0" };
   }
 
@@ -257,10 +251,8 @@ async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: st
     perplexityCitations: row.perplexityCitations,
     grokSummary: row.grokSummary ?? "情報なし",
     grokCitations: row.grokCitations,
-    ohlcvPrimary: primary,
-    primaryInterval,
-    ohlcvLong: long,
-    longInterval,
+    ohlcv,
+    klineInterval,
     ticker,
     micro: (row.micro as Snapshot["micro"] | null) ?? null,
   };

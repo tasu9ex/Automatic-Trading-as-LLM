@@ -1,5 +1,5 @@
 import { SYSTEM_STATES } from "@/lib/constants/enums";
-import { DEFAULT_CYCLE_INTERVAL_HOURS } from "@/lib/system-control/constants";
+import { DEFAULT_CYCLE_INTERVAL_MINUTES } from "@/lib/system-control/constants";
 import { sql } from "drizzle-orm";
 import {
   boolean,
@@ -31,10 +31,10 @@ export const systemState = pgTable("system_state", {
   killedAt: timestamp("killed_at", { withTimezone: true }),
   lastCycleId: uuid("last_cycle_id"),
   lastCycleAt: timestamp("last_cycle_at", { withTimezone: true }),
-  /** 判定サイクル間隔（時間）。1 / 6 / 24 のみ。 */
-  cycleIntervalHours: integer("cycle_interval_hours")
+  /** 判定サイクル間隔（分）。30 / 60 / 240 / 480 / 720 / 1440 のみ。 */
+  cycleIntervalMinutes: integer("cycle_interval_minutes")
     .notNull()
-    .default(DEFAULT_CYCLE_INTERVAL_HOURS),
+    .default(DEFAULT_CYCLE_INTERVAL_MINUTES),
   /** 次回判定サイクルを実行する予定時刻（UTC）。running 時のみ進む。 */
   nextScheduledAt: timestamp("next_scheduled_at", { withTimezone: true }),
   /** 累計 API コスト (USD)。各サイクル完了時に Langfuse 取得値で加算 */

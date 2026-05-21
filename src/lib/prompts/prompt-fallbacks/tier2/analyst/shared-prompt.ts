@@ -10,8 +10,9 @@
  *   {{pre_analyst_summary}} Tier 1 の要約・関連度スコア
  *   {{perplexity_summary}} Perplexity ニュース全文
  *   {{grok_summary}}       Grok センチメント全文
- *   {{ohlcv_1m_brief}}     直近 1m 足 簡易テキスト (60 本 = 過去 1 時間)
- *   {{ohlcv_1d_brief}}     直近 1d 足 簡易テキスト (30 本 = 過去 1 ヶ月)
+ *   {{kline_interval}}     Kline interval (サイクル間隔と一致、例: "4hour")
+ *   {{bars_count}}         実際に取得できた本数 (上限 200)
+ *   {{ohlcv_brief}}        OHLCV 簡易テキスト (直近 200 本)
  *   {{micro_market}}       板情報・直近約定からのマイクロ指標 (spread, depth bias, buy ratio)
  *
  * 出力 (JSON):
@@ -88,11 +89,8 @@ export const ANALYST_USER_PROMPT = `# 銘柄
 # X センチメント (Grok)
 {{grok_summary}}
 
-# メイン TF: {{primary_interval}} 足 (直近 {{primary_bars_count}} 本)
-{{ohlcv_primary_brief}}
-
-# 長期 TF: {{long_interval}} 足 (直近 30 本)
-{{ohlcv_long_brief}}
+# OHLCV: {{kline_interval}} 足 (直近 {{bars_count}} 本)
+{{ohlcv_brief}}
 
 # マイクロマーケット指標 (板情報 + 直近 100 約定)
 {{micro_market}}

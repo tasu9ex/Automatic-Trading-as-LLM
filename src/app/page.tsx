@@ -106,7 +106,7 @@ export default async function Home({
       <SystemControls
         state={stats.state ?? "stopped"}
         killReason={stats.killReason}
-        cycleIntervalHours={stats.cycleIntervalHours}
+        cycleIntervalMinutes={stats.cycleIntervalMinutes}
         nextScheduledAt={stats.nextScheduledAt?.toISOString() ?? null}
         emergencyStop={stats.emergencyStop}
       />

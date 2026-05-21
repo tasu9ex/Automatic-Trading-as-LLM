@@ -8,10 +8,10 @@ import {
   emergencyStop,
   pauseSystem,
   resumeSystem,
-  setCycleIntervalHours,
+  setCycleIntervalMinutes,
   startSystem,
 } from "@/lib/system-control";
-import { type CycleIntervalHours, isCycleIntervalHours } from "@/lib/system-control/constants";
+import { type CycleIntervalMinutes, isCycleIntervalMinutes } from "@/lib/system-control/constants";
 import * as Sentry from "@sentry/nextjs";
 import { eq } from "drizzle-orm";
 import { revalidatePath, updateTag } from "next/cache";
@@ -80,13 +80,13 @@ export async function startSystemAction(): Promise<SystemControlActionResult> {
   });
 }
 
-export async function setCycleIntervalAction(hours: number): Promise<SystemControlActionResult> {
+export async function setCycleIntervalAction(minutes: number): Promise<SystemControlActionResult> {
   return withResult(async () => {
     await requireUser();
-    if (!isCycleIntervalHours(hours)) {
-      throw new Error(`実行レートが不正です: ${hours}`);
+    if (!isCycleIntervalMinutes(minutes)) {
+      throw new Error(`実行レートが不正です: ${minutes}`);
     }
-    await setCycleIntervalHours(hours as CycleIntervalHours);
+    await setCycleIntervalMinutes(minutes as CycleIntervalMinutes);
   });
 }
 

@@ -10,15 +10,12 @@ export interface PreAnalystResult {
 }
 
 function buildPriceSnapshotText(s: Snapshot): string {
-  // §32: long TF (旧 1d) があればそれを優先、なければ primary 末尾を使う
-  const bars = s.ohlcvLong.length > 0 ? s.ohlcvLong : s.ohlcvPrimary;
-  if (bars.length === 0) return "(価格データなし)";
-  const recent = bars.slice(-3);
-  const interval = s.ohlcvLong.length > 0 ? s.longInterval : s.primaryInterval;
+  if (s.ohlcv.length === 0) return "(価格データなし)";
+  const recent = s.ohlcv.slice(-3);
   return recent
     .map((bar) => {
       const d = new Date(Number(bar.openTime)).toISOString().slice(0, 10);
-      return `${d} [${interval}]: O=${bar.open} H=${bar.high} L=${bar.low} C=${bar.close} V=${bar.volume}`;
+      return `${d} [${s.klineInterval}]: O=${bar.open} H=${bar.high} L=${bar.low} C=${bar.close} V=${bar.volume}`;
     })
     .join("\n");
 }

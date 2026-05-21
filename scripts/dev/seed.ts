@@ -64,7 +64,7 @@ async function main() {
     .values({
       id: "singleton",
       state: "stopped",
-      cycleIntervalHours: 24,
+      cycleIntervalMinutes: 1440,
       // §17: リスクパラメータ初期値 (UI から変更可)
       perCoinMaxRatio: "0.250",
       portfolioDdTrigger: "0.500",

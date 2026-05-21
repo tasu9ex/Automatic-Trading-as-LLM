@@ -12,12 +12,21 @@ import { callGrok } from "@/lib/clients/grok";
 import { callPerplexity } from "@/lib/clients/perplexity";
 import { createLogger } from "@/lib/logging";
 import { getPrompt } from "@/lib/prompts";
+import {
+  type CycleIntervalMinutes,
+  DEFAULT_CYCLE_INTERVAL_MINUTES,
+  type KlineInterval,
+  cycleMinutesToKlineInterval,
+  isCycleIntervalMinutes,
+} from "@/lib/system-control/constants";
 import { withGenerationSpan } from "@/lib/telemetry";
 
 const logger = createLogger("tier0.fetch-snapshot");
 
-/** GMO がサポートする kline interval のうち本プロジェクトで使う subset */
-export type KlineInterval = "1min" | "5min" | "15min" | "1hour" | "4hour" | "1day";
+export type { KlineInterval };
+
+/** LLM に渡す bar 本数。サイクル interval × 200 本に固定。 */
+export const TARGET_BARS = 200;
 
 export interface FetchSnapshotInput {
   symbol: string; // 例: "BTC"
@@ -25,11 +34,8 @@ export interface FetchSnapshotInput {
   name?: string;
   /** Tier 0 の検索対象期間 (時間)。デフォルト 24h。サイクル頻度に応じて呼出側で設定。 */
   periodHours?: number;
-  /**
-   * §32: サイクル間隔。primary/long TF の選択に使う。
-   * 未指定なら 1h サイクル想定 (=primary 1hour / long 1day)。
-   */
-  cycleIntervalHours?: number;
+  /** サイクル間隔（分）。Kline interval の 1:1 マッピングに使う。 */
+  cycleIntervalMinutes?: number;
 }
 
 export interface MicroMarket {
@@ -56,50 +62,23 @@ export interface Snapshot {
   perplexityCitations: string[];
   grokSummary: string;
   grokCitations: string[];
-  /** メイン TF (サイクル間隔と同じか近い粒度) */
-  ohlcvPrimary: OHLCBar[];
-  primaryInterval: KlineInterval;
-  /** 長期 TF (中長期トレンド用、24h サイクルでは null) */
-  ohlcvLong: OHLCBar[];
-  longInterval: KlineInterval | null;
+  /** サイクル interval と一致する Kline (直近 TARGET_BARS 本まで) */
+  ohlcv: OHLCBar[];
+  klineInterval: KlineInterval;
   ticker: { last: string; bid: string; ask: string; volume: string };
   /** 板情報 + 直近約定から計算したマイクロマーケット指標 */
   micro: MicroMarket | null;
 }
 
-/**
- * サイクル間隔 → primary / long TF のマッピング。
- *   1h  → primary 1hour  (~72 本 = 3 日) + long 1day (~30 本)
- *   3h  → primary 4hour  (~60 本 = 10 日) + long 1day
- *   6h  → primary 4hour  + long 1day
- *   24h → primary 1day   (~30 本) + long なし
- */
-export function pickIntervals(cycleHours?: number): {
-  primary: KlineInterval;
-  long: KlineInterval | null;
-} {
-  if (!cycleHours || cycleHours <= 1) return { primary: "1hour", long: "1day" };
-  if (cycleHours <= 6) return { primary: "4hour", long: "1day" };
-  return { primary: "1day", long: null };
-}
-
-/**
- * GMO kline は interval により date format が違う:
- *   1min/5min/15min/30min → YYYYMMDD (日付指定)
- *   1hour/4hour/8hour/12hour → YYYY (年指定)
- *   1day → YYYY
- */
-function dateParamFor(interval: KlineInterval): string {
-  const isDate = interval === "1min" || interval === "5min" || interval === "15min";
-  return isDate ? todayYyyymmdd() : currentYear();
-}
-
-function todayYyyymmdd(): string {
-  return yyyymmddJst(new Date());
-}
-
-function yesterdayYyyymmdd(): string {
-  return yyyymmddJst(new Date(Date.now() - 24 * 3600_000));
+/** date 形式の判定 (GMO 公式): YYYYMMDD = 1min/5min/10min/15min/30min/1hour */
+function isDateParamInterval(interval: KlineInterval): boolean {
+  return (
+    interval === "1min" ||
+    interval === "5min" ||
+    interval === "15min" ||
+    interval === "30min" ||
+    interval === "1hour"
+  );
 }
 
 function yyyymmddJst(d: Date): string {
@@ -107,37 +86,69 @@ function yyyymmddJst(d: Date): string {
   return `${jst.getUTCFullYear()}${String(jst.getUTCMonth() + 1).padStart(2, "0")}${String(jst.getUTCDate()).padStart(2, "0")}`;
 }
 
-function currentYear(): string {
-  return String(new Date().getUTCFullYear());
+/** 1 リクエスト分の kline を取得。404 は空配列で吸収、それ以外は throw。 */
+async function fetchOneKlineCall(
+  symbol: string,
+  interval: KlineInterval,
+  param: string,
+): Promise<OHLCBar[]> {
+  try {
+    return await getKlines(symbol, interval, param);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/GMO\s*404/i.test(msg)) throw err;
+    logger.warn({ symbol, interval, param }, `${interval} kline 404, skipping`);
+    return [];
+  }
+}
+
+/** params リストを順番に叩いて TARGET_BARS 本集まったら打ち切り、openTime 昇順 + 末尾 TARGET_BARS を返す。 */
+async function collectBars(
+  symbol: string,
+  interval: KlineInterval,
+  params: Iterable<string>,
+): Promise<OHLCBar[]> {
+  const collected = new Map<number, OHLCBar>();
+  for (const param of params) {
+    const bars = await fetchOneKlineCall(symbol, interval, param);
+    for (const bar of bars) collected.set(bar.openTime, bar);
+    if (collected.size >= TARGET_BARS) break;
+  }
+  return Array.from(collected.values())
+    .sort((a, b) => a.openTime - b.openTime)
+    .slice(-TARGET_BARS);
+}
+
+function* daysBack(maxDays: number): IterableIterator<string> {
+  for (let i = 0; i < maxDays; i++) {
+    yield yyyymmddJst(new Date(Date.now() - i * 24 * 3600_000));
+  }
+}
+
+function* yearsBack(maxYears: number): IterableIterator<string> {
+  const yearNow = new Date().getUTCFullYear();
+  for (let i = 0; i < maxYears; i++) yield String(yearNow - i);
 }
 
 /**
- * kline 取得 + フォールバック。
- * 日付指定 TF (1min/5min/15min) は早朝に 404 / 空配列が起きやすいため、空なら前日に再 fetch。
- * 年指定 TF (1hour 以上) は単純に取得。
+ * 指定 interval で TARGET_BARS 本以上が確保できるよう、必要に応じて過去日 / 過去年を merge して取得する。
+ *
+ * - YYYYMMDD 系 (30min / 1hour): 1 日分しか返らないので複数日 fetch して concat。
+ *   30min なら 48本/日、1hour なら 24本/日 → 200 本に必要なのは数日〜10 日程度。safety upper bound: 20 日。
+ * - YYYY 系 (4hour 以上): 当年で足りなければ前年も fetch して concat (最大 3 年遡及)。
+ *   一般に 4hour × 1 年 ≒ 2100 本、1day × 1 年 ≒ 365 本なので大抵 1 回で足りる。
  */
-async function getKlinesWithFallback(symbol: string, interval: KlineInterval): Promise<OHLCBar[]> {
-  const isDateBased = interval === "1min" || interval === "5min" || interval === "15min";
-  const param = dateParamFor(interval);
-  try {
-    const bars = await getKlines(symbol, interval, param);
-    if (bars.length > 0 || !isDateBased) return bars;
-    const yesterday = yesterdayYyyymmdd();
-    logger.warn(
-      { symbol, interval, param, yesterday },
-      `${interval} kline empty for today, falling back to yesterday`,
-    );
-    return await getKlines(symbol, interval, yesterday);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!isDateBased || !/GMO\s*404/i.test(msg)) throw err;
-    const yesterday = yesterdayYyyymmdd();
-    logger.warn(
-      { symbol, interval, param, yesterday },
-      `${interval} kline 404, falling back to yesterday`,
-    );
-    return await getKlines(symbol, interval, yesterday);
-  }
+function fetchEnoughBars(symbol: string, interval: KlineInterval): Promise<OHLCBar[]> {
+  const params = isDateParamInterval(interval) ? daysBack(20) : yearsBack(3);
+  return collectBars(symbol, interval, params);
+}
+
+function resolveKlineInterval(cycleMinutesRaw: number | undefined): KlineInterval {
+  const minutes =
+    cycleMinutesRaw !== undefined && isCycleIntervalMinutes(cycleMinutesRaw)
+      ? (cycleMinutesRaw as CycleIntervalMinutes)
+      : DEFAULT_CYCLE_INTERVAL_MINUTES;
+  return cycleMinutesToKlineInterval(minutes);
 }
 
 /**
@@ -149,18 +160,17 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
   const name = input.name ?? symbol;
   const periodHours = input.periodHours ?? 24;
   const symbolJpy = `${symbol}_JPY`;
-  const { primary, long } = pickIntervals(input.cycleIntervalHours);
+  const klineInterval = resolveKlineInterval(input.cycleIntervalMinutes);
 
   const [newsPrompt, sentimentPrompt] = await Promise.all([
     getPrompt("tier0/news", { symbol, name, period_hours: periodHours }),
     getPrompt("tier0/sentiment", { symbol, name, period_hours: periodHours }),
   ]);
 
-  const [tickerRes, primaryBarsRes, longBarsRes, orderbookRes, tradesRes, perplexityRes, grokRes] =
+  const [tickerRes, klineRes, orderbookRes, tradesRes, perplexityRes, grokRes] =
     await Promise.allSettled([
       getTicker(symbolJpy),
-      getKlinesWithFallback(symbolJpy, primary),
-      long ? getKlinesWithFallback(symbolJpy, long) : Promise.resolve([] as OHLCBar[]),
+      fetchEnoughBars(symbolJpy, klineInterval),
       getOrderbook(symbolJpy),
       getRecentTrades(symbolJpy, 1, 100),
       withGenerationSpan(
@@ -194,14 +204,13 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
       ),
     ]);
 
-  // 必須ソース: Ticker + primary kline + (long があれば long) + Perplexity + Grok
+  // 必須ソース: Ticker + Kline + Perplexity + Grok
   const requiredResults: Array<readonly [string, PromiseSettledResult<unknown>]> = [
     ["Ticker", tickerRes],
-    [`${primary} kline`, primaryBarsRes],
+    [`${klineInterval} kline`, klineRes],
     ["Perplexity", perplexityRes],
     ["Grok", grokRes],
   ];
-  if (long) requiredResults.push([`${long} kline`, longBarsRes]);
 
   const failures = requiredResults.filter(([, res]) => res.status !== "fulfilled");
   if (failures.length > 0) {
@@ -241,10 +250,8 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
       perplexityRes.status === "fulfilled" ? (perplexityRes.value.citations ?? []) : [],
     grokSummary: grokRes.status === "fulfilled" ? grokRes.value.content : "情報なし",
     grokCitations: grokRes.status === "fulfilled" ? (grokRes.value.citations ?? []) : [],
-    ohlcvPrimary: primaryBarsRes.status === "fulfilled" ? primaryBarsRes.value : [],
-    primaryInterval: primary,
-    ohlcvLong: longBarsRes.status === "fulfilled" ? longBarsRes.value : [],
-    longInterval: long,
+    ohlcv: klineRes.status === "fulfilled" ? klineRes.value : [],
+    klineInterval,
     ticker: {
       last: ticker?.last ?? "0",
       bid: ticker?.bid ?? "0",

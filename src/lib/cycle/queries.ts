@@ -22,9 +22,9 @@ import { getTicker } from "@/lib/clients/gmo";
 import { createLogger } from "@/lib/logging";
 import type { AnalystOutput } from "@/lib/schemas/llm-outputs";
 import {
-  type CycleIntervalHours,
-  DEFAULT_CYCLE_INTERVAL_HOURS,
-  isCycleIntervalHours,
+  type CycleIntervalMinutes,
+  DEFAULT_CYCLE_INTERVAL_MINUTES,
+  isCycleIntervalMinutes,
 } from "@/lib/system-control/constants";
 import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
@@ -54,7 +54,7 @@ export interface DashboardStats {
   lastFailureKind: string | null;
   /** 累計 API コスト (USD) */
   cumulativeCostUsd: number;
-  cycleIntervalHours: CycleIntervalHours;
+  cycleIntervalMinutes: CycleIntervalMinutes;
   nextScheduledAt: Date | null;
   lastCycleAt: Date | null;
   cashJpy: number;
@@ -129,10 +129,10 @@ export async function getDashboardStatsImpl(): Promise<DashboardStats> {
       .then((r) => Number(r[0]?.count ?? 0)),
   ]);
 
-  const intervalRaw = state?.cycleIntervalHours ?? DEFAULT_CYCLE_INTERVAL_HOURS;
-  const cycleIntervalHours = isCycleIntervalHours(intervalRaw)
+  const intervalRaw = state?.cycleIntervalMinutes ?? DEFAULT_CYCLE_INTERVAL_MINUTES;
+  const cycleIntervalMinutes = isCycleIntervalMinutes(intervalRaw)
     ? intervalRaw
-    : DEFAULT_CYCLE_INTERVAL_HOURS;
+    : DEFAULT_CYCLE_INTERVAL_MINUTES;
 
   return {
     state: state?.state,
@@ -142,7 +142,7 @@ export async function getDashboardStatsImpl(): Promise<DashboardStats> {
     consecutiveFailures: state?.consecutiveFailures ?? 0,
     lastFailureKind: state?.lastFailureKind ?? null,
     cumulativeCostUsd: Number(state?.cumulativeCostUsd ?? 0),
-    cycleIntervalHours,
+    cycleIntervalMinutes,
     nextScheduledAt: state?.nextScheduledAt ?? null,
     lastCycleAt: state?.lastCycleAt ?? null,
     cashJpy: Number(portfolio?.cashJpy ?? 0),
@@ -570,7 +570,7 @@ export const isCycleInFlight = unstable_cache(
  *
  * DD 修正で失敗 cycle は recordCycleFailure 経由で completedAt が埋まるようになったので、
  * 残る「NULL のまま残留する」ケースは process kill 等のハードクラッシュのみ。
- * その上限を cycleIntervalHours (= 次サイクル cron の発火間隔) に揃える。
+ * その上限を cycleIntervalMinutes (= 次サイクル cron の発火間隔) に揃える。
  *
  * 10 分固定窓だと、Inngest のリトライや一時的なハングで NULL が 10 分超 → "実行中じゃない"
  * 扱いになり、銘柄 toggle ガードが破れるバグがあった。
@@ -578,13 +578,13 @@ export const isCycleInFlight = unstable_cache(
 async function isCycleInFlightImpl(): Promise<boolean> {
   const state = (
     await db
-      .select({ cycleIntervalHours: systemState.cycleIntervalHours })
+      .select({ cycleIntervalMinutes: systemState.cycleIntervalMinutes })
       .from(systemState)
       .where(eq(systemState.id, "singleton"))
       .limit(1)
   )[0];
-  const intervalHours = state?.cycleIntervalHours ?? DEFAULT_CYCLE_INTERVAL_HOURS;
-  const since = new Date(Date.now() - intervalHours * 3_600_000);
+  const intervalMinutes = state?.cycleIntervalMinutes ?? DEFAULT_CYCLE_INTERVAL_MINUTES;
+  const since = new Date(Date.now() - intervalMinutes * 60_000);
   const row = (
     await db
       .select({ id: cycles.id })

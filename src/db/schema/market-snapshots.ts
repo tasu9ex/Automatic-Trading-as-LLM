@@ -11,15 +11,11 @@ export const marketSnapshots = pgTable(
       .notNull()
       .references(() => coins.id, { onDelete: "cascade" }),
     /**
-     * §32: 動的 TF。サイクル間隔ベースで GMO interval を選択して保存。
-     *   1h cycle  → primary="1hour" / long="1day"
-     *   3h, 6h    → primary="4hour" / long="1day"
-     *   24h cycle → primary="1day"  / long=null
+     * Kline (OHLCV) と GMO interval 名。
+     * 「サイクル interval × 200 本」のみ保存 (旧 primary/long の二段は廃止)。
      */
-    ohlcvPrimary: jsonb("ohlcv_primary"),
-    ohlcvLong: jsonb("ohlcv_long"),
-    primaryInterval: text("primary_interval"),
-    longInterval: text("long_interval"),
+    ohlcv: jsonb("ohlcv"),
+    klineInterval: text("kline_interval"),
     /** GMO ticker をそのまま保存 (loadSnapshot の擬似再構成を廃止、§31 根治) */
     ticker: jsonb("ticker"),
     /** Orderbook + 直近約定から計算した micro market 指標 (Tier 2 用) */

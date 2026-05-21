@@ -3,9 +3,9 @@ import { systemEvents, systemState } from "@/db/schema";
 import type { SystemState } from "@/db/schema/system-state";
 import { and, eq, inArray } from "drizzle-orm";
 import {
-  type CycleIntervalHours,
-  DEFAULT_CYCLE_INTERVAL_HOURS,
-  isCycleIntervalHours,
+  type CycleIntervalMinutes,
+  DEFAULT_CYCLE_INTERVAL_MINUTES,
+  isCycleIntervalMinutes,
 } from "./constants";
 import { computeNextScheduledAt } from "./scheduling";
 
@@ -15,9 +15,9 @@ export async function getSystemStateRow(): Promise<SystemState | undefined> {
   return (await db.select().from(systemState).where(eq(systemState.id, SINGLETON_ID)).limit(1))[0];
 }
 
-function intervalFromRow(row: SystemState | undefined): CycleIntervalHours {
-  const h = row?.cycleIntervalHours ?? DEFAULT_CYCLE_INTERVAL_HOURS;
-  return isCycleIntervalHours(h) ? h : DEFAULT_CYCLE_INTERVAL_HOURS;
+function intervalFromRow(row: SystemState | undefined): CycleIntervalMinutes {
+  const m = row?.cycleIntervalMinutes ?? DEFAULT_CYCLE_INTERVAL_MINUTES;
+  return isCycleIntervalMinutes(m) ? m : DEFAULT_CYCLE_INTERVAL_MINUTES;
 }
 
 /** サイクル実行後に次回スロットへ進める。 */
@@ -118,7 +118,7 @@ export async function startSystem(): Promise<SystemState> {
       kind === "system_resumed"
         ? "Resumed from dashboard (next scheduled slot)"
         : "Started from dashboard (next scheduled slot)",
-    payload: { nextScheduledAt: nextScheduledAt.toISOString(), intervalHours: interval },
+    payload: { nextScheduledAt: nextScheduledAt.toISOString(), intervalMinutes: interval },
   });
 
   return updated;
@@ -160,8 +160,8 @@ export async function emergencyStop(): Promise<SystemState> {
   return updated;
 }
 
-export async function setCycleIntervalHours(hours: CycleIntervalHours): Promise<SystemState> {
-  if (!isCycleIntervalHours(hours)) {
+export async function setCycleIntervalMinutes(minutes: CycleIntervalMinutes): Promise<SystemState> {
+  if (!isCycleIntervalMinutes(minutes)) {
     throw new Error("Invalid cycle interval");
   }
 
@@ -171,12 +171,12 @@ export async function setCycleIntervalHours(hours: CycleIntervalHours): Promise<
   }
 
   const patch: Partial<typeof systemState.$inferInsert> = {
-    cycleIntervalHours: hours,
+    cycleIntervalMinutes: minutes,
     updatedAt: new Date(),
   };
 
   if (row?.state === "running") {
-    patch.nextScheduledAt = computeNextScheduledAt(new Date(), hours);
+    patch.nextScheduledAt = computeNextScheduledAt(new Date(), minutes);
   }
 
   const [updated] = await db
@@ -189,9 +189,9 @@ export async function setCycleIntervalHours(hours: CycleIntervalHours): Promise<
   await db.insert(systemEvents).values({
     kind: "human_intervention",
     severity: "info",
-    message: `Cycle interval set to ${hours}h`,
+    message: `Cycle interval set to ${minutes}min`,
     payload: {
-      cycleIntervalHours: hours,
+      cycleIntervalMinutes: minutes,
       nextScheduledAt: updated.nextScheduledAt?.toISOString() ?? null,
     },
   });
@@ -202,7 +202,7 @@ export async function setCycleIntervalHours(hours: CycleIntervalHours): Promise<
 export { computeNextScheduledAt, isScheduleDue } from "./scheduling";
 export { formatIntervalLabel } from "./constants";
 export {
-  CYCLE_INTERVAL_HOURS,
-  DEFAULT_CYCLE_INTERVAL_HOURS,
-  isCycleIntervalHours,
+  CYCLE_INTERVAL_MINUTES,
+  DEFAULT_CYCLE_INTERVAL_MINUTES,
+  isCycleIntervalMinutes,
 } from "./constants";

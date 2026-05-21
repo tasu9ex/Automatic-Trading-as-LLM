@@ -68,7 +68,7 @@ async function gmoGet<T>(path: string): Promise<T> {
     }
     const json = (await res.json()) as GmoPublicResponse<T>;
     if (json.status !== 0) {
-      throw new Error(`GMO non-zero status: ${json.status}`);
+      throw new Error(`GMO non-zero status: ${json.status} (path=${path})`);
     }
     return json.data;
   });
@@ -113,12 +113,15 @@ export async function getRecentTrades(
 }
 
 /**
- * KLine (OHLC) 取得。interval: 1min, 5min, 15min, 30min, 1hour, 4hour, 8hour, 12hour, 1day, ...
- * date: YYYYMMDD (1min-30min) or YYYY (1hour-)
+ * KLine (OHLC) 取得。
+ * date 形式 (GMO 公式仕様):
+ *   YYYYMMDD: 1min / 5min / 10min / 15min / 30min / 1hour
+ *   YYYY    : 4hour / 8hour / 12hour / 1day / 1week / 1month
+ * 注: 日替わりは JST 06:00。
  */
 export async function getKlines(
   symbol: string,
-  interval: "1min" | "5min" | "15min" | "30min" | "1hour" | "4hour" | "1day",
+  interval: "1min" | "5min" | "15min" | "30min" | "1hour" | "4hour" | "8hour" | "12hour" | "1day",
   date: string,
 ): Promise<OHLCBar[]> {
   return gmoGet<OHLCBar[]>(`/v1/klines?symbol=${symbol}&interval=${interval}&date=${date}`);
