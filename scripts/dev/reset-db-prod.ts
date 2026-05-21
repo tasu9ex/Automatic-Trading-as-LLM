@@ -13,7 +13,7 @@
  * リセット内容:
  *   - public + drizzle schema を CASCADE で DROP
  *   - 再作成
- *   - 後段で pnpm db:migrate:prod + pnpm db:seed:prod が走る
+ *   - 後段で pnpm db:prod:migrate + pnpm db:prod:seed が走る
  */
 
 import "dotenv/config";
@@ -72,7 +72,7 @@ async function main() {
   await db.execute(sql`CREATE SCHEMA public`);
   await db.execute(sql`GRANT ALL ON SCHEMA public TO postgres`);
   await db.execute(sql`GRANT ALL ON SCHEMA public TO public`);
-  console.log("✓ schema reset done. Next: pnpm db:migrate:prod && pnpm db:seed:prod");
+  console.log("✓ schema reset done. Next: pnpm db:prod:migrate && pnpm db:prod:seed");
   process.exit(0);
 }
 

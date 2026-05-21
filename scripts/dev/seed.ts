@@ -5,7 +5,7 @@ import { coins, portfolios, systemState } from "@/db/schema";
 /**
  * 初期データ投入。
  * production と同じ 5 銘柄 (BTC / ETH / XRP / DOT / SOL) を enabled=true で投入。
- * 他銘柄も触りたい場合は `pnpm db:sync-coins` で GMO 全銘柄を取り込める。
+ * 他銘柄も触りたい場合は `pnpm db:local:sync-coins` で GMO 全銘柄を取り込める。
  */
 async function main() {
   console.log("Seeding...");

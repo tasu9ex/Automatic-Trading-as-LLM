@@ -20,8 +20,8 @@ Vercel CLI logs は "now から先" しか出ないので、過去のエラー�
 ## デプロイフロー
 
 1. `git push`(Vercel が deploy 開始)
-2. **deploy 完了を待ってから** `pnpm db:migrate:prod` (新コードが空テーブルを触るのは無害、逆は落ちる)
-3. ローカル確認は `pnpm db:migrate` + `pnpm dev`
+2. **deploy 完了を待ってから** `pnpm db:prod:migrate` (新コードが空テーブルを触るのは無害、逆は落ちる)
+3. ローカル確認は `pnpm db:local:migrate` + `pnpm dev`
 
 ## 環境変数
 
@@ -29,7 +29,7 @@ Vercel CLI logs は "now から先" しか出ないので、過去のエラー�
 - ローカル: `.env.local`
 - 本番: `vercel env add <NAME> production` → 再 deploy (空 commit でも push でも可)
 
-`.env.production.local` は `pnpm db:migrate:prod` 用で、本番 Vercel が読むのは Vercel Env のみ。
+`.env.production.local` は `pnpm db:prod:migrate` 用で、本番 Vercel が読むのは Vercel Env のみ。
 
 ## サイクル稼働の前提
 
@@ -62,7 +62,7 @@ Vercel CLI logs は "now から先" しか出ないので、過去のエラー�
 1. `src/db/schema/*.ts` を編集
 2. `pnpm db:generate` で migration 自動生成
 3. RLS が必要な新テーブルなら migration の末尾に `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` + `CREATE POLICY ...` を手で追記
-4. `pnpm db:migrate`(ローカル)→ コミット → push → `pnpm db:migrate:prod`(本番)
+4. `pnpm db:local:migrate`(ローカル)→ コミット → push → `pnpm db:prod:migrate`(本番)
 
 ## 関連 ドキュメント
 

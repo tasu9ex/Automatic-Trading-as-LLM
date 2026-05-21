@@ -34,7 +34,7 @@ async function main() {
   await db.execute(sql`CREATE SCHEMA public`);
   await db.execute(sql`GRANT ALL ON SCHEMA public TO postgres`);
   await db.execute(sql`GRANT ALL ON SCHEMA public TO public`);
-  console.log("✓ schema reset done. Next: pnpm db:migrate && pnpm db:seed");
+  console.log("✓ schema reset done. Next: pnpm db:local:migrate && pnpm db:local:seed");
   process.exit(0);
 }
 

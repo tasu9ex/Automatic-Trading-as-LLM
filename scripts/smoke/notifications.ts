@@ -9,7 +9,7 @@
  * 送信先: DISCORD_WEBHOOK_URL_SMOKE (本番 webhook は触らない)
  * 各通知間 1.5 秒 sleep (Discord rate limit 回避 + 視認性)。
  *
- * Usage: pnpm smoke:notifications
+ * Usage: pnpm smoke:local:notifications
  */
 
 // ===== 本番 webhook 環境変数を SMOKE 用に差し替え (import より前) =====

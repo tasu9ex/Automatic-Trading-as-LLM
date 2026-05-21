@@ -2,8 +2,8 @@
  * 判定パイプラインを CLI から 1 回実行する薄いラッパー。
  *
  * Usage:
- *   pnpm cycle:judgment
- *   pnpm cycle:judgment -- --strategyId opus-confidence --method confidence
+ *   pnpm cycle:local:judgment
+ *   pnpm cycle:local:judgment -- --strategyId opus-confidence --method confidence
  *
  * 本体ロジックは src/lib/cycle/judgment.ts (Inngest からも呼ばれる)。
  */

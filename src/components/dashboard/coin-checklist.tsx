@@ -63,7 +63,7 @@ export function CoinChecklist({ coins, cycleInFlight }: CoinChecklistProps) {
 
         {coins.length === 0 ? (
           <p className="text-muted-foreground text-sm">
-            銘柄が未登録です。`pnpm db:sync-coins` で同期してください。
+            銘柄が未登録です。`pnpm db:local:sync-coins` で同期してください。
           </p>
         ) : (
           <ul className="grid gap-1.5 sm:grid-cols-2 md:grid-cols-3">

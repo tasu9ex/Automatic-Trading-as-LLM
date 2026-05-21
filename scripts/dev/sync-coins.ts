@@ -2,7 +2,7 @@
  * GMO Public API から取引所形式の銘柄リストを取得し、coins テーブルに upsert。
  *
  * Usage:
- *   pnpm db:sync-coins
+ *   pnpm db:local:sync-coins
  *
  * 既存銘柄: minOrderSize 等を更新。新規銘柄: 追加。
  * GMO で扱われなくなった銘柄は enabled=false に。

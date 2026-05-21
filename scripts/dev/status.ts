@@ -2,8 +2,8 @@
  * Quick CLI status: ポートフォリオ / open positions / 最近サイクル を一覧表示。
  *
  * Usage:
- *   pnpm status                     # 本番 DB
- *   pnpm status:local              # ローカル DB
+ *   pnpm status:prod              # 本番 DB
+ *   pnpm status:local             # ローカル DB
  */
 // CLI からは unstable_cache を経由しない (Next.js runtime 不在で invariant エラーになる)
 import {
