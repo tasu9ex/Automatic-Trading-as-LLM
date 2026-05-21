@@ -1210,9 +1210,21 @@ export async function recordCycleFailure(args: {
       },
     });
 
+  // §22: phase に応じて enum を出し分け。
+  // - tier0-snapshots → data_fetch_failed
+  // - tier{1,2,3}-* → llm_failure
+  // - finalize / その他 → cycle_aborted
+  const eventKind: "data_fetch_failed" | "llm_failure" | "cycle_aborted" =
+    args.phase === "tier0-snapshots"
+      ? "data_fetch_failed"
+      : args.phase.startsWith("tier1") ||
+          args.phase.startsWith("tier2") ||
+          args.phase.startsWith("tier3")
+        ? "llm_failure"
+        : "cycle_aborted";
   await db.insert(systemEvents).values({
     strategyId: args.strategyId,
-    kind: "cycle_aborted",
+    kind: eventKind,
     severity: "error",
     message: `Cycle ${args.cycleId.slice(0, 8)} aborted at ${args.phase} (${kind}): ${errMsg.slice(0, 300)}`,
     payload: { cycleId: args.cycleId, phase: args.phase, kind },

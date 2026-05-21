@@ -297,13 +297,13 @@ export async function getCycleDetail(cycleId: string): Promise<CycleDetail | nul
       .from(marketSnapshots)
       .innerJoin(coins, eq(marketSnapshots.coinId, coins.id))
       .where(eq(marketSnapshots.cycleId, cycleId)),
-    // 失敗 cycle の理由 (cycle_aborted system_event)
+    // 失敗 cycle の理由 (data_fetch_failed / llm_failure / cycle_aborted のいずれか、§22)
     db
       .select()
       .from(systemEvents)
       .where(
         and(
-          eq(systemEvents.kind, "cycle_aborted"),
+          sql`${systemEvents.kind} IN ('cycle_aborted', 'data_fetch_failed', 'llm_failure')`,
           sql`${systemEvents.payload}->>'cycleId' = ${cycleId}`,
         ),
       )
