@@ -49,6 +49,8 @@ export interface DashboardStats {
   lastCycleAt: Date | null;
   cashJpy: number;
   initialCashJpy: number;
+  /** HWM-base DD 表示用 */
+  highWaterMarkJpy: number;
   realizedPnlJpy: number;
   cyclesToday: number;
   cyclesTotal: number;
@@ -130,6 +132,7 @@ export async function getDashboardStatsImpl(): Promise<DashboardStats> {
     lastCycleAt: state?.lastCycleAt ?? null,
     cashJpy: Number(portfolio?.cashJpy ?? 0),
     initialCashJpy: Number(portfolio?.initialCashJpy ?? 0),
+    highWaterMarkJpy: Number(portfolio?.highWaterMarkJpy ?? 0),
     realizedPnlJpy: realizedAgg,
     cyclesToday: cyclesTodayAgg,
     cyclesTotal: cyclesTotalAgg,

@@ -36,7 +36,9 @@
     "smoke:local:anthropic": "tsx --env-file=.env.local scripts/smoke/anthropic.ts",
     "smoke:local:perplexity": "tsx --env-file=.env.local scripts/smoke/perplexity.ts",
     "status:local": "tsx --env-file=.env.local scripts/dev/status.ts",
-    "status:prod": "tsx --env-file=.env.production.local scripts/dev/status.ts"
+    "status:prod": "tsx --env-file=.env.production.local scripts/dev/status.ts",
+    "capital:local": "tsx --env-file=.env.local scripts/dev/capital.ts",
+    "capital:prod": "tsx --env-file=.env.production.local scripts/dev/capital.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",

@@ -650,3 +650,7 @@ refactor: finalize 分割 + 残り複雑度警告解消
 - Langfuse にセットされてる API コスト単価が正確か確認
 - 二段リスクモデル (per-cycle / per-coin total) の値を UI から検証 — paper mode で挙動確認
   - 既定 `perCoinTotalMaxRatio = 1.0` (制限なし) で現状互換 → ユーザーが必要なら 0.4 等に絞る
+- HWM-base DD (capital-injection-adjusted) を paper mode で動作確認
+  - `pnpm capital:local deposit 100000` で入金 → HWM が +¥100k 上がること
+  - kill-switch チェック時に HWM が自動で max 更新されること
+  - 入金 UI フォームの追加 (現状は CLI のみ)

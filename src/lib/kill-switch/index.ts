@@ -69,25 +69,35 @@ export async function checkAndTriggerKillSwitch(
     0,
   );
   const priceByCoinId = new Map<string, number>(resolved.map((r, i) => [open[i].coin.id, r.price]));
-  const totalValue = Number(portfolio.cashJpy) + marketValue;
-  const initial = Number(portfolio.initialCashJpy);
-  // MM: initial=0 だと NaN になり ddRatio >= threshold が常に false になる → kill switch が動かない。
-  //     初期資本未設定 (シード前) の場合は DD トリガを評価しない (連続失敗 auto-pause は別系統で機能する)。
-  const ddRatio = initial > 0 ? (initial - totalValue) / initial : 0;
-  const ddEvaluable = initial > 0;
+  const equity = Number(portfolio.cashJpy) + marketValue;
+
+  // HWM-base DD (= capital-injection-adjusted、max from peak)。
+  // - 各 kill-switch チェック時に HWM を equity で更新 (max)
+  // - DD = (HWM - equity) / HWM、HWM <= 0 のときは評価しない (MM ガード相当)
+  // - 入金/出金時は capital.ts 側で HWM を ± 入出金額 で調整 (performance 由来の peak だけ追う)
+  const prevHwm = Number(portfolio.highWaterMarkJpy);
+  const hwm = Math.max(prevHwm, equity);
+  if (hwm > prevHwm) {
+    await db
+      .update(portfolios)
+      .set({ highWaterMarkJpy: hwm.toFixed(4), updatedAt: new Date() })
+      .where(eq(portfolios.id, portfolio.id));
+  }
+  const ddRatio = hwm > 0 ? (hwm - equity) / hwm : 0;
+  const ddEvaluable = hwm > 0;
 
   const failureTriggered = state && state.consecutiveFailures >= riskParams.autoPauseThreshold;
   const ddTriggered = ddEvaluable && ddRatio >= riskParams.portfolioDdTrigger;
 
   if (ddTriggered) {
-    const reason = `portfolio DD ${(ddRatio * 100).toFixed(1)}%`;
+    const reason = `portfolio DD ${(ddRatio * 100).toFixed(1)}% (HWM ¥${Math.round(hwm).toLocaleString()})`;
     await triggerKillSwitch({
       strategyId: input.strategyId,
       open,
       priceByCoinId,
       reason,
-      totalValue,
-      initial,
+      totalValue: equity,
+      initial: hwm, // 通知用、"HWM 比" の意味
       ddRatio,
     });
     return "killed";
@@ -228,7 +238,7 @@ async function triggerKillSwitch(input: {
     title: "🚨 緊急停止 (Kill Switch) 発動",
     body: `**${reason}**\n全ポジションを強制クローズしました。システムは停止状態です。手動で再開してください。`,
     fields: {
-      元本: `¥${Math.round(initial).toLocaleString()}`,
+      HWM: `¥${Math.round(initial).toLocaleString()}`,
       現在資産: `¥${Math.round(totalValue).toLocaleString()}`,
       ドローダウン: `${(ddRatio * 100).toFixed(1)}%`,
     },

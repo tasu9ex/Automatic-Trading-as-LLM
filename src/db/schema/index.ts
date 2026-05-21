@@ -7,6 +7,7 @@ export * from "./enums";
 export * from "./market-snapshots";
 export * from "./orders";
 export * from "./pending-orders";
+export * from "./portfolio-capital-events";
 export * from "./portfolios";
 export * from "./positions";
 export * from "./pre-analyst-outputs";

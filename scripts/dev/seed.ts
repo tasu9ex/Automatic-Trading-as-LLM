@@ -54,6 +54,7 @@ async function main() {
       description: "実走テスト 5 銘柄",
       initialCashJpy: "500000",
       cashJpy: "500000",
+      highWaterMarkJpy: "500000",
     })
     .onConflictDoNothing({ target: portfolios.strategyId });
   console.log("✓ portfolios");

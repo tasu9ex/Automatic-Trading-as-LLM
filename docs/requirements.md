@@ -338,6 +338,27 @@ Allocator 出力 → Critic LLM
 **clip 順序**: per-coin total cap → per-cycle cap → portfolio total cap (proportional scale)。
 より厳しい cap が優先される (per-symbol headroom = min of caps)。
 
+#### 4.4.1.1 Kill Switch DD (HWM-base, capital-injection-adjusted)
+
+DD 評価は **HWM (High Water Mark) からの drawdown** で行う。
+
+```
+equity      = cash + Σ positions の mtm
+HWM         = max(prev_HWM, equity)            ← 単調非減少、kill-switch チェック時に更新
+ddFromHwm   = (HWM - equity) / HWM             ← HWM <= 0 はガード (評価 skip)
+killTrigger = ddFromHwm >= portfolioDdTrigger  ← 例 0.5 = 50%
+```
+
+**入金 / 出金の扱い**: capital-injection-adjusted HWM。
+- 入金時: `cash += 入金額`, `initialCashJpy += 入金額`, `HWM += 入金額`
+- 出金時: `cash -= 出金額`, `initialCashJpy -= 出金額`, `HWM -= 出金額`
+- これにより HWM は "performance による peak" だけを追う (外部資金で peak が跳ね上がらない)
+- 履歴は `portfolio_capital_events` に残す
+
+**Kill 後の HWM**: 保持 (リセットしない、ファンド標準)。手動再開後も過去 peak に対する DD で評価。
+
+実装: [kill-switch/index.ts](../src/lib/kill-switch/index.ts) / [capital/index.ts](../src/lib/capital/index.ts)
+
 #### 4.4.2 緊急停止 — 2 階層構造
 
 **個別緊急 SL (銘柄単位、2 段階構成)**

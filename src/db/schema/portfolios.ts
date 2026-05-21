@@ -11,6 +11,14 @@ export const portfolios = pgTable("portfolios", {
   description: text("description"),
   initialCashJpy: numeric("initial_cash_jpy", { precision: 20, scale: 4 }).notNull(),
   cashJpy: numeric("cash_jpy", { precision: 20, scale: 4 }).notNull(),
+  /**
+   * High Water Mark: equity (= cash + Σ positions の mtm) の過去最大値。
+   * Kill Switch の DD 計算で base に使う (= 最大 DD from peak)。
+   * 入金時は HWM += 入金額、出金時は HWM -= 出金額 で capital movement を控除し、
+   * "performance による peak" だけを追う (capital-injection-adjusted HWM)。
+   * 初期値は initialCashJpy。
+   */
+  highWaterMarkJpy: numeric("high_water_mark_jpy", { precision: 20, scale: 4 }).notNull(),
   enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),

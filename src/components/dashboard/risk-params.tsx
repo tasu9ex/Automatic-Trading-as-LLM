@@ -118,8 +118,8 @@ export function RiskParams({
             error={perCoinTotalError}
           />
           <Field
-            label="Kill Switch DD (%)"
-            help="ポートフォリオ DD がこの値以上 → 全 close + killed"
+            label="最大 DD (HWM 比) (%)"
+            help="HWM (資産時価総額のピーク) からの DD がこの値以上 → 全 close + killed"
             value={dd}
             min={5}
             max={99}
