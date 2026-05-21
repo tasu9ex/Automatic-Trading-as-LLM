@@ -91,14 +91,16 @@ export async function setCycleIntervalAction(hours: number): Promise<SystemContr
 }
 
 /**
- * §17: UI からリスクパラメータ 3 種を更新する。
- *   - perCoinMaxRatio: 0.01 - 1.0
+ * §17: UI からリスクパラメータを更新する。
+ *   - perCoinMaxRatio (段 1 / per-cycle): 0.01 - 1.0
+ *   - perCoinTotalMaxRatio (段 2 / per-coin total): 0.01 - 1.0 (1.0 = 制限なし)
  *   - portfolioDdTrigger: 0.05 - 0.99
  *   - autoPauseThreshold: 1 - 10 (整数)
  * 範囲外は throw して UI 側でエラー表示。
  */
 export async function setRiskParamsAction(input: {
   perCoinMaxRatio: number;
+  perCoinTotalMaxRatio: number;
   portfolioDdTrigger: number;
   autoPauseThreshold: number;
 }): Promise<SystemControlActionResult> {
@@ -109,7 +111,14 @@ export async function setRiskParamsAction(input: {
       input.perCoinMaxRatio < 0.01 ||
       input.perCoinMaxRatio > 1
     ) {
-      throw new Error("PER_COIN_MAX_RATIO は 0.01 - 1.00 の範囲で指定してください");
+      throw new Error("PER_COIN_MAX_RATIO (段 1) は 0.01 - 1.00 の範囲で指定してください");
+    }
+    if (
+      !Number.isFinite(input.perCoinTotalMaxRatio) ||
+      input.perCoinTotalMaxRatio < 0.01 ||
+      input.perCoinTotalMaxRatio > 1
+    ) {
+      throw new Error("PER_COIN_TOTAL_MAX_RATIO (段 2) は 0.01 - 1.00 の範囲で指定してください");
     }
     if (
       !Number.isFinite(input.portfolioDdTrigger) ||
@@ -129,6 +138,7 @@ export async function setRiskParamsAction(input: {
       .update(systemState)
       .set({
         perCoinMaxRatio: input.perCoinMaxRatio.toFixed(3),
+        perCoinTotalMaxRatio: input.perCoinTotalMaxRatio.toFixed(3),
         portfolioDdTrigger: input.portfolioDdTrigger.toFixed(3),
         autoPauseThreshold: input.autoPauseThreshold,
         updatedAt: new Date(),

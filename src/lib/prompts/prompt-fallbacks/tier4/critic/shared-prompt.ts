@@ -8,10 +8,13 @@
  *   {{allocation_proposal}} Allocator が計算した銘柄別目標額 (JSON)
  *   {{analyst_summaries}}   各銘柄の Analyst synthesis 一覧 (JSON 配列)
  *   {{decisions}}           Entry/Exit Decision 結果一覧 (JSON 配列)
- *   {{current_positions}}   現保有ポジション (JSON 配列)
+ *   {{current_positions}}   現保有ポジション (JSON 配列、`mtmValueJpy` 含む)
  *   {{symbol_to_name}}      symbol → プロジェクト正式名称マップ
  *   {{cash_jpy}}            現金残高
+ *   {{equity_jpy}}          資産時価総額 (cash + Σ positions の mtm)。per-coin total cap の base
  *   {{risk_params}}         Risk Clipper の閾値 (参考表示用)
+ *                           - perCoinMaxRatio: 段 1 = per-cycle 新規 buy 上限 (cash base)
+ *                           - perCoinTotalMaxRatio: 段 2 = per-coin 総エクスポージャ上限 (equity base、1.0 = 制限なし)
  *
  * 出力 (JSON):
  *   {
@@ -51,7 +54,11 @@ export const CRITIC_SYSTEM_PROMPT = `# 役割
 - 銘柄ごとの Entry/Exit 判断は既に前段 (Analyst → Trader) で完了している
 - あなたは「合計としてのバランス」を見る最後のチェックポイント
 - **Exit decisions も判断対象**: close 連発で過剰決済になってないか確認
-- ハードガード (1 銘柄上限・Kill Switch 等) はコード側が別途強制する。詳細は risk_params 参照
+- ハードガード (二段リスクモデル・Kill Switch 等) はコード側が別途強制する。詳細は risk_params 参照
+  - 段 1 (per-cycle): cash × perCoinMaxRatio を上回る新規 buy は cap で削られる
+  - 段 2 (per-coin total): equity × perCoinTotalMaxRatio - 既存 mtm を上回る新規 buy は削られる
+  - 配分案 (proposal) は段 1 のみ適用済の状態。段 2 は Critic がここで考慮するか、後段の Clipper に任せる
+  - **集中度を見て modify を出す指針**: 既存 + 新規 が equity × perCoinTotalMaxRatio を超える銘柄は buys で縮小する
 - 過剰な veto / modify は避ける (前段の判断を尊重し、合理的な懸念がある場合のみ介入)
 
 # システム健全性 (system_health) の使い方
@@ -88,6 +95,9 @@ export const CRITIC_USER_PROMPT = `# サイズ配分案 (コード算出)
 
 # 現金残高
 ¥{{cash_jpy}}
+
+# 資産時価総額 (cash + Σ positions の mtm)
+¥{{equity_jpy}}
 
 # ハードガード閾値 (コード側で別途強制、参考)
 {{risk_params}}

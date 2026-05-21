@@ -645,6 +645,8 @@ refactor: finalize 分割 + 残り複雑度警告解消
 
 - 全 commit を 1 PR にまとめる、または phase ごとに別 PR
 - 本番 push 前にローカル + steady cycle で 1-2 サイクル動作確認 (paper mode)
-- migration 順序確認 (Phase 2 BB-2 + Phase 4 P-5)
+- migration 順序確認 (Phase 2 BB-2 + Phase 4 P-5 + 二段リスクモデル + 銘柄シード再定義)
 - 本番 push → `pnpm db:prod:migrate` → 動作確認
 - Langfuse にセットされてる API コスト単価が正確か確認
+- 二段リスクモデル (per-cycle / per-coin total) の値を UI から検証 — paper mode で挙動確認
+  - 既定 `perCoinTotalMaxRatio = 1.0` (制限なし) で現状互換 → ユーザーが必要なら 0.4 等に絞る

@@ -97,6 +97,7 @@ export default async function Home({
 
       <RiskParams
         perCoinMaxRatio={stats.perCoinMaxRatio}
+        perCoinTotalMaxRatio={stats.perCoinTotalMaxRatio}
         portfolioDdTrigger={stats.portfolioDdTrigger}
         autoPauseThreshold={stats.autoPauseThreshold}
       />

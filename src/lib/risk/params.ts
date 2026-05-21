@@ -22,8 +22,10 @@ import { eq } from "drizzle-orm";
 export { PER_COIN_MIN_JPY, TOTAL_MAX_RATIO };
 
 export interface RiskParams {
-  /** 1 銘柄あたりの最大配分比率 (例: 0.25 = 25%) */
+  /** 段 1: 1 サイクル新規 buy 上限比率 (cash base、例: 0.25 = 25%) */
   perCoinMaxRatio: number;
+  /** 段 2: 1 銘柄の総エクスポージャ上限比率 (equity base、例: 1.0 = 制限なし、0.4 = 40%) */
+  perCoinTotalMaxRatio: number;
   /** Kill Switch を発動する DD 比率 (例: 0.5 = -50%) */
   portfolioDdTrigger: number;
   /** 連続失敗カウンタがこの値で auto-pause */
@@ -43,6 +45,8 @@ export async function getRiskParams(): Promise<RiskParams> {
     Number(row?.perCoinMaxRatio ?? DEFAULT_PER_COIN_MAX_RATIO),
     DEFAULT_PER_COIN_MAX_RATIO,
   );
+  // 段 2: 1.0 で「制限なし」、未設定なら 1.0 (旧挙動互換)
+  const perCoinTotalMaxRatio = clampRatio(Number(row?.perCoinTotalMaxRatio ?? 1.0), 1.0);
   const portfolioDdTrigger = clampRatio(
     Number(row?.portfolioDdTrigger ?? DEFAULT_PORTFOLIO_DD_TRIGGER),
     DEFAULT_PORTFOLIO_DD_TRIGGER,
@@ -54,7 +58,7 @@ export async function getRiskParams(): Promise<RiskParams> {
     DEFAULT_AUTO_PAUSE_THRESHOLD,
   );
 
-  return { perCoinMaxRatio, portfolioDdTrigger, autoPauseThreshold };
+  return { perCoinMaxRatio, perCoinTotalMaxRatio, portfolioDdTrigger, autoPauseThreshold };
 }
 
 function clampRatio(v: number, fallback: number): number {

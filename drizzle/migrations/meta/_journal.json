@@ -99,6 +99,13 @@
       "when": 1779337502455,
       "tag": "0013_brief_spitfire",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1779338422162,
+      "tag": "0014_harsh_gauntlet",
+      "breakpoints": true
     }
   ]
 }

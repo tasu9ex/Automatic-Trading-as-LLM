@@ -54,6 +54,8 @@ export interface DashboardStats {
   cyclesTotal: number;
   /** §17: UI で表示・調整するリスクパラメータ (system_state から) */
   perCoinMaxRatio: number;
+  /** 段 2: per-coin 総エクスポージャ上限 (equity base、1.0 = 制限なし) */
+  perCoinTotalMaxRatio: number;
   portfolioDdTrigger: number;
   autoPauseThreshold: number;
 }
@@ -132,6 +134,7 @@ export async function getDashboardStatsImpl(): Promise<DashboardStats> {
     cyclesToday: cyclesTodayAgg,
     cyclesTotal: cyclesTotalAgg,
     perCoinMaxRatio: Number(state?.perCoinMaxRatio ?? 0.25),
+    perCoinTotalMaxRatio: Number(state?.perCoinTotalMaxRatio ?? 1.0),
     portfolioDdTrigger: Number(state?.portfolioDdTrigger ?? 0.5),
     autoPauseThreshold: Number(state?.autoPauseThreshold ?? 3),
   };

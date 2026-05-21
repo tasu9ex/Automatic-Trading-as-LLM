@@ -4,10 +4,27 @@ export interface RiskClipperInput {
   proposal: AllocationProposal;
   availableCashJpy: number;
   currentInvestedJpy: number;
-  /** ハードガード (デフォルト Risk Clipper 設定) */
-  perCoinMaxRatio: number; // 1 銘柄あたり最大投資率 (現金比、例 0.25 = 25%)
-  perCoinMinJpy: number; // 1 銘柄あたり最小発注 (例 5000)
-  totalMaxRatio: number; // ポートフォリオ総投資率上限 (例 1.0 = 100%)
+  /**
+   * symbol 別の既存エクスポージャ (mark-to-market)。
+   * per-coin total cap 計算のため必須。0 / 未保有銘柄は省略可。
+   */
+  existingExposureBySymbol?: Record<string, number>;
+  /**
+   * ポートフォリオ全体の equity (= cash + Σ positions の mtm)。
+   * per-coin total cap の base 値。
+   */
+  equityJpy?: number;
+  /** 段 1: 1 サイクル新規 buy 上限 (cash × X)。1 トランザクション粒度のガード */
+  perCoinMaxRatio: number;
+  /** per-coin 最小発注額 (この値未満は skip) */
+  perCoinMinJpy: number;
+  /** portfolio 総投資率上限 */
+  totalMaxRatio: number;
+  /**
+   * 段 2: per-coin 総エクスポージャ上限 (equity × X)。
+   * 既存 + 新規 がこの cap を超えないようにする。1.0 で「制限なし」(現状挙動互換)。
+   */
+  perCoinTotalMaxRatio?: number;
 }
 
 export interface ClippedProposal {
@@ -18,16 +35,24 @@ export interface ClippedProposal {
 
 /**
  * Allocator 出力をハードガードでクリップ。
- *   - 1 銘柄上限超過 → ratio で切り詰め
- *   - 1 銘柄下限割れ → スキップ
- *   - 総投資率超過 → 全銘柄を比例縮小
+ *
+ * 二段リスクモデル:
+ *   段 1 (per-cycle buy cap, cash base):  1 トランザクションあたり cash × `perCoinMaxRatio` まで
+ *   段 2 (per-coin total cap, equity base): 既存 + 新規が equity × `perCoinTotalMaxRatio` まで
+ *   両 cap の min を per-symbol headroom として適用。さらに portfolio cap (total) を比例縮小で適用。
+ *
+ * 段 2 は default 1.0 (= 制限なし) で、UI から設定すれば有効化。
  */
 export function applyRiskClipper(input: RiskClipperInput): ClippedProposal {
-  const perCoinCap = input.availableCashJpy * input.perCoinMaxRatio;
+  const perCoinCycleCap = input.availableCashJpy * input.perCoinMaxRatio;
   const totalCapRoom = Math.max(
     0,
     input.availableCashJpy * input.totalMaxRatio - input.currentInvestedJpy,
   );
+
+  const equity = input.equityJpy ?? input.availableCashJpy + input.currentInvestedJpy;
+  const perCoinTotalRatio = input.perCoinTotalMaxRatio ?? 1.0;
+  const existingBySymbol = input.existingExposureBySymbol ?? {};
 
   const changes: ClippedProposal["changes"] = [];
   const clipped: AllocationProposal = {};
@@ -39,9 +64,41 @@ export function applyRiskClipper(input: RiskClipperInput): ClippedProposal {
       changes.push({ symbol, reason: "below per-coin min", from: jpy, to: 0 });
       continue;
     }
-    if (value > perCoinCap) {
-      changes.push({ symbol, reason: "per-coin cap", from: value, to: Math.floor(perCoinCap) });
-      value = Math.floor(perCoinCap);
+
+    // 段 2: per-coin 総エクスポージャ上限 (equity base)。既存控除した headroom。
+    if (perCoinTotalRatio < 1.0) {
+      const totalCap = equity * perCoinTotalRatio;
+      const existing = existingBySymbol[symbol] ?? 0;
+      const headroom = Math.max(0, totalCap - existing);
+      if (value > headroom) {
+        changes.push({
+          symbol,
+          reason: "per-coin total cap",
+          from: value,
+          to: Math.floor(headroom),
+        });
+        value = Math.floor(headroom);
+        if (value < input.perCoinMinJpy) {
+          changes.push({
+            symbol,
+            reason: "per-coin total cap (below min after headroom)",
+            from: jpy,
+            to: 0,
+          });
+          continue;
+        }
+      }
+    }
+
+    // 段 1: per-cycle buy cap (cash base)
+    if (value > perCoinCycleCap) {
+      changes.push({
+        symbol,
+        reason: "per-cycle buy cap",
+        from: value,
+        to: Math.floor(perCoinCycleCap),
+      });
+      value = Math.floor(perCoinCycleCap);
     }
     clipped[symbol] = value;
   }
@@ -63,14 +120,18 @@ export function applyRiskClipper(input: RiskClipperInput): ClippedProposal {
     }
 
     // NN: floor 連鎖で発生した端数 (= totalCapRoom - sum(clipped)) を最大配分銘柄に寄せる。
-    //     毎回 floor で切り捨てると 数 % 程度現金が遊ぶため。per-coin cap を超えないかチェック。
+    //     ただし per-cycle cap / per-coin total cap も両方を超えない範囲で。
     const remaining = totalCapRoom - Object.values(clipped).reduce((s, v) => s + v, 0);
     if (remaining > 0 && Object.keys(clipped).length > 0) {
       const symbols = Object.keys(clipped).sort((a, b) => (clipped[b] ?? 0) - (clipped[a] ?? 0));
       const top = symbols[0];
       const topValue = clipped[top] ?? 0;
-      const headroom = perCoinCap - topValue;
-      const inject = Math.floor(Math.max(0, Math.min(remaining, headroom)));
+      const headroomCycle = perCoinCycleCap - topValue;
+      const headroomTotal =
+        perCoinTotalRatio < 1.0
+          ? Math.max(0, equity * perCoinTotalRatio - (existingBySymbol[top] ?? 0) - topValue)
+          : Number.POSITIVE_INFINITY;
+      const inject = Math.floor(Math.max(0, Math.min(remaining, headroomCycle, headroomTotal)));
       if (inject > 0) {
         clipped[top] = topValue + inject;
         changes.push({

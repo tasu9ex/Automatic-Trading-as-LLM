@@ -728,11 +728,22 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     .where(
       and(eq(positions.strategyId, strategyId), eq(positions.status, PositionStatusValue.OPEN)),
     );
-  const currentPositions = refreshedOpenPositions.map(({ position, coin }) => ({
-    symbol: coin.symbol,
-    qty: Number(position.quantity),
-    avgPrice: Number(position.avgEntryPrice),
-  }));
+  // Critic に渡す positions に mtm 評価額も含める (段 2 cap 判定に必要な情報)
+  const tickerByCoinId = new Map(ctxs.map((c) => [c.coin.id, Number(c.snap.ticker.last) || 0]));
+  const currentPositions = refreshedOpenPositions.map(({ position, coin }) => {
+    const qty = Number(position.quantity);
+    const avgPrice = Number(position.avgEntryPrice);
+    const mtm = tickerByCoinId.get(coin.id);
+    const mtmPrice = mtm && mtm > 0 ? mtm : avgPrice;
+    return {
+      symbol: coin.symbol,
+      qty,
+      avgPrice,
+      mtmValueJpy: qty * mtmPrice,
+    };
+  });
+  const equityForCritic =
+    projectedCashJpy + currentPositions.reduce((s, p) => s + (p.mtmValueJpy ?? 0), 0);
   const symbolToName = Object.fromEntries(ctxs.map((c) => [c.coin.symbol, c.coin.name]));
 
   // §33: システム健全性スナップを Critic に渡す (データ不全銘柄を modify で弾けるように)
@@ -764,8 +775,10 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       currentPositions,
       symbolToName,
       cashJpy: projectedCashJpy,
+      equityJpy: equityForCritic,
       riskParams: {
         perCoinMaxRatio: riskParams.perCoinMaxRatio,
+        perCoinTotalMaxRatio: riskParams.perCoinTotalMaxRatio,
         killSwitchDdRatio: riskParams.portfolioDdTrigger,
       },
       systemHealth,
@@ -905,19 +918,30 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     const priceByCoinId = new Map<string, number>(
       ctxs.map((c) => [c.coin.id, Number(c.snap.ticker.last) || 0]),
     );
-    const currentInvested = refreshedPositions.reduce((s, p) => {
+    // symbol 別の existing exposure (per-coin total cap 用)
+    const coinIdToSymbol = new Map(ctxs.map((c) => [c.coin.id, c.coin.symbol]));
+    const existingExposureBySymbol: Record<string, number> = {};
+    let currentInvested = 0;
+    for (const p of refreshedPositions) {
       const qty = Number(p.quantity);
       const mtmPrice = priceByCoinId.get(p.coinId);
       const price = mtmPrice && mtmPrice > 0 ? mtmPrice : Number(p.avgEntryPrice);
-      return s + qty * price;
-    }, 0);
+      const exposure = qty * price;
+      currentInvested += exposure;
+      const sym = coinIdToSymbol.get(p.coinId);
+      if (sym) existingExposureBySymbol[sym] = (existingExposureBySymbol[sym] ?? 0) + exposure;
+    }
+    const equity = cashAfterExits + currentInvested;
     clipped = applyRiskClipper({
       proposal: finalProposal,
       availableCashJpy: cashAfterExits,
       currentInvestedJpy: currentInvested,
+      existingExposureBySymbol,
+      equityJpy: equity,
       perCoinMaxRatio: riskParams.perCoinMaxRatio,
       perCoinMinJpy: PER_COIN_MIN_JPY,
       totalMaxRatio: TOTAL_MAX_RATIO,
+      perCoinTotalMaxRatio: riskParams.perCoinTotalMaxRatio,
     });
     if (clipped.changes.length > 0) {
       logger.info({ changes: clipped.changes }, "Risk Clipper applied");

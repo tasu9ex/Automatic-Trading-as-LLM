@@ -45,10 +45,22 @@ export const systemState = pgTable("system_state", {
    * §17: UI から調整可能なリスクパラメータ。
    * 旧来は src/lib/constants/risk.ts のハードコード定数。DB を唯一のソースに。
    */
-  /** 1 銘柄あたりの最大配分比率 (0-1)。Risk Clipper が cap に使用 */
+  /**
+   * 二段リスクモデルの段 1: **1 サイクル内の新規 buy 上限**。
+   * cap = `cash × perCoinMaxRatio`。1 回のトランザクションが暴走するのを防ぐ。
+   * (旧仕様: per-coin total cap。意味のみ移行、値は据え置きで挙動互換)
+   */
   perCoinMaxRatio: numeric("per_coin_max_ratio", { precision: 4, scale: 3 })
     .notNull()
     .default("0.250"),
+  /**
+   * 二段リスクモデルの段 2: **1 銘柄の総エクスポージャ上限** (= 既存 + 新規)。
+   * cap = `equity × perCoinTotalMaxRatio`、headroom = cap - 既存 mtm。
+   * 集中度の最終ガード。default 1.0 (= 制限なし) で移行 breaking を防ぐ。
+   */
+  perCoinTotalMaxRatio: numeric("per_coin_total_max_ratio", { precision: 4, scale: 3 })
+    .notNull()
+    .default("1.000"),
   /** ポートフォリオ DD がこの比率以上で Kill Switch 発動 (0-1) */
   portfolioDdTrigger: numeric("portfolio_dd_trigger", { precision: 4, scale: 3 })
     .notNull()

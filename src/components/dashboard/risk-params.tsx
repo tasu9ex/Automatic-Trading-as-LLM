@@ -9,12 +9,15 @@ import { useState, useTransition } from "react";
 
 export interface RiskParamsProps {
   perCoinMaxRatio: number;
+  /** 段 2: per-coin 総エクスポージャ上限 (equity base、1.0 = 制限なし) */
+  perCoinTotalMaxRatio: number;
   portfolioDdTrigger: number;
   autoPauseThreshold: number;
 }
 
 export function RiskParams({
   perCoinMaxRatio,
+  perCoinTotalMaxRatio,
   portfolioDdTrigger,
   autoPauseThreshold,
 }: RiskParamsProps) {
@@ -22,6 +25,7 @@ export function RiskParams({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [perCoin, setPerCoin] = useState((perCoinMaxRatio * 100).toFixed(1));
+  const [perCoinTotal, setPerCoinTotal] = useState((perCoinTotalMaxRatio * 100).toFixed(1));
   const [dd, setDd] = useState((portfolioDdTrigger * 100).toFixed(1));
   const [threshold, setThreshold] = useState(String(autoPauseThreshold));
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -37,27 +41,31 @@ export function RiskParams({
     return null;
   }
   const perCoinError = validateNumber(perCoin, 1, 100);
+  const perCoinTotalError = validateNumber(perCoinTotal, 1, 100);
   const ddError = validateNumber(dd, 5, 99);
   const thresholdError = validateNumber(threshold, 1, 10);
-  const hasInputError = !!(perCoinError || ddError || thresholdError);
+  const hasInputError = !!(perCoinError || perCoinTotalError || ddError || thresholdError);
 
   const dirty =
     !hasInputError &&
     (Math.abs(Number(perCoin) - perCoinMaxRatio * 100) > 0.05 ||
+      Math.abs(Number(perCoinTotal) - perCoinTotalMaxRatio * 100) > 0.05 ||
       Math.abs(Number(dd) - portfolioDdTrigger * 100) > 0.05 ||
       Number(threshold) !== autoPauseThreshold);
 
   // B: window.confirm を ConfirmDialog に置換。
   const confirmMessage = [
-    `  1 銘柄上限          ${(perCoinMaxRatio * 100).toFixed(1)}% → ${perCoin}%`,
-    `  Kill Switch DD     ${(portfolioDdTrigger * 100).toFixed(1)}% → ${dd}%`,
-    `  連続失敗 auto-pause  ${autoPauseThreshold} → ${threshold}`,
+    `  段 1 (per-cycle buy) ${(perCoinMaxRatio * 100).toFixed(1)}% → ${perCoin}%`,
+    `  段 2 (per-coin total) ${(perCoinTotalMaxRatio * 100).toFixed(1)}% → ${perCoinTotal}%`,
+    `  Kill Switch DD       ${(portfolioDdTrigger * 100).toFixed(1)}% → ${dd}%`,
+    `  連続失敗 auto-pause   ${autoPauseThreshold} → ${threshold}`,
     "",
     "次サイクルから反映されます。",
   ].join("\n");
 
   function doSave() {
     const perCoinRatio = Number(perCoin) / 100;
+    const perCoinTotalRatio = Number(perCoinTotal) / 100;
     const ddRatio = Number(dd) / 100;
     const thr = Number(threshold);
     setConfirmOpen(false);
@@ -65,6 +73,7 @@ export function RiskParams({
     startTransition(async () => {
       const res = await setRiskParamsAction({
         perCoinMaxRatio: perCoinRatio,
+        perCoinTotalMaxRatio: perCoinTotalRatio,
         portfolioDdTrigger: ddRatio,
         autoPauseThreshold: thr,
       });
@@ -85,10 +94,10 @@ export function RiskParams({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Field
-            label="1 銘柄上限 (%)"
-            help="Allocator 計算後に Clipper が cap (現金 × この比率)"
+            label="段 1: per-cycle 上限 (%)"
+            help="1 サイクル内の 1 銘柄あたり新規 buy 上限 (現金 × この比率)"
             value={perCoin}
             min={1}
             max={100}
@@ -96,6 +105,17 @@ export function RiskParams({
             onChange={setPerCoin}
             disabled={pending}
             error={perCoinError}
+          />
+          <Field
+            label="段 2: per-coin 総上限 (%)"
+            help="1 銘柄の総エクスポージャ上限 (時価総額 × この比率、100% = 制限なし)"
+            value={perCoinTotal}
+            min={1}
+            max={100}
+            step={0.1}
+            onChange={setPerCoinTotal}
+            disabled={pending}
+            error={perCoinTotalError}
           />
           <Field
             label="Kill Switch DD (%)"

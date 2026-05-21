@@ -11,11 +11,25 @@ export interface CriticInput {
   proposal: AllocationProposal;
   analystSummariesBySymbol: Record<string, unknown>;
   decisionsBySymbol: Record<string, unknown>;
-  currentPositions: Array<{ symbol: string; qty: number; avgPrice: number }>;
+  /** 既存ポジション (mtmValueJpy: 時価評価、未指定なら qty × avgPrice で代用) */
+  currentPositions: Array<{
+    symbol: string;
+    qty: number;
+    avgPrice: number;
+    mtmValueJpy?: number;
+  }>;
   /** symbol → プロジェクト正式名称マップ (LLM 文脈用) */
   symbolToName: Record<string, string>;
   cashJpy: number;
-  riskParams: { perCoinMaxRatio: number; killSwitchDdRatio: number };
+  /** equity = cashJpy + Σ positions の mtm。per-coin total cap の base */
+  equityJpy?: number;
+  riskParams: {
+    /** 段 1: per-cycle 新規 buy 上限比率 (cash base) */
+    perCoinMaxRatio: number;
+    /** 段 2: per-coin 総エクスポージャ上限比率 (equity base、1.0 = 制限なし) */
+    perCoinTotalMaxRatio?: number;
+    killSwitchDdRatio: number;
+  };
   /** §33: システム健全性スナップ。データ不全銘柄の弾き等を Critic LLM に委ねる */
   systemHealth: SystemHealth;
 }
@@ -38,6 +52,7 @@ export async function runCritic(input: CriticInput): Promise<CriticResult> {
     current_positions: JSON.stringify(input.currentPositions, null, 2),
     symbol_to_name: JSON.stringify(input.symbolToName, null, 2),
     cash_jpy: input.cashJpy,
+    equity_jpy: input.equityJpy ?? input.cashJpy,
     risk_params: JSON.stringify(input.riskParams, null, 2),
     system_health: JSON.stringify(input.systemHealth, null, 2),
   });

@@ -1,0 +1,1 @@
+ALTER TABLE "system_state" ADD COLUMN "per_coin_total_max_ratio" numeric(4, 3) DEFAULT '1.000' NOT NULL;
