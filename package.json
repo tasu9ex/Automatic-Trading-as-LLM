@@ -16,7 +16,6 @@
     "db:generate": "drizzle-kit generate",
     "db:check": "tsx scripts/db/check-migration-order.ts",
     "db:local:migrate": "dotenv -e .env.local -- drizzle-kit migrate",
-    "db:local:push": "dotenv -e .env.local -- drizzle-kit push",
     "db:local:studio": "dotenv -e .env.local -- drizzle-kit studio",
     "db:local:seed": "tsx --env-file=.env.local scripts/dev/seed.ts",
     "db:local:sync-coins": "tsx --env-file=.env.local scripts/dev/sync-coins.ts",
