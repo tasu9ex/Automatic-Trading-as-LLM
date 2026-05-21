@@ -77,8 +77,9 @@ function reviveDate(v: Date | string | null): Date | null {
 }
 
 export async function getDashboardStatsImpl(): Promise<DashboardStats> {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  // L: 「本日のサイクル数」は JST 起算で数える。Vercel サーバ TZ (UTC) で 0 時起算すると
+  // JST 9:00 で日次リセットが走り、ユーザー体感とズレる。
+  const jstTodayStart = sql`(date_trunc('day', now() AT TIME ZONE 'Asia/Tokyo')) AT TIME ZONE 'Asia/Tokyo'`;
 
   const [state, portfolio, realizedAgg, cyclesTodayAgg, cyclesTotalAgg] = await Promise.all([
     db
@@ -103,7 +104,7 @@ export async function getDashboardStatsImpl(): Promise<DashboardStats> {
     db
       .select({ count: sql<string>`COUNT(*)` })
       .from(criticOutputs)
-      .where(gte(criticOutputs.createdAt, todayStart))
+      .where(sql`${criticOutputs.createdAt} >= ${jstTodayStart}`)
       .then((r) => Number(r[0]?.count ?? 0)),
     db
       .select({ count: sql<string>`COUNT(*)` })
@@ -451,10 +452,26 @@ export const isCycleInFlight = unstable_cache(
   { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
 );
 
-/** completed_at が未セットで、開始から 30 分以内の cycle 行があれば実行中とみなす */
+/**
+ * N: 「実行中」判定の堅牢化。
+ *
+ * DD 修正で失敗 cycle は recordCycleFailure 経由で completedAt が埋まるようになったので、
+ * 残る「NULL のまま残留する」ケースは process kill 等のハードクラッシュのみ。
+ * その上限を cycleIntervalHours (= 次サイクル cron の発火間隔) に揃える。
+ *
+ * 10 分固定窓だと、Inngest のリトライや一時的なハングで NULL が 10 分超 → "実行中じゃない"
+ * 扱いになり、銘柄 toggle ガードが破れるバグがあった。
+ */
 async function isCycleInFlightImpl(): Promise<boolean> {
-  // §23: 実 cycle は per-Tier 60s × 5 step ≒ 5 分以内なので 10 分窓に縮める
-  const since = new Date(Date.now() - 10 * 60_000);
+  const state = (
+    await db
+      .select({ cycleIntervalHours: systemState.cycleIntervalHours })
+      .from(systemState)
+      .where(eq(systemState.id, "singleton"))
+      .limit(1)
+  )[0];
+  const intervalHours = state?.cycleIntervalHours ?? DEFAULT_CYCLE_INTERVAL_HOURS;
+  const since = new Date(Date.now() - intervalHours * 3_600_000);
   const row = (
     await db
       .select({ id: cycles.id })

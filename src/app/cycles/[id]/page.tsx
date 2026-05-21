@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCycleDetail } from "@/lib/cycle/queries";
+import { formatJstDateTime } from "@/lib/format/datetime";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -97,8 +98,8 @@ export default async function CycleDetailPage({ params }: PageProps) {
           </Badge>
         </div>
         <span className="text-muted-foreground text-xs">
-          開始 {new Date(detail.startedAt).toLocaleString("ja-JP")}
-          {detail.completedAt && ` ・ 完了 ${new Date(detail.completedAt).toLocaleString("ja-JP")}`}
+          開始 {formatJstDateTime(detail.startedAt)}
+          {detail.completedAt && ` ・ 完了 ${formatJstDateTime(detail.completedAt)}`}
         </span>
       </header>
 
@@ -249,7 +250,7 @@ function CoinCard({ c }: { c: CoinDetail }) {
                   )}
                 </div>
                 <div className="text-muted-foreground">
-                  取得時刻: {new Date(c.snapshot.fetchedAt).toLocaleString("ja-JP")}
+                  取得時刻: {formatJstDateTime(c.snapshot.fetchedAt)}
                 </div>
               </div>
             </details>

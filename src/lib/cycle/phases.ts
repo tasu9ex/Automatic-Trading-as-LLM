@@ -741,62 +741,22 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     };
     logger.info("Critic skipped (no buy / no exit) — Opus call saved");
   } else {
-    // §3 フェイルオープン: Critic API が落ちてもサイクル全体を中断せず、
-    // Allocator の提案をそのまま採用して進める (要件 §4.3.3.1)。
-    try {
-      critic = await runCritic({
-        proposal,
-        analystSummariesBySymbol,
-        decisionsBySymbol,
-        currentPositions,
-        symbolToName,
-        cashJpy: projectedCashJpy,
-        riskParams: {
-          perCoinMaxRatio: riskParams.perCoinMaxRatio,
-          killSwitchDdRatio: riskParams.portfolioDdTrigger,
-        },
-        systemHealth,
-      });
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      logger.error({ err }, "Critic API failed — fail-open with allocator proposal");
-      critic = {
-        output: {
-          decision: "approve",
-          adjustments: null,
-          reasoning: `Critic API failure → fail-open: ${errMsg.slice(0, 200)}`,
-        },
-        promptVersion: null,
-        llmModel: "fail-open",
-      };
-      await db.insert(systemEvents).values({
-        strategyId,
-        kind: "llm_failure",
-        severity: "warning",
-        message: `Critic fail-open at cycle ${cycleId.slice(0, 8)}: ${errMsg.slice(0, 200)}`,
-        payload: { cycleId, phase: "critic", errMsg: errMsg.slice(0, 500) },
-      });
-      await notify({
-        level: "warning",
-        title: "⚠️ Critic 失敗 — フェイルオープン",
-        body: [
-          "**エラー**",
-          `\`\`\`\n${errMsg.slice(0, 600)}\n\`\`\``,
-          "**挙動**: Allocator 提案をそのまま採用してサイクル続行",
-          "**推奨**: Anthropic 状況 / Langfuse の Critic prompt 確認",
-        ].join("\n"),
-        fields: {
-          サイクル: cycleId.slice(0, 8),
-          採用配分:
-            Object.keys(proposal).length > 0
-              ? Object.entries(proposal)
-                  .map(([s, v]) => `${s}: ¥${Math.round(v).toLocaleString()}`)
-                  .join(", ")
-                  .slice(0, 200)
-              : "なし",
-        },
-      });
-    }
+    // 0.1: Critic 必須化 (ALL-or-NOTHING 原則)。Critic 失敗は通常の failure path に流して
+    // recordCycleFailure 経由で llm_failure event + Discord 通知 + consecutiveFailures++ する。
+    // 上位 runPhase の catch がこの throw を拾う。
+    critic = await runCritic({
+      proposal,
+      analystSummariesBySymbol,
+      decisionsBySymbol,
+      currentPositions,
+      symbolToName,
+      cashJpy: projectedCashJpy,
+      riskParams: {
+        perCoinMaxRatio: riskParams.perCoinMaxRatio,
+        killSwitchDdRatio: riskParams.portfolioDdTrigger,
+      },
+      systemHealth,
+    });
   }
 
   await db.insert(criticOutputs).values({
@@ -1009,27 +969,20 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   }
 
   // system_state 更新 (連続失敗カウンタ + last_failure_kind をリセット)
+  // EE: state は上書きしない。cycle 中にダッシュボードから「一時停止」を押した場合、
+  // finalize が paused → running に巻き戻すと次サイクル :00 cron で勝手に再開する事故になる。
+  // state 行が無い初期状態は preflight で `state !== 'running'` で弾かれているため、
+  // ここで singleton row を新規作成するケースは存在しない (update のみ)。
   await db
-    .insert(systemState)
-    .values({
-      id: "singleton",
-      state: "running",
+    .update(systemState)
+    .set({
       consecutiveFailures: 0,
       lastFailureKind: null,
       lastCycleId: cycleId,
       lastCycleAt: new Date(),
       updatedAt: new Date(),
     })
-    .onConflictDoUpdate({
-      target: systemState.id,
-      set: {
-        consecutiveFailures: 0,
-        lastFailureKind: null,
-        lastCycleId: cycleId,
-        lastCycleAt: new Date(),
-        updatedAt: new Date(),
-      },
-    });
+    .where(eq(systemState.id, "singleton"));
 
   await db.update(cycles).set({ completedAt: new Date() }).where(eq(cycles.id, cycleId));
 

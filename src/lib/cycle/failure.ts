@@ -10,7 +10,7 @@
  */
 
 import { db } from "@/db/client";
-import { systemEvents, systemState } from "@/db/schema";
+import { cycles, systemEvents, systemState } from "@/db/schema";
 import { type ErrorKind, classifyError } from "@/lib/cycle/retry";
 import { checkAndTriggerKillSwitch } from "@/lib/kill-switch";
 import { createLogger } from "@/lib/logging";
@@ -117,6 +117,10 @@ export async function recordCycleFailure(args: {
     message: `Cycle ${args.cycleId.slice(0, 8)} aborted at ${args.phase} (${kind}): ${errMsg.slice(0, 300)}`,
     payload: { cycleId: args.cycleId, phase: args.phase, kind },
   });
+
+  // DD: 失敗 cycle も completedAt を埋めて "in_flight" 扱いを終わらせる
+  // (dashboard の getRecentCyclesImpl / isCycleInFlight が completedAt IS NULL を見るため)
+  await db.update(cycles).set({ completedAt: new Date() }).where(eq(cycles.id, args.cycleId));
 
   if (kind === "quota") {
     await db.insert(systemEvents).values({

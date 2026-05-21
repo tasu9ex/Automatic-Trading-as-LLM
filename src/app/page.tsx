@@ -10,6 +10,7 @@ import {
   getRecentCycles,
   isCycleInFlight,
 } from "@/lib/cycle/queries";
+import { formatJstDate, formatJstDateTime } from "@/lib/format/datetime";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import Link from "next/link";
 
@@ -114,9 +115,7 @@ export default async function Home() {
         <CardHeader>
           <CardTitle>保有ポジション ({openPositions.length})</CardTitle>
           {stats.lastCycleAt && (
-            <CardDescription>
-              直近サイクル: {new Date(stats.lastCycleAt).toLocaleString("ja-JP")}
-            </CardDescription>
+            <CardDescription>直近サイクル: {formatJstDateTime(stats.lastCycleAt)}</CardDescription>
           )}
         </CardHeader>
         <CardContent>
@@ -128,8 +127,7 @@ export default async function Home() {
                 <li key={p.positionId} className="flex items-center justify-between">
                   <span className="font-medium">{p.symbol}</span>
                   <span className="font-mono text-muted-foreground text-xs">
-                    {p.quantity} @ {jpy(p.avgEntryPrice)}・建玉日{" "}
-                    {new Date(p.openedAt).toLocaleDateString("ja-JP")}
+                    {p.quantity} @ {jpy(p.avgEntryPrice)}・建玉日 {formatJstDate(p.openedAt)}
                   </span>
                 </li>
               ))}
@@ -157,7 +155,7 @@ export default async function Home() {
                     <div className="flex flex-col gap-1">
                       <span className="font-mono text-xs">{c.cycleId.slice(0, 8)}</span>
                       <span className="text-muted-foreground text-xs">
-                        {new Date(c.createdAt).toLocaleString("ja-JP")}
+                        {formatJstDateTime(c.createdAt)}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">

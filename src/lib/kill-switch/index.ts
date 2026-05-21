@@ -55,57 +55,20 @@ export async function checkAndTriggerKillSwitch(
   // §8: ticker 取得失敗時に position を silent skip すると DD が過小評価される。
   // フォールバック順:
   //   1. GMO ticker (現値)
-  //   2. 直近 market_snapshots の ohlcv_1m 最終 close
+  //   2. 直近 market_snapshots の ticker.last
   //   3. positions.peakPrice (保守的: trail で最も楽観的だがゼロよりマシ)
   //   4. positions.avgEntryPrice (建値、最も楽観的)
-  let marketValue = 0;
-  for (const { position, coin } of open) {
-    let lastPrice = 0;
-    let source: "ticker" | "snapshot" | "peak" | "avg" = "ticker";
-    try {
-      const ticker = await getTicker(`${coin.symbol}_JPY`);
-      lastPrice = Number(ticker[0]?.last ?? 0);
-    } catch (err) {
-      logger.warn(
-        { symbol: coin.symbol, err },
-        "Kill-switch: ticker fetch failed, falling back to snapshot/position price",
-      );
-    }
-    if (lastPrice <= 0) {
-      // §21 で 1m カラムは drop 済。新 ticker カラムを直接読む。
-      const snap = (
-        await db
-          .select({ ticker: marketSnapshots.ticker })
-          .from(marketSnapshots)
-          .where(eq(marketSnapshots.coinId, coin.id))
-          .orderBy(desc(marketSnapshots.fetchedAt))
-          .limit(1)
-      )[0];
-      const ticker = snap?.ticker as { last?: string } | null;
-      if (ticker?.last) {
-        lastPrice = Number(ticker.last);
-        source = "snapshot";
-      }
-    }
-    if (lastPrice <= 0) {
-      const peak = Number(position.peakPrice ?? 0);
-      if (peak > 0) {
-        lastPrice = peak;
-        source = "peak";
-      }
-    }
-    if (lastPrice <= 0) {
-      lastPrice = Number(position.avgEntryPrice);
-      source = "avg";
-    }
-    if (source !== "ticker") {
-      logger.warn(
-        { symbol: coin.symbol, source, lastPrice },
-        "Kill-switch: using fallback price for DD calc",
-      );
-    }
-    marketValue += Number(position.quantity) * lastPrice;
-  }
+  //
+  // FF: ここで解決した価格は kill-switch 発動時の close でも再利用する
+  // (close 段で個別に ticker を引き直すと失敗 → silent skip でポジ残留する事故になる)
+  const resolved = await Promise.all(
+    open.map(({ position, coin }) => resolvePrice(position, coin)),
+  );
+  const marketValue = resolved.reduce(
+    (sum, { price }, i) => sum + Number(open[i].position.quantity) * price,
+    0,
+  );
+  const priceByCoinId = new Map<string, number>(resolved.map((r, i) => [open[i].coin.id, r.price]));
   const totalValue = Number(portfolio.cashJpy) + marketValue;
   const initial = Number(portfolio.initialCashJpy);
   const ddRatio = (initial - totalValue) / initial;
@@ -118,6 +81,7 @@ export async function checkAndTriggerKillSwitch(
     await triggerKillSwitch({
       strategyId: input.strategyId,
       open,
+      priceByCoinId,
       reason,
       totalValue,
       initial,
@@ -135,23 +99,82 @@ export async function checkAndTriggerKillSwitch(
   return false;
 }
 
+/**
+ * §8 / FF: ticker → snapshot → peak → avg のフォールバック順で price を解決。
+ * Kill Switch では DD 計算と close 段の両方で使う (close 段が ticker 単独で silent skip
+ * すると killed なのにポジ残留する事故になる)。
+ */
+async function resolvePrice(
+  position: typeof positions.$inferSelect,
+  coin: typeof coins.$inferSelect,
+): Promise<{ price: number; source: "ticker" | "snapshot" | "peak" | "avg" }> {
+  let price = 0;
+  try {
+    const ticker = await getTicker(`${coin.symbol}_JPY`);
+    price = Number(ticker[0]?.last ?? 0);
+  } catch (err) {
+    logger.warn(
+      { symbol: coin.symbol, err },
+      "Kill-switch: ticker fetch failed, falling back to snapshot/position price",
+    );
+  }
+  if (price > 0) return { price, source: "ticker" };
+
+  const snap = (
+    await db
+      .select({ ticker: marketSnapshots.ticker })
+      .from(marketSnapshots)
+      .where(eq(marketSnapshots.coinId, coin.id))
+      .orderBy(desc(marketSnapshots.fetchedAt))
+      .limit(1)
+  )[0];
+  const snapTicker = snap?.ticker as { last?: string } | null;
+  if (snapTicker?.last) {
+    const snapPrice = Number(snapTicker.last);
+    if (snapPrice > 0) {
+      logger.warn(
+        { symbol: coin.symbol, price: snapPrice },
+        "Kill-switch: using snapshot fallback",
+      );
+      return { price: snapPrice, source: "snapshot" };
+    }
+  }
+
+  const peak = Number(position.peakPrice ?? 0);
+  if (peak > 0) {
+    logger.warn({ symbol: coin.symbol, price: peak }, "Kill-switch: using peak fallback");
+    return { price: peak, source: "peak" };
+  }
+
+  const avg = Number(position.avgEntryPrice);
+  logger.warn({ symbol: coin.symbol, price: avg }, "Kill-switch: using avg entry fallback");
+  return { price: avg, source: "avg" };
+}
+
 async function triggerKillSwitch(input: {
   strategyId: string;
-  open: { coin: typeof coins.$inferSelect }[];
+  open: { position: typeof positions.$inferSelect; coin: typeof coins.$inferSelect }[];
+  priceByCoinId: Map<string, number>;
   reason: string;
   totalValue: number;
   initial: number;
   ddRatio: number;
 }) {
-  const { strategyId, open, reason, totalValue, initial, ddRatio } = input;
+  const { strategyId, open, priceByCoinId, reason, totalValue, initial, ddRatio } = input;
 
   logger.error({ strategyId, totalValue, ddRatio, reason }, "Kill Switch triggered");
 
-  for (const { coin } of open) {
-    try {
-      const ticker = await getTicker(`${coin.symbol}_JPY`);
-      const lastPrice = Number(ticker[0]?.last ?? 0);
-      if (lastPrice > 0) {
+  // GG: 緊急性が最も高いので並列実行。N 銘柄 × HTTP latency を回避。
+  // FF: DD 計算で解決した価格をそのまま使う (ticker 単独で silent skip するパスを排除)。
+  await Promise.all(
+    open.map(async ({ position, coin }) => {
+      try {
+        const cached = priceByCoinId.get(coin.id);
+        const lastPrice =
+          cached && cached > 0 ? cached : (await resolvePrice(position, coin)).price;
+        if (lastPrice <= 0) {
+          throw new Error(`No usable price for ${coin.symbol} (all fallbacks returned 0)`);
+        }
         await executeExit({
           strategyId,
           symbol: coin.symbol,
@@ -161,19 +184,19 @@ async function triggerKillSwitch(input: {
           forced: true,
           reason: `kill switch: ${reason}`,
         });
+      } catch (err) {
+        logger.error({ err, symbol: coin.symbol }, "Kill switch close failed");
+        await notify({
+          level: "critical",
+          title: `🚨 Kill Switch close 失敗 ${coin.symbol}`,
+          body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
+          fields: {
+            影響: "ポジション残ったまま killed 状態。手動 close 必要",
+          },
+        });
       }
-    } catch (err) {
-      logger.error({ err, symbol: coin.symbol }, "Kill switch close failed");
-      await notify({
-        level: "critical",
-        title: `🚨 Kill Switch close 失敗 ${coin.symbol}`,
-        body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
-        fields: {
-          影響: "ポジション残ったまま killed 状態。手動 close 必要",
-        },
-      });
-    }
-  }
+    }),
+  );
 
   await db
     .insert(systemState)

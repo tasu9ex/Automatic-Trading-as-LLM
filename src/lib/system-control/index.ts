@@ -1,7 +1,7 @@
 import { db } from "@/db/client";
 import { systemEvents, systemState } from "@/db/schema";
 import type { SystemState } from "@/db/schema/system-state";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   type CycleIntervalHours,
   DEFAULT_CYCLE_INTERVAL_HOURS,
@@ -35,42 +35,43 @@ export async function advanceNextScheduledAt(from: Date = new Date()): Promise<D
 }
 
 export async function pauseSystem(): Promise<SystemState> {
-  const row = await getSystemStateRow();
-  if (row?.state === "killed") {
-    throw new Error("Kill Switch 発動中は停止できません");
-  }
-  if (row?.state !== "running") {
-    if (row?.state === "paused") return row;
-    throw new Error("稼働中のみ一時停止できます");
-  }
-
+  // V: TOCTOU 解消。read → check → update を分けると 2 タブ同時押下で system_events が
+  // 二重発火する。state='running' の行を条件付き UPDATE で atomic に paused に倒す。
   const [updated] = await db
     .update(systemState)
     .set({ state: "paused", updatedAt: new Date() })
-    .where(eq(systemState.id, SINGLETON_ID))
+    .where(and(eq(systemState.id, SINGLETON_ID), eq(systemState.state, "running")))
     .returning();
-  if (!updated) throw new Error("system_state not found");
 
-  await db.insert(systemEvents).values({
-    kind: "system_paused",
-    severity: "info",
-    message: "Manual pause from dashboard",
-    payload: { source: "dashboard" },
-  });
+  if (updated) {
+    await db.insert(systemEvents).values({
+      kind: "system_paused",
+      severity: "info",
+      message: "Manual pause from dashboard",
+      payload: { source: "dashboard" },
+    });
+    return updated;
+  }
 
-  return updated;
+  // UPDATE が 0 行: 既に paused / killed / stopped / row 不在 のどれか。冪等 / エラーを判別。
+  const row = await getSystemStateRow();
+  if (!row) throw new Error("system_state not found");
+  if (row.state === "paused") return row;
+  if (row.state === "killed") throw new Error("Kill Switch 発動中は停止できません");
+  throw new Error("稼働中のみ一時停止できます");
 }
 
 export async function startSystem(): Promise<SystemState> {
-  const row = await getSystemStateRow();
-  if (row?.state === "killed") {
+  // V: TOCTOU 解消。state IN (stopped, paused) の行のみ atomic に running に倒す。
+  // 2 タブ同時押下しても system_events が二重発火しない。
+  const beforeRow = await getSystemStateRow();
+  if (!beforeRow) throw new Error("system_state not found");
+  if (beforeRow.state === "killed") {
     throw new Error("Kill Switch 発動中は起動できません");
   }
-  if (row?.state === "running") {
-    return row;
-  }
+  if (beforeRow.state === "running") return beforeRow;
 
-  const interval = intervalFromRow(row);
+  const interval = intervalFromRow(beforeRow);
   const nextScheduledAt = computeNextScheduledAt(new Date(), interval);
 
   const [updated] = await db
@@ -80,11 +81,18 @@ export async function startSystem(): Promise<SystemState> {
       nextScheduledAt,
       updatedAt: new Date(),
     })
-    .where(eq(systemState.id, SINGLETON_ID))
+    .where(and(eq(systemState.id, SINGLETON_ID), inArray(systemState.state, ["stopped", "paused"])))
     .returning();
-  if (!updated) throw new Error("system_state not found");
 
-  const kind = row?.state === "paused" ? "system_resumed" : "system_started";
+  if (!updated) {
+    // 並行に他タブが触った: state を再 read して冪等 / エラーを判別。
+    const row = await getSystemStateRow();
+    if (row?.state === "running") return row;
+    if (row?.state === "killed") throw new Error("Kill Switch 発動中は起動できません");
+    throw new Error("起動できない状態です");
+  }
+
+  const kind = beforeRow.state === "paused" ? "system_resumed" : "system_started";
   await db.insert(systemEvents).values({
     kind,
     severity: "info",
