@@ -697,12 +697,11 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     .filter((c) => c.entry?.result === "buy")
     .map((c) => ({ symbol: c.coin.symbol, confidence: Number(c.entry?.confidence ?? 0) }));
 
+  // §24: Allocator は配分計算のみ。per-coin cap / min / portfolio cap は Clipper が一括適用
   const proposal = allocate({
     buySignals,
     availableCashJpy: projectedCashJpy,
-    maxAllocationRatio: 1.0,
-    perCoinMaxRatio: PER_COIN_MAX_RATIO,
-    perCoinMinJpy: PER_COIN_MIN_JPY,
+    maxAllocationRatio: TOTAL_MAX_RATIO,
     method,
   });
 
