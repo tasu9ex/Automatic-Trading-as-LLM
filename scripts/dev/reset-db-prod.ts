@@ -1,13 +1,16 @@
 /**
  * 本番 DB を fresh state に戻す。
  *
- *   pnpm db:prod:reset
+ *   pnpm db:prod:reset                        # 対話モード
+ *   pnpm db:prod:reset -- --confirm RESET_PRODUCTION  # 非対話 (CI / Claude Code)
  *
  * 破壊的: cycles / positions / trades / market_snapshots など **全データ消失**。
  *
  * 安全ガード:
  *   1. DATABASE_URL が localhost 系だと逆に拒否 (これは本番用)
- *   2. 確認用に "RESET PRODUCTION" の手打ち入力を要求
+ *   2. 確認:
+ *      - 対話 TTY: "RESET PRODUCTION" の手打ち入力を要求
+ *      - 非対話: --confirm RESET_PRODUCTION フラグが必須 (なければ abort)
  *   3. drop 前に現在の cycles / positions / portfolios 件数を表示
  *
  * リセット内容:
@@ -21,6 +24,24 @@ import { stdin, stdout } from "node:process";
 import readline from "node:readline/promises";
 import { db } from "@/db/client";
 import { sql } from "drizzle-orm";
+
+const REQUIRED_CONFIRM = "RESET_PRODUCTION";
+
+function parseConfirmFlag(argv: string[]): string | null {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--confirm") return argv[i + 1] ?? null;
+  }
+  return null;
+}
+
+async function readConfirmInteractive(): Promise<string> {
+  console.log("⚠️ 上記データは全て消えます。続行するには 'RESET PRODUCTION' と入力:");
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  const answer = await rl.question("> ");
+  rl.close();
+  // 対話モードは "RESET PRODUCTION" (スペース区切り) を許容、コードでは underscore に正規化
+  return answer.trim().replace(/\s+/g, "_");
+}
 
 async function main() {
   const url = process.env.DATABASE_URL ?? "";
@@ -55,14 +76,25 @@ async function main() {
     console.log("(現状取得失敗、schema が既に空かもしれません)", err);
   }
   console.log("");
-  console.log("⚠️ 上記データは全て消えます。続行するには 'RESET PRODUCTION' と入力:");
 
-  const rl = readline.createInterface({ input: stdin, output: stdout });
-  const answer = await rl.question("> ");
-  rl.close();
+  // 確認: --confirm フラグ優先 / なければ対話 TTY / それも無理なら abort
+  const flagToken = parseConfirmFlag(process.argv.slice(2));
+  let token: string;
+  if (flagToken !== null) {
+    token = flagToken;
+    console.log(`(--confirm フラグ受信: ${flagToken})`);
+  } else if (stdin.isTTY) {
+    token = await readConfirmInteractive();
+  } else {
+    console.error(
+      "非対話モードで --confirm フラグが指定されていません。abort します。\n" +
+        "  pnpm db:prod:reset -- --confirm RESET_PRODUCTION",
+    );
+    process.exit(1);
+  }
 
-  if (answer.trim() !== "RESET PRODUCTION") {
-    console.error("確認文字列が一致しません。中断します。");
+  if (token !== REQUIRED_CONFIRM) {
+    console.error(`確認文字列が一致しません (期待: ${REQUIRED_CONFIRM})。中断します。`);
     process.exit(1);
   }
 
