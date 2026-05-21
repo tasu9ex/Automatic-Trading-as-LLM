@@ -108,7 +108,38 @@ export async function startSystem(): Promise<SystemState> {
 
 /** stopped / paused → running（次スロットから判定再開） */
 export async function resumeSystem(): Promise<SystemState> {
+  // BB-2: 再開時に emergencyStop フラグも下ろす (緊急停止解除と通常 pause 解除を同じ動線に集約)。
+  // startSystem が paused → running の更新を行う前に flag を倒しておけば、
+  // 起動後の最初のサイクル冒頭で phase ガードに引っかからない。
+  await db
+    .update(systemState)
+    .set({ emergencyStop: false, updatedAt: new Date() })
+    .where(eq(systemState.id, SINGLETON_ID));
   return startSystem();
+}
+
+/**
+ * BB-2: 緊急停止。emergencyStop=true + state=paused に倒す。
+ * - 進行中サイクルは次の phase 冒頭で `EmergencyStopError` を throw して abort
+ * - state=paused にすることで次サイクル :00 cron も skip される
+ * - 解除は resumeSystem (= 再開ボタン) で flag を下ろす
+ */
+export async function emergencyStop(): Promise<SystemState> {
+  const [updated] = await db
+    .update(systemState)
+    .set({ emergencyStop: true, state: "paused", updatedAt: new Date() })
+    .where(eq(systemState.id, SINGLETON_ID))
+    .returning();
+  if (!updated) throw new Error("system_state not found");
+
+  await db.insert(systemEvents).values({
+    kind: "system_paused",
+    severity: "warning",
+    message: "Emergency stop from dashboard",
+    payload: { source: "dashboard", emergencyStop: true },
+  });
+
+  return updated;
 }
 
 export async function setCycleIntervalHours(hours: CycleIntervalHours): Promise<SystemState> {

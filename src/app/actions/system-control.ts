@@ -5,12 +5,14 @@ import { systemState } from "@/db/schema";
 import { DASHBOARD_CACHE_TAG } from "@/lib/cycle/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
+  emergencyStop,
   pauseSystem,
   resumeSystem,
   setCycleIntervalHours,
   startSystem,
 } from "@/lib/system-control";
 import { type CycleIntervalHours, isCycleIntervalHours } from "@/lib/system-control/constants";
+import * as Sentry from "@sentry/nextjs";
 import { eq } from "drizzle-orm";
 import { revalidatePath, updateTag } from "next/cache";
 
@@ -37,6 +39,8 @@ function withResult(fn: () => Promise<unknown>): Promise<SystemControlActionResu
     })
     .catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
+      // P (Sentry): CLAUDE.md の運用方針 (本番エラーは Sentry で追う) に合わせて捕捉
+      Sentry.captureException(err, { tags: { source: "server-action", group: "system-control" } });
       // 個人ツールなので server console にも全文出す (Vercel logs で確認用)
       console.error("[system-control action error]", err);
       return { ok: false as const, error: message };
@@ -47,6 +51,14 @@ export async function pauseSystemAction(): Promise<SystemControlActionResult> {
   return withResult(async () => {
     await requireUser();
     await pauseSystem();
+  });
+}
+
+/** BB-2: 緊急停止 (進行中サイクルを次 phase 境界で abort + 次サイクル停止) */
+export async function emergencyStopAction(): Promise<SystemControlActionResult> {
+  return withResult(async () => {
+    await requireUser();
+    await emergencyStop();
   });
 }
 

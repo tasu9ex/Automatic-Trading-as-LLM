@@ -1,0 +1,1 @@
+ALTER TABLE "system_state" ADD COLUMN "emergency_stop" boolean DEFAULT false NOT NULL;

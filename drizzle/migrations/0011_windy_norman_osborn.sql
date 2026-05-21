@@ -1,0 +1,1 @@
+ALTER TYPE "public"."system_event_kind" ADD VALUE 'cycle_emergency_stopped' BEFORE 'human_intervention';

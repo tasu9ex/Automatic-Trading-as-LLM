@@ -36,6 +36,7 @@ import {
 import { type SizingMethod, allocate } from "@/lib/allocator";
 import { getExchangeStatus } from "@/lib/clients/gmo";
 import { runCritic } from "@/lib/critic";
+import { assertNotEmergencyStop } from "@/lib/cycle/emergency-stop";
 import { withRetry } from "@/lib/cycle/retry";
 import { buildSystemHealth } from "@/lib/cycle/system-health";
 import { runEntryDecision } from "@/lib/decision/entry";
@@ -73,6 +74,7 @@ export interface PreflightResult {
 
 /** Phase 1: 事前チェック + price-monitor 実行 + state 更新の準備 */
 export async function preflight(input: PreflightInput): Promise<PreflightResult> {
+  await assertNotEmergencyStop("preflight");
   try {
     const exchangeStatus = await getExchangeStatus();
     if (exchangeStatus !== "OPEN") {
@@ -96,21 +98,12 @@ export async function preflight(input: PreflightInput): Promise<PreflightResult>
     return { proceed: false, skipped: "not_running" };
   }
 
-  // Price-monitor: 前回サイクル以降の 1m バー全部を見て逆指値判定。
+  // JJ: price-monitor 必須化 (ALL-or-NOTHING)。逆指値判定が落ちた状態で売買を進めると、
+  // SL 監視抜きで Entry/Exit が動く非対称になる。0.1 の Critic 必須化と思想を揃えて
+  // ここの try/catch を撤廃。失敗は上位 runPhase の catch → recordCycleFailure 経由で
+  // 通常の failure path に乗せる (consecutiveFailures++ + Discord 通知)。
   const priceMonitorSince = state.lastCycleAt ?? new Date(Date.now() - 60 * 60_000);
-  try {
-    await runPriceMonitor({ since: priceMonitorSince });
-  } catch (err) {
-    logger.error({ err }, "Price monitor failed (continuing cycle)");
-    await notify({
-      level: "error",
-      title: "🚨 Price monitor 失敗 (サイクル継続)",
-      body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
-      fields: {
-        影響: "逆指値判定がスキップされた、ポジションは LLM Exit のみで判断",
-      },
-    });
-  }
+  await runPriceMonitor({ since: priceMonitorSince });
 
   const portfolio = (
     await db.select().from(portfolios).where(eq(portfolios.strategyId, input.strategyId)).limit(1)
@@ -187,6 +180,7 @@ export async function tier0Snapshots(
   periodHours: number,
   cycleIntervalHours: number,
 ): Promise<void> {
+  await assertNotEmergencyStop("tier0-snapshots");
   const enabledCoins = await getCycleCoins(cycleId);
 
   await Promise.all(
@@ -274,6 +268,7 @@ async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: st
 
 /** Phase 3: Tier 1 Pre-Analyst (ALL-or-NOTHING) */
 export async function tier1PreAnalyst(cycleId: string): Promise<void> {
+  await assertNotEmergencyStop("tier1-pre-analyst");
   const enabledCoins = await getCycleCoins(cycleId);
 
   await Promise.all(
@@ -323,6 +318,7 @@ export async function tier1PreAnalyst(cycleId: string): Promise<void> {
  * - 保有銘柄  : skip_flag に関わらず Analyst 実行 (Tier 3 Exit に渡すため必須)
  */
 export async function tier2Analyst(cycleId: string, strategyId: string): Promise<void> {
+  await assertNotEmergencyStop("tier2-analyst");
   const enabledCoins = await getCycleCoins(cycleId);
 
   await Promise.all(
@@ -409,6 +405,7 @@ export async function tier2Analyst(cycleId: string, strategyId: string): Promise
 
 /** Phase 5: Tier 3 Entry/Exit Decision (ALL-or-NOTHING) */
 export async function tier3Decisions(cycleId: string, strategyId: string): Promise<void> {
+  await assertNotEmergencyStop("tier3-decisions");
   const enabledCoins = await getCycleCoins(cycleId);
 
   await Promise.all(
@@ -584,6 +581,7 @@ interface FinalizeInput {
 
 /** Phase 6: Exit 実行 → Critic → Risk Clipper → Entry 実行 → state 更新 → kill switch */
 export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
+  await assertNotEmergencyStop("finalize");
   const { cycleId, strategyId, method, startedAt } = input;
   const enabledCoins = await getCycleCoins(cycleId);
   // §17: リスクパラメータを DB から取得 (UI から動的に変更される)
@@ -713,13 +711,19 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       },
     ]),
   );
-  const currentPositions = ctxs
-    .filter((c) => c.openPos)
-    .map((c) => ({
-      symbol: c.coin.symbol,
-      qty: Number(c.openPos?.quantity ?? 0),
-      avgPrice: Number(c.openPos?.avgEntryPrice ?? 0),
-    }));
+  // LL: Critic に渡す保有状況は DB から直接再 fetch する。ctxs は finalize 冒頭 (preflight の
+  // runPriceMonitor 後) でビルド済なので暗黙には fresh だが、不変条件を明示的にローカル化して
+  // 「Critic 直前に再 fetch されている」契約をコードで保証する。
+  const refreshedOpenPositions = await db
+    .select({ position: positions, coin: coins })
+    .from(positions)
+    .innerJoin(coins, eq(positions.coinId, coins.id))
+    .where(and(eq(positions.strategyId, strategyId), eq(positions.status, "open")));
+  const currentPositions = refreshedOpenPositions.map(({ position, coin }) => ({
+    symbol: coin.symbol,
+    qty: Number(position.quantity),
+    avgPrice: Number(position.avgEntryPrice),
+  }));
   const symbolToName = Object.fromEntries(ctxs.map((c) => [c.coin.symbol, c.coin.name]));
 
   // §33: システム健全性スナップを Critic に渡す (データ不全銘柄を modify で弾けるように)

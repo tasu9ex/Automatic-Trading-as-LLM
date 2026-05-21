@@ -22,8 +22,23 @@ export type ErrorKind = "transient" | "permanent" | "quota";
  *   - quota:     残高切れ / billing 制限 / クレジット不足 → system pause 推奨
  *   - permanent: 401 / 403 / 400 / 422 / 404 / env 未設定 → コード/設定修正必須、retry 無意味
  *   - transient: 上記以外 (5xx / 429 / timeout / network / overloaded) → retry で回復見込み
+ *
+ * II: HTTP status は err の属性 (err.status / err.response.status) を最優先で見る。
+ * 文字列マッチは fallback。`\b400\b` の正規表現で `400000ms timeout` を 400 誤検出していた、
+ * LLM プロバイダのエラーフォーマット変更で全分類が壊れる、といった脆さを避ける。
  */
 export function classifyError(err: unknown): ErrorKind {
+  const status = extractHttpStatus(err);
+  if (status !== null) {
+    if (status === 402) return "quota";
+    if (status === 401 || status === 403 || status === 400 || status === 404 || status === 422) {
+      return "permanent";
+    }
+    // 5xx / 429 は transient。下の文字列マッチに任せず即 transient で返す
+    // (文字列に "401" を含む 5xx メッセージ等の誤判定回避)。
+    if (status >= 500 || status === 429) return "transient";
+  }
+
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
 
   // Quota / billing: 即 pause 推奨
@@ -55,6 +70,28 @@ export function classifyError(err: unknown): ErrorKind {
 
   // それ以外 (5xx, 429, timeout, ECONNRESET, overloaded, rate_limit_exceeded) は transient
   return "transient";
+}
+
+/**
+ * err の属性から HTTP status を取り出す。SDK ごとに位置が違うのを吸収:
+ *   - Anthropic SDK / OpenAI SDK: err.status
+ *   - fetch wrapper / axios: err.response?.status
+ *   - 自作 wrapper: err.statusCode
+ * 数字でない / 範囲外 (< 100 || >= 600) は null。
+ */
+function extractHttpStatus(err: unknown): number | null {
+  if (typeof err !== "object" || err === null) return null;
+  const candidates: unknown[] = [
+    (err as { status?: unknown }).status,
+    (err as { statusCode?: unknown }).statusCode,
+    (err as { response?: { status?: unknown } }).response?.status,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "number" && Number.isFinite(c) && c >= 100 && c < 600) {
+      return c;
+    }
+  }
+  return null;
 }
 
 export interface RetryOptions {

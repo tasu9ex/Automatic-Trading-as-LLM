@@ -19,6 +19,7 @@
 import { randomUUID } from "node:crypto";
 import type { SizingMethod } from "@/lib/allocator";
 import { notifyCycleCost } from "@/lib/cycle/cost-notify";
+import { isEmergencyStopError, recordEmergencyStop } from "@/lib/cycle/emergency-stop";
 import {
   finalize,
   preflight,
@@ -118,6 +119,13 @@ export const judgmentCron = inngest.createFunction(
         try {
           await step.run(name, () => withSession(cycleId, fn));
         } catch (err) {
+          if (isEmergencyStopError(err)) {
+            // BB-2: 緊急停止は recordCycleFailure 経路ではなく専用 event を記録
+            await step.run(`${name}-record-emergency-stop`, () =>
+              recordEmergencyStop({ cycleId, strategyId, phase: name }),
+            );
+            throw err;
+          }
           await step.run(`${name}-record-failure`, () =>
             recordCycleFailure({ cycleId, strategyId, phase: name, err }),
           );
@@ -139,6 +147,12 @@ export const judgmentCron = inngest.createFunction(
           withSession(cycleId, () => finalize({ cycleId, strategyId, method, startedAt })),
         );
       } catch (err) {
+        if (isEmergencyStopError(err)) {
+          await step.run("finalize-record-emergency-stop", () =>
+            recordEmergencyStop({ cycleId, strategyId, phase: "finalize" }),
+          );
+          throw err;
+        }
         await step.run("finalize-record-failure", () =>
           recordCycleFailure({ cycleId, strategyId, phase: "finalize", err }),
         );

@@ -42,6 +42,8 @@ const STRATEGY_ID = "trial-5";
 export interface DashboardStats {
   state: string | undefined;
   killReason: string | null;
+  /** BB-2: 緊急停止フラグ */
+  emergencyStop: boolean;
   cycleIntervalHours: CycleIntervalHours;
   nextScheduledAt: Date | null;
   lastCycleAt: Date | null;
@@ -120,6 +122,7 @@ export async function getDashboardStatsImpl(): Promise<DashboardStats> {
   return {
     state: state?.state,
     killReason: state?.killReason ?? null,
+    emergencyStop: state?.emergencyStop ?? false,
     cycleIntervalHours,
     nextScheduledAt: state?.nextScheduledAt ?? null,
     lastCycleAt: state?.lastCycleAt ?? null,
@@ -145,51 +148,85 @@ export interface OpenPositionRow {
   openedAt: Date;
 }
 
-const _cachedOpenPositions = unstable_cache(
-  () => getOpenPositionsImpl(),
-  ["dashboard.open-positions"],
+const _cachedOpenPositionsRaw = unstable_cache(
+  () => getOpenPositionsRawImpl(),
+  ["dashboard.open-positions-raw"],
   { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
 );
 
-export async function getOpenPositions(): Promise<OpenPositionRow[]> {
-  const rows = await _cachedOpenPositions();
-  return rows.map((r) => ({ ...r, openedAt: reviveDate(r.openedAt) ?? new Date(0) }));
+interface RawOpenPositionRow {
+  positionId: string;
+  symbol: string;
+  quantity: number;
+  avgEntryPrice: number;
+  openedAt: Date;
 }
 
-export async function getOpenPositionsImpl(): Promise<OpenPositionRow[]> {
+/** P-1: ticker fetch を含まない DB-only 版。GMO レイテンシで dashboard 全体がブロックされるのを防ぐ */
+export async function getOpenPositionsRawImpl(): Promise<RawOpenPositionRow[]> {
   const rows = await db
     .select({ position: positions, coin: coins })
     .from(positions)
     .innerJoin(coins, eq(positions.coinId, coins.id))
     .where(and(eq(positions.strategyId, STRATEGY_ID), eq(positions.status, "open")))
     .orderBy(desc(positions.openedAt));
+  return rows.map((r) => ({
+    positionId: r.position.id,
+    symbol: r.coin.symbol,
+    quantity: Number(r.position.quantity),
+    avgEntryPrice: Number(r.position.avgEntryPrice),
+    openedAt: r.position.openedAt,
+  }));
+}
 
-  if (rows.length === 0) return [];
+export interface TickerSnapshot {
+  /** symbol → last 価格。fetch 失敗時は空 */
+  priceBySymbol: Record<string, number>;
+  /** F: false なら dashboard でバナー表示 (含み損益が avg ベースで表示されている旨) */
+  ok: boolean;
+  fetchedAt: Date | string;
+}
 
-  // 全銘柄ティッカー一括取得 (GMO API 1 コール、N 銘柄分)
-  let priceMap = new Map<string, number>();
+const _cachedTickerSnapshot = unstable_cache(
+  () => getTickerSnapshotImpl(),
+  ["dashboard.ticker-snapshot"],
+  // ticker は短い TTL で独立リフレッシュ。失敗時も同じ TTL でキャッシュされ過剰リトライを防ぐ。
+  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+);
+
+export async function getTickerSnapshot(): Promise<TickerSnapshot> {
+  const snap = await _cachedTickerSnapshot();
+  return { ...snap, fetchedAt: reviveDate(snap.fetchedAt) ?? new Date(0) };
+}
+
+async function getTickerSnapshotImpl(): Promise<TickerSnapshot> {
   try {
     const tickers = await getTicker();
-    priceMap = new Map(tickers.map((t) => [t.symbol, Number(t.last)]));
+    const priceBySymbol: Record<string, number> = {};
+    for (const t of tickers) {
+      priceBySymbol[t.symbol] = Number(t.last);
+    }
+    return { priceBySymbol, ok: true, fetchedAt: new Date() };
   } catch (err) {
-    logger.warn({ err }, "Ticker fetch failed in getOpenPositions, falling back to avg price");
+    logger.warn({ err }, "Ticker fetch failed, dashboard shows avg-price fallback");
+    return { priceBySymbol: {}, ok: false, fetchedAt: new Date() };
   }
+}
 
-  return rows.map((r) => {
-    const qty = Number(r.position.quantity);
-    const avg = Number(r.position.avgEntryPrice);
-    const current = priceMap.get(r.coin.symbol) ?? avg; // fallback: 建値で評価
-    const marketValueJpy = qty * current;
-    const unrealizedPnlJpy = (current - avg) * qty;
+export async function getOpenPositions(): Promise<OpenPositionRow[]> {
+  // P-1: ticker は別キャッシュで並列 fetch。GMO 失敗でも DB 部分は影響を受けない。
+  const [rawRows, ticker] = await Promise.all([_cachedOpenPositionsRaw(), getTickerSnapshot()]);
+  return rawRows.map((r) => {
+    const current = ticker.priceBySymbol[r.symbol] ?? r.avgEntryPrice;
     return {
-      positionId: r.position.id,
-      symbol: r.coin.symbol,
-      quantity: qty,
-      avgEntryPrice: avg,
+      positionId: r.positionId,
+      symbol: r.symbol,
+      quantity: r.quantity,
+      avgEntryPrice: r.avgEntryPrice,
       currentPrice: current,
-      marketValueJpy,
-      unrealizedPnlJpy,
-      openedAt: r.position.openedAt,
+      marketValueJpy: r.quantity * current,
+      unrealizedPnlJpy: (current - r.avgEntryPrice) * r.quantity,
+      openedAt: reviveDate(r.openedAt) ?? new Date(0),
     };
   });
 }
@@ -288,7 +325,38 @@ export interface CycleDetail {
   }>;
 }
 
+/**
+ * P-2: 完了 cycle は immutable なので `unstable_cache` でラップして毎回フル実行を避ける。
+ * cycleId をキーに含めて per-cycle キャッシュ。in_flight cycle も同じ TTL でキャッシュされるが、
+ * dashboard tag invalidation でサイクル完了時に無効化される。
+ */
+const _cachedCycleDetail = unstable_cache(
+  (cycleId: string) => getCycleDetailImpl(cycleId),
+  ["dashboard.cycle-detail"],
+  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+);
+
 export async function getCycleDetail(cycleId: string): Promise<CycleDetail | null> {
+  const cached = await _cachedCycleDetail(cycleId);
+  if (!cached) return null;
+  // unstable_cache 越しに Date が文字列化されるので revive
+  return {
+    ...cached,
+    startedAt: reviveDate(cached.startedAt) ?? new Date(0),
+    completedAt: reviveDate(cached.completedAt),
+    critic: cached.critic
+      ? { ...cached.critic, createdAt: reviveDate(cached.critic.createdAt) ?? new Date(0) }
+      : null,
+    coins: cached.coins.map((c) => ({
+      ...c,
+      snapshot: c.snapshot
+        ? { ...c.snapshot, fetchedAt: reviveDate(c.snapshot.fetchedAt) ?? new Date(0) }
+        : null,
+    })),
+  };
+}
+
+async function getCycleDetailImpl(cycleId: string): Promise<CycleDetail | null> {
   // cycles テーブル起点 (失敗 cycle も含めて全部出る)
   const cycle = (await db.select().from(cycles).where(eq(cycles.id, cycleId)).limit(1))[0];
   if (!cycle) return null; // 不正な id のみ 404

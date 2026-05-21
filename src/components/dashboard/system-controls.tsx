@@ -2,6 +2,7 @@
 
 import {
   type SystemControlActionResult,
+  emergencyStopAction,
   pauseSystemAction,
   resumeSystemAction,
   setCycleIntervalAction,
@@ -23,6 +24,8 @@ export interface SystemControlsProps {
   killReason: string | null;
   cycleIntervalHours: CycleIntervalHours;
   nextScheduledAt: string | null;
+  /** BB-2: 緊急停止フラグが立っているか (UI バッジ + 再開ボタン文言) */
+  emergencyStop: boolean;
 }
 
 const STATE_LABELS: Record<string, string> = {
@@ -43,6 +46,7 @@ export function SystemControls({
   killReason,
   cycleIntervalHours,
   nextScheduledAt,
+  emergencyStop,
 }: SystemControlsProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -165,6 +169,25 @@ export function SystemControls({
             >
               一時停止
             </Button>
+          )}
+          {(isRunning || isPaused) && !emergencyStop && (
+            <Button
+              variant="destructive"
+              disabled={pending || isKilled}
+              onClick={() =>
+                runAction(
+                  "🛑 緊急停止 (進行中のサイクルを即座に中断、次サイクルも停止) を実行",
+                  emergencyStopAction,
+                )
+              }
+            >
+              緊急停止
+            </Button>
+          )}
+          {emergencyStop && (
+            <p className="text-amber-600 text-sm dark:text-amber-400">
+              緊急停止中 (再開ボタンで解除)
+            </p>
           )}
           {isKilled && (
             <p className="text-muted-foreground text-sm">

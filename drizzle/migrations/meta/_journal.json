@@ -71,6 +71,20 @@
       "when": 1779324025715,
       "tag": "0009_bumpy_kitty_pryde",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1779333838594,
+      "tag": "0010_bizarre_prima",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1779333880930,
+      "tag": "0011_windy_norman_osborn",
+      "breakpoints": true
     }
   ]
 }

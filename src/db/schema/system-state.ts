@@ -1,7 +1,16 @@
 import { SYSTEM_STATES } from "@/lib/constants/enums";
 import { DEFAULT_CYCLE_INTERVAL_HOURS } from "@/lib/system-control/constants";
 import { sql } from "drizzle-orm";
-import { integer, numeric, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  integer,
+  numeric,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 export const systemStateEnum = pgEnum("system_state_value", SYSTEM_STATES);
 
@@ -46,6 +55,12 @@ export const systemState = pgTable("system_state", {
     .default("0.500"),
   /** 連続失敗カウンタがこの値に達したら auto-pause */
   autoPauseThreshold: integer("auto_pause_threshold").notNull().default(3),
+  /**
+   * BB-2: 緊急停止フラグ。各 phase 冒頭で読まれて、true なら phase 内で `EmergencyStopError` を throw → サイクル中断。
+   * 通常 pause (現サイクル走り切り + 次サイクル停止) と異なり、サイクル進行中でも即時止める。
+   * 解除は「再開」ボタンで false に戻す (state=paused → running の通常フローと同じ動線)。
+   */
+  emergencyStop: boolean("emergency_stop").notNull().default(false),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
 });
 

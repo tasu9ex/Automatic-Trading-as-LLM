@@ -8,7 +8,7 @@
 // CLI からは unstable_cache を経由しない (Next.js runtime 不在で invariant エラーになる)
 import {
   getDashboardStatsImpl as getDashboardStats,
-  getOpenPositionsImpl as getOpenPositions,
+  getOpenPositionsRawImpl as getOpenPositions,
   getRecentCyclesImpl as getRecentCycles,
 } from "@/lib/cycle/queries";
 

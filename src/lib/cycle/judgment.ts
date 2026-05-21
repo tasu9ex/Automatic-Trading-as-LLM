@@ -17,6 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { SizingMethod } from "@/lib/allocator";
+import { isEmergencyStopError, recordEmergencyStop } from "@/lib/cycle/emergency-stop";
 import {
   type FinalizeResult,
   finalize,
@@ -88,6 +89,12 @@ async function runJudgmentCycleInner(
     try {
       return await fn();
     } catch (err) {
+      if (isEmergencyStopError(err)) {
+        // BB-2: 緊急停止は recordCycleFailure 経路に乗せない (人手 stop は失敗ではない)。
+        // 専用 event 記録 + cycle.completedAt 埋め + Discord 通知。consecutiveFailures は変更しない。
+        await recordEmergencyStop({ cycleId, strategyId, phase: name });
+        throw err;
+      }
       await recordCycleFailure({ cycleId, strategyId, phase: name, err });
       throw err;
     }
@@ -105,7 +112,7 @@ async function runJudgmentCycleInner(
     );
     return result;
   } catch {
-    // recordCycleFailure 内で通知 + state 更新済み。ここでは aborted を返すのみ
+    // recordCycleFailure / recordEmergencyStop 内で通知 + state 更新済み。ここでは aborted を返すのみ
     return {
       cycleId,
       skipped: "aborted",

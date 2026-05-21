@@ -71,10 +71,13 @@ export async function checkAndTriggerKillSwitch(
   const priceByCoinId = new Map<string, number>(resolved.map((r, i) => [open[i].coin.id, r.price]));
   const totalValue = Number(portfolio.cashJpy) + marketValue;
   const initial = Number(portfolio.initialCashJpy);
-  const ddRatio = (initial - totalValue) / initial;
+  // MM: initial=0 だと NaN になり ddRatio >= threshold が常に false になる → kill switch が動かない。
+  //     初期資本未設定 (シード前) の場合は DD トリガを評価しない (連続失敗 auto-pause は別系統で機能する)。
+  const ddRatio = initial > 0 ? (initial - totalValue) / initial : 0;
+  const ddEvaluable = initial > 0;
 
   const failureTriggered = state && state.consecutiveFailures >= riskParams.autoPauseThreshold;
-  const ddTriggered = ddRatio >= riskParams.portfolioDdTrigger;
+  const ddTriggered = ddEvaluable && ddRatio >= riskParams.portfolioDdTrigger;
 
   if (ddTriggered) {
     const reason = `portfolio DD ${(ddRatio * 100).toFixed(1)}%`;
@@ -238,12 +241,15 @@ async function triggerAutoPauseDueToFailures(input: { strategyId: string; failur
 
   logger.warn({ strategyId, failures }, "Auto-pause due to consecutive failures");
 
+  // KK: lastFailureKind も同時にリセット。残しておくと、再開後に異種エラーが来ても
+  //     「同 kind 継続」と誤判定して 1 サイクル目から auto-pause へ駆け上がる。
   await db
     .insert(systemState)
     .values({
       id: "singleton",
       state: "paused",
       consecutiveFailures: 0,
+      lastFailureKind: null,
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
@@ -251,6 +257,7 @@ async function triggerAutoPauseDueToFailures(input: { strategyId: string; failur
       set: {
         state: "paused",
         consecutiveFailures: 0,
+        lastFailureKind: null,
         updatedAt: new Date(),
       },
     });

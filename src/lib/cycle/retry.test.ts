@@ -39,6 +39,41 @@ describe("classifyError", () => {
   it("non-Error values gracefully", () => {
     expect(classifyError("Unknown")).toBe("transient");
     expect(classifyError(null)).toBe("transient");
-    expect(classifyError({ message: "401 unauthorized" })).toBe("transient"); // not Error instance
+  });
+
+  // II: HTTP status を err 属性から拾う (文字列マッチ依存からの脱却)
+  describe("status code based (II)", () => {
+    it("err.status を最優先で見る (Anthropic / OpenAI SDK パターン)", () => {
+      expect(classifyError({ status: 401, message: "auth" })).toBe("permanent");
+      expect(classifyError({ status: 403, message: "auth" })).toBe("permanent");
+      expect(classifyError({ status: 400, message: "bad" })).toBe("permanent");
+      expect(classifyError({ status: 404 })).toBe("permanent");
+      expect(classifyError({ status: 422 })).toBe("permanent");
+      expect(classifyError({ status: 402 })).toBe("quota");
+      expect(classifyError({ status: 429 })).toBe("transient");
+      expect(classifyError({ status: 500 })).toBe("transient");
+      expect(classifyError({ status: 503, message: "overloaded" })).toBe("transient");
+    });
+
+    it("err.response.status (axios / fetch wrapper パターン)", () => {
+      expect(classifyError({ response: { status: 401 } })).toBe("permanent");
+      expect(classifyError({ response: { status: 503 } })).toBe("transient");
+    });
+
+    it("err.statusCode (自作 wrapper パターン)", () => {
+      expect(classifyError({ statusCode: 400 })).toBe("permanent");
+      expect(classifyError({ statusCode: 500 })).toBe("transient");
+    });
+
+    it("status 属性があるとき文字列ベースの誤検出を避ける", () => {
+      // 文字列に "400000ms timeout" が出ても status=503 が優先されて transient
+      const err = Object.assign(new Error("timeout after 400000ms"), { status: 503 });
+      expect(classifyError(err)).toBe("transient");
+    });
+
+    it("status が無いとき従来の文字列フォールバックが動く", () => {
+      expect(classifyError(new Error("Anthropic 503: overloaded_error"))).toBe("transient");
+      expect(classifyError(new Error("Grok 400: invalid_request_error"))).toBe("permanent");
+    });
   });
 });

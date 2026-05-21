@@ -1,13 +1,16 @@
+import { signOutAction } from "@/app/actions/auth";
 import { CoinChecklist } from "@/components/dashboard/coin-checklist";
 import { RiskParams } from "@/components/dashboard/risk-params";
 import { SystemControls } from "@/components/dashboard/system-controls";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getCoinChecklist,
   getDashboardStats,
   getOpenPositions,
   getRecentCycles,
+  getTickerSnapshot,
   isCycleInFlight,
 } from "@/lib/cycle/queries";
 import { formatJstDate, formatJstDateTime } from "@/lib/format/datetime";
@@ -27,13 +30,15 @@ export default async function Home() {
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const [stats, openPositions, recentCycles, coinChecklist, cycleInFlight] = await Promise.all([
-    getDashboardStats(),
-    getOpenPositions(),
-    getRecentCycles(20),
-    getCoinChecklist(),
-    isCycleInFlight(),
-  ]);
+  const [stats, openPositions, recentCycles, coinChecklist, cycleInFlight, ticker] =
+    await Promise.all([
+      getDashboardStats(),
+      getOpenPositions(),
+      getRecentCycles(20),
+      getCoinChecklist(),
+      isCycleInFlight(),
+      getTickerSnapshot(),
+    ]);
 
   // 時価評価: 現金 + 全 open position の (現在価格 × qty) - 元本
   // realized は cash に既に反映済みなので加算しない (二重計上回避)
@@ -47,14 +52,26 @@ export default async function Home() {
     <main className="container mx-auto flex min-h-screen max-w-5xl flex-col gap-6 p-6">
       <header className="flex items-center justify-between">
         <h1 className="font-bold text-2xl">LLM Trading</h1>
-        <span className="text-muted-foreground text-sm">ログイン中</span>
+        <form action={signOutAction}>
+          <Button type="submit" variant="ghost" size="sm">
+            ログアウト
+          </Button>
+        </form>
       </header>
+
+      {!ticker.ok && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-amber-700 text-sm dark:text-amber-300">
+          <strong className="font-semibold">⚠ GMO ティッカー取得失敗</strong>{" "}
+          含み損益は建値ベースで表示しています (実際の含み損益と乖離している可能性あり)。
+        </div>
+      )}
 
       <SystemControls
         state={stats.state ?? "stopped"}
         killReason={stats.killReason}
         cycleIntervalHours={stats.cycleIntervalHours}
         nextScheduledAt={stats.nextScheduledAt?.toISOString() ?? null}
+        emergencyStop={stats.emergencyStop}
       />
 
       <CoinChecklist coins={coinChecklist} cycleInFlight={cycleInFlight} />
