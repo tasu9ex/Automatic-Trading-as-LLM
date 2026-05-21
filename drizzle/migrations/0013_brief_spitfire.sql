@@ -1,0 +1,1 @@
+ALTER TABLE "coins" ALTER COLUMN "enabled" SET DEFAULT false;
