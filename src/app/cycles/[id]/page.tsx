@@ -167,101 +167,127 @@ export default async function CycleDetailPage({ params }: PageProps) {
       )}
 
       {detail.coins.map((c) => (
-        <Card key={c.symbol}>
-          <CardHeader>
-            <CardTitle>{c.symbol}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm">
-            {c.snapshot && (
-              <details className="rounded border border-border">
-                <summary className="cursor-pointer select-none px-3 py-2 text-muted-foreground text-xs uppercase tracking-wide hover:bg-muted/30">
-                  <span className="inline-flex items-center gap-2">
-                    Tier 0 (情報収集)
-                    <Badge variant="default">実行</Badge>
-                  </span>
-                </summary>
-                <div className="space-y-3 border-border border-t p-3 text-xs">
-                  <div>
-                    <div className="mb-1 font-semibold">Perplexity (ニュース・規制・マクロ)</div>
-                    <p className="whitespace-pre-wrap text-muted-foreground">
-                      {c.snapshot.perplexitySummary ?? "(取得失敗または未設定)"}
-                    </p>
-                    {c.snapshot.perplexityCitations.length > 0 && (
-                      <ul className="mt-2 space-y-1">
-                        {c.snapshot.perplexityCitations.map((url) => (
-                          <li key={url} className="truncate">
-                            <a
-                              href={url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-500 hover:underline"
-                            >
-                              {url}
-                            </a>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div>
-                    <div className="mb-1 font-semibold">Grok (X センチメント・KOL)</div>
-                    <p className="whitespace-pre-wrap text-muted-foreground">
-                      {c.snapshot.grokSummary ?? "(取得失敗または未設定)"}
-                    </p>
-                    {c.snapshot.grokCitations.length > 0 && (
-                      <ul className="mt-2 space-y-1">
-                        {c.snapshot.grokCitations.map((url) => (
-                          <li key={url} className="truncate">
-                            <a
-                              href={url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-500 hover:underline"
-                            >
-                              {url}
-                            </a>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div className="text-muted-foreground">
-                    取得時刻: {new Date(c.snapshot.fetchedAt).toLocaleString("ja-JP")}
-                  </div>
-                </div>
-              </details>
-            )}
+        <CoinCard key={c.symbol} c={c} />
+      ))}
+    </main>
+  );
+}
 
-            {c.preAnalyst && (
-              <section className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
-                    Pre-Analyst (スクリーニング)
-                  </h3>
+type CoinDetail = Awaited<ReturnType<typeof getCycleDetail>> extends { coins: infer A } | null
+  ? A extends Array<infer T>
+    ? T
+    : never
+  : never;
+
+function CoinCard({ c }: { c: CoinDetail }) {
+  return (
+    <Card className="overflow-hidden p-0">
+      <details className="group">
+        <summary className="flex cursor-pointer select-none items-center justify-between gap-3 px-6 py-4 hover:bg-muted/30">
+          <div className="flex items-center gap-3">
+            <span className="font-bold text-lg">{c.symbol}</span>
+            <span className="text-muted-foreground text-xs group-open:hidden">▶ 展開</span>
+            <span className="hidden text-muted-foreground text-xs group-open:inline">▼ 閉じる</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <DecisionBadge label="Entry" decision={c.entryDecision} fallback="スキップ" />
+            <DecisionBadge label="Exit" decision={c.exitDecision} fallback="対象外" />
+          </div>
+        </summary>
+        <div className="space-y-4 border-border border-t px-6 py-4 text-sm">
+          {c.snapshot && (
+            <details className="rounded border border-border">
+              <summary className="cursor-pointer select-none px-3 py-2 text-muted-foreground text-xs uppercase tracking-wide hover:bg-muted/30">
+                <span className="inline-flex items-center gap-2">
+                  Tier 0 (情報収集)
                   <Badge variant="default">実行</Badge>
-                  {c.preAnalyst.skipFlag && (
-                    <span className="text-muted-foreground text-xs">
-                      (skip_flag=true → 未保有銘柄は Tier 2 スキップ)
-                    </span>
+                </span>
+              </summary>
+              <div className="space-y-3 border-border border-t p-3 text-xs">
+                <div>
+                  <div className="mb-1 font-semibold">Perplexity (ニュース・規制・マクロ)</div>
+                  <p className="whitespace-pre-wrap text-muted-foreground">
+                    {c.snapshot.perplexitySummary ?? "(取得失敗または未設定)"}
+                  </p>
+                  {c.snapshot.perplexityCitations.length > 0 && (
+                    <ul className="mt-2 space-y-1">
+                      {c.snapshot.perplexityCitations.map((url) => (
+                        <li key={url} className="truncate">
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-500 hover:underline"
+                          >
+                            {url}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
                   )}
                 </div>
+                <div>
+                  <div className="mb-1 font-semibold">Grok (X センチメント・KOL)</div>
+                  <p className="whitespace-pre-wrap text-muted-foreground">
+                    {c.snapshot.grokSummary ?? "(取得失敗または未設定)"}
+                  </p>
+                  {c.snapshot.grokCitations.length > 0 && (
+                    <ul className="mt-2 space-y-1">
+                      {c.snapshot.grokCitations.map((url) => (
+                        <li key={url} className="truncate">
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-500 hover:underline"
+                          >
+                            {url}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="text-muted-foreground">
+                  取得時刻: {new Date(c.snapshot.fetchedAt).toLocaleString("ja-JP")}
+                </div>
+              </div>
+            </details>
+          )}
+
+          {c.preAnalyst && (
+            <details className="rounded border border-border">
+              <summary className="cursor-pointer select-none px-3 py-2 text-muted-foreground text-xs uppercase tracking-wide hover:bg-muted/30">
+                <span className="inline-flex items-center gap-2">
+                  Tier 1 (Pre-Analyst スクリーニング)
+                  <Badge variant="default">実行</Badge>
+                  {c.preAnalyst.skipFlag && (
+                    <span className="text-muted-foreground text-xs normal-case">
+                      skip_flag=true (未保有銘柄は Tier 2 省略)
+                    </span>
+                  )}
+                </span>
+              </summary>
+              <div className="space-y-1 border-border border-t p-3 text-xs">
                 <p>{c.preAnalyst.summary}</p>
                 {c.preAnalyst.reasoning && (
-                  <p className="whitespace-pre-wrap text-muted-foreground text-xs">
+                  <p className="whitespace-pre-wrap text-muted-foreground">
                     {c.preAnalyst.reasoning}
                   </p>
                 )}
-              </section>
-            )}
+              </div>
+            </details>
+          )}
 
-            {c.analyst ? (
-              <section className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
-                    Analyst (市場見解)
-                  </h3>
+          {c.analyst ? (
+            <details className="rounded border border-border">
+              <summary className="cursor-pointer select-none px-3 py-2 text-muted-foreground text-xs uppercase tracking-wide hover:bg-muted/30">
+                <span className="inline-flex items-center gap-2">
+                  Tier 2 (Analyst 市場見解)
                   <Badge variant="default">実行</Badge>
-                </div>
+                </span>
+              </summary>
+              <div className="space-y-2 border-border border-t p-3">
                 <div className="rounded border border-foreground/40 bg-muted/40 p-3 text-xs">
                   <div className="mb-1 font-semibold">統合見解</div>
                   <p className="whitespace-pre-wrap">{c.analyst.synthesis.reasoning}</p>
@@ -291,83 +317,104 @@ export default async function CycleDetailPage({ params }: PageProps) {
                     <p className="mt-1 whitespace-pre-wrap">{c.analyst.technical.notes}</p>
                   </div>
                 </div>
-              </section>
-            ) : c.preAnalyst ? (
-              <section className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
-                    Analyst (市場見解)
-                  </h3>
-                  <Badge variant="outline">スキップ</Badge>
-                </div>
-                <p className="text-muted-foreground text-xs">
-                  Pre-Analyst の skip_flag により省略 (保有なし + 関連度低)
-                </p>
-              </section>
-            ) : null}
-
-            <section className="space-y-2">
-              <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
-                Decision (売買判断)
-              </h3>
-              <div className="grid gap-3 md:grid-cols-2">
-                {c.entryDecision ? (
-                  <div className="rounded border border-border p-3">
-                    <div className="mb-1 flex items-center gap-2">
-                      <h4 className="font-semibold text-xs">Entry (新規)</h4>
-                      <Badge variant={decisionVariant(c.entryDecision.result)}>
-                        {jpDecision(c.entryDecision.result)}
-                      </Badge>
-                      <span className="text-muted-foreground text-xs">
-                        確信度 {c.entryDecision.confidence.toFixed(2)}
-                      </span>
-                    </div>
-                    {c.entryDecision.reasoning && (
-                      <p className="whitespace-pre-wrap text-xs">{c.entryDecision.reasoning}</p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="rounded border border-border border-dashed p-3">
-                    <div className="mb-1 flex items-center gap-2">
-                      <h4 className="font-semibold text-muted-foreground text-xs">Entry (新規)</h4>
-                      <Badge variant="outline">スキップ</Badge>
-                    </div>
-                    <p className="text-muted-foreground text-xs">
-                      {c.preAnalyst?.skipFlag
-                        ? "Pre-Analyst が skip_flag → Tier 2/3 省略"
-                        : "判定なし (Tier 2 失敗 or 未到達)"}
-                    </p>
-                  </div>
-                )}
-                {c.exitDecision ? (
-                  <div className="rounded border border-border p-3">
-                    <div className="mb-1 flex items-center gap-2">
-                      <h4 className="font-semibold text-xs">Exit (決済)</h4>
-                      <Badge variant={decisionVariant(c.exitDecision.result)}>
-                        {jpDecision(c.exitDecision.result)}
-                      </Badge>
-                      <span className="text-muted-foreground text-xs">
-                        確信度 {c.exitDecision.confidence.toFixed(2)}
-                      </span>
-                    </div>
-                    {c.exitDecision.reasoning && (
-                      <p className="whitespace-pre-wrap text-xs">{c.exitDecision.reasoning}</p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="rounded border border-border border-dashed p-3">
-                    <div className="mb-1 flex items-center gap-2">
-                      <h4 className="font-semibold text-muted-foreground text-xs">Exit (決済)</h4>
-                      <Badge variant="outline">スキップ</Badge>
-                    </div>
-                    <p className="text-muted-foreground text-xs">保有ポジションなし、判定対象外</p>
-                  </div>
-                )}
               </div>
-            </section>
-          </CardContent>
-        </Card>
-      ))}
-    </main>
+            </details>
+          ) : c.preAnalyst ? (
+            <div className="rounded border border-border px-3 py-2">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-wide">
+                <span className="font-semibold text-muted-foreground">Tier 2 (Analyst)</span>
+                <Badge variant="outline">スキップ</Badge>
+                <span className="text-muted-foreground normal-case">
+                  Pre-Analyst skip_flag により省略
+                </span>
+              </div>
+            </div>
+          ) : null}
+
+          <section className="space-y-2">
+            <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
+              Decision (売買判断)
+            </h3>
+            <div className="grid gap-3 md:grid-cols-2">
+              {c.entryDecision ? (
+                <div className="rounded border border-border p-3">
+                  <div className="mb-1 flex items-center gap-2">
+                    <h4 className="font-semibold text-xs">Entry (新規)</h4>
+                    <Badge variant={decisionVariant(c.entryDecision.result)}>
+                      {jpDecision(c.entryDecision.result)}
+                    </Badge>
+                    <span className="text-muted-foreground text-xs">
+                      確信度 {c.entryDecision.confidence.toFixed(2)}
+                    </span>
+                  </div>
+                  {c.entryDecision.reasoning && (
+                    <p className="whitespace-pre-wrap text-xs">{c.entryDecision.reasoning}</p>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded border border-border border-dashed p-3">
+                  <div className="mb-1 flex items-center gap-2">
+                    <h4 className="font-semibold text-muted-foreground text-xs">Entry (新規)</h4>
+                    <Badge variant="outline">スキップ</Badge>
+                  </div>
+                  <p className="text-muted-foreground text-xs">
+                    {c.preAnalyst?.skipFlag
+                      ? "Pre-Analyst が skip_flag → Tier 2/3 省略"
+                      : "判定なし (Tier 2 失敗 or 未到達)"}
+                  </p>
+                </div>
+              )}
+              {c.exitDecision ? (
+                <div className="rounded border border-border p-3">
+                  <div className="mb-1 flex items-center gap-2">
+                    <h4 className="font-semibold text-xs">Exit (決済)</h4>
+                    <Badge variant={decisionVariant(c.exitDecision.result)}>
+                      {jpDecision(c.exitDecision.result)}
+                    </Badge>
+                    <span className="text-muted-foreground text-xs">
+                      確信度 {c.exitDecision.confidence.toFixed(2)}
+                    </span>
+                  </div>
+                  {c.exitDecision.reasoning && (
+                    <p className="whitespace-pre-wrap text-xs">{c.exitDecision.reasoning}</p>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded border border-border border-dashed p-3">
+                  <div className="mb-1 flex items-center gap-2">
+                    <h4 className="font-semibold text-muted-foreground text-xs">Exit (決済)</h4>
+                    <Badge variant="outline">スキップ</Badge>
+                  </div>
+                  <p className="text-muted-foreground text-xs">保有ポジションなし、判定対象外</p>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      </details>
+    </Card>
+  );
+}
+
+function DecisionBadge({
+  label,
+  decision,
+  fallback,
+}: {
+  label: string;
+  decision: { result: string } | null;
+  fallback: string;
+}) {
+  if (decision) {
+    return (
+      <Badge variant={decisionVariant(decision.result)} className="text-xs">
+        {label}: {jpDecision(decision.result)}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-xs">
+      {label}: {fallback}
+    </Badge>
   );
 }
