@@ -66,18 +66,18 @@ export async function checkAndTriggerKillSwitch(
       );
     }
     if (lastPrice <= 0) {
+      // §21 で 1m カラムは drop 済。新 ticker カラムを直接読む。
       const snap = (
         await db
-          .select({ ohlcv1m: marketSnapshots.ohlcv1m })
+          .select({ ticker: marketSnapshots.ticker })
           .from(marketSnapshots)
           .where(eq(marketSnapshots.coinId, coin.id))
           .orderBy(desc(marketSnapshots.fetchedAt))
           .limit(1)
       )[0];
-      const bars = (snap?.ohlcv1m as Array<{ close: string }> | null) ?? [];
-      const lastBar = bars.at(-1);
-      if (lastBar?.close) {
-        lastPrice = Number(lastBar.close);
+      const ticker = snap?.ticker as { last?: string } | null;
+      if (ticker?.last) {
+        lastPrice = Number(ticker.last);
         source = "snapshot";
       }
     }

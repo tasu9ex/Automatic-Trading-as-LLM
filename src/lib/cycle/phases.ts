@@ -217,14 +217,12 @@ export async function tier0Snapshots(
           await db.insert(marketSnapshots).values({
             cycleId,
             coinId: coin.id,
-            // §32: primary / long の新カラム (1m/1d はレガシー、新規行は null)
+            // §32: primary / long の動的 TF を保存
             ohlcvPrimary: snap.ohlcvPrimary,
             ohlcvLong: snap.ohlcvLong,
             primaryInterval: snap.primaryInterval,
             longInterval: snap.longInterval,
             ticker: snap.ticker,
-            // §21: ohlcv_1h は notNull 制約があるため当面 [] で埋める (drop は次の clean-up)
-            ohlcv1h: [],
             micro: snap.micro,
             perplexitySummary: snap.perplexitySummary,
             perplexityCitations: snap.perplexityCitations,
@@ -245,16 +243,9 @@ async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: st
     await db.select().from(marketSnapshots).where(eq(marketSnapshots.id, snapshotId)).limit(1)
   )[0];
   if (!row) throw new Error(`Snapshot not found: ${snapshotId}`);
-  // §32: 新カラム (ohlcv_primary / ohlcv_long / primary_interval / long_interval / ticker) を優先。
-  //   旧カラム (ohlcv_1m / ohlcv_1d) は古い行を読む場合のみ fallback で参照。
-  const primary =
-    (row.ohlcvPrimary as Snapshot["ohlcvPrimary"] | null) ??
-    (row.ohlcv1m as Snapshot["ohlcvPrimary"] | null) ??
-    [];
-  const long =
-    (row.ohlcvLong as Snapshot["ohlcvLong"] | null) ??
-    (row.ohlcv1d as Snapshot["ohlcvLong"] | null) ??
-    [];
+  // §32: 動的 TF カラムから復元 (旧 ohlcv_1m / ohlcv_1d は §21 で drop 済)
+  const primary = (row.ohlcvPrimary as Snapshot["ohlcvPrimary"] | null) ?? [];
+  const long = (row.ohlcvLong as Snapshot["ohlcvLong"] | null) ?? [];
   const primaryInterval = (row.primaryInterval as Snapshot["primaryInterval"] | null) ?? "1hour";
   const longInterval = (row.longInterval as Snapshot["longInterval"]) ?? "1day";
 

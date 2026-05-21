@@ -57,6 +57,13 @@
       "when": 1779321879062,
       "tag": "0007_fantastic_pride",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1779323881924,
+      "tag": "0008_loose_ultimatum",
+      "breakpoints": true
     }
   ]
 }

@@ -10,12 +10,6 @@ export const marketSnapshots = pgTable(
     coinId: uuid("coin_id")
       .notNull()
       .references(() => coins.id, { onDelete: "cascade" }),
-    /** @deprecated §32 で ohlcv_primary に統一 (新規行は null)。 */
-    ohlcv1m: jsonb("ohlcv_1m"),
-    /** @deprecated §21 で常時 [] 固定だったレガシー列。次の clean-up で drop 予定。 */
-    ohlcv1h: jsonb("ohlcv_1h").notNull(),
-    /** @deprecated §32 で ohlcv_long に統一 (新規行は null)。 */
-    ohlcv1d: jsonb("ohlcv_1d"),
     /**
      * §32: 動的 TF。サイクル間隔ベースで GMO interval を選択して保存。
      *   1h cycle  → primary="1hour" / long="1day"
