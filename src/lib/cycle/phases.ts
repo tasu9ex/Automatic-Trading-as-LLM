@@ -1116,7 +1116,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   if (skippedBuys.length > 0) {
     bodyParts.push(`**⚠️ Entry 未実行**\n${skippedBuys.join("\n")}`);
   }
-  if (closes.length > 0) bodyParts.push(`**📕 Close**\n${closes.join("\n")}`);
+  if (closes.length > 0) bodyParts.push(`**📕 Exit**\n${closes.join("\n")}`);
   if (positionLines.length > 0) {
     bodyParts.push(`**📊 保有ポジション (${positionLines.length})**\n${positionLines.join("\n")}`);
   }
