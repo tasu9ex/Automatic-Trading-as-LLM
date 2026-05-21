@@ -9,6 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  type OpenPositionRow,
+  type PositionDetail,
+  type RecentCycleRow,
   getCapitalEvents,
   getCoinChecklist,
   getDashboardStats,
@@ -26,6 +29,141 @@ export const dynamic = "force-dynamic";
 
 function jpy(n: number) {
   return `¥${n.toLocaleString("ja-JP", { maximumFractionDigits: 0 })}`;
+}
+
+// recentCycles の Critic 判定ラベル / バッジ variant を共通化 (page.tsx の複雑度低減)。
+const CRITIC_LABEL: Record<string, string> = {
+  approve: "承認",
+  modify: "修正",
+  veto: "拒否",
+  failed: "失敗",
+  in_flight: "実行中",
+  "auto-skip": "審査スキップ",
+};
+function criticLabel(decision: string): string {
+  return CRITIC_LABEL[decision] ?? decision;
+}
+function criticBadgeVariant(decision: string): "default" | "outline" | "destructive" {
+  if (decision === "approve") return "default";
+  if (decision === "modify" || decision === "in_flight" || decision === "auto-skip")
+    return "outline";
+  return "destructive";
+}
+
+function CycleRow({ c }: { c: RecentCycleRow }) {
+  return (
+    <li>
+      <Link
+        href={`/cycles/${c.cycleId}`}
+        className="flex items-center justify-between gap-3 py-3 hover:bg-muted/30"
+      >
+        <div className="flex flex-col gap-1">
+          <span className="font-mono text-xs">{c.cycleId.slice(0, 8)}</span>
+          <span className="text-muted-foreground text-xs">{formatJstDateTime(c.createdAt)}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground text-xs">{c.symbolCount} 銘柄</span>
+          <Badge variant={criticBadgeVariant(c.criticDecision)}>
+            {criticLabel(c.criticDecision)}
+          </Badge>
+        </div>
+      </Link>
+    </li>
+  );
+}
+
+function PositionRow({ p, detail }: { p: OpenPositionRow; detail: PositionDetail | undefined }) {
+  // S: 銘柄ごとの含み損益を表示。ticker 失敗時 (バナー表示中) は 0 / 0% になるため
+  // current === avg なら含み P/L 行を出さない。
+  const hasMtm = p.currentPrice !== p.avgEntryPrice;
+  const pnlPct =
+    p.avgEntryPrice > 0 ? (p.unrealizedPnlJpy / (p.avgEntryPrice * p.quantity)) * 100 : 0;
+  const pnlColor = p.unrealizedPnlJpy >= 0 ? "text-emerald-500" : "text-red-500";
+  const sign = p.unrealizedPnlJpy >= 0 ? "+" : "";
+  return (
+    <li className="rounded-md hover:bg-muted/30">
+      <details>
+        <summary className="flex cursor-pointer select-none items-center justify-between gap-3 px-2 py-1.5">
+          <span className="font-medium">{p.symbol}</span>
+          <div className="flex flex-col items-end text-xs">
+            <span className="font-mono text-muted-foreground">
+              {p.quantity} @ {jpy(p.avgEntryPrice)}・建玉日 {formatJstDate(p.openedAt)}
+            </span>
+            {hasMtm && (
+              <span className={`font-mono ${pnlColor}`}>
+                {sign}
+                {jpy(p.unrealizedPnlJpy)} ({sign}
+                {pnlPct.toFixed(2)}%)
+              </span>
+            )}
+          </div>
+        </summary>
+        {detail && <PositionDetailPanel detail={detail} />}
+      </details>
+    </li>
+  );
+}
+
+function PositionDetailPanel({ detail }: { detail: PositionDetail }) {
+  const pnlClass =
+    detail.realizedPnlJpy > 0
+      ? "text-emerald-500"
+      : detail.realizedPnlJpy < 0
+        ? "text-red-500"
+        : "";
+  return (
+    <div className="border-border border-t px-3 py-2 text-xs">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono">
+        <div className="text-muted-foreground">peak / trough</div>
+        <div>
+          {jpy(detail.peakPrice)} / {jpy(detail.troughPrice)}
+        </div>
+        {detail.entryTargetPriceJpy && (
+          <>
+            <div className="text-muted-foreground">target</div>
+            <div>{jpy(detail.entryTargetPriceJpy)}</div>
+          </>
+        )}
+        {(detail.entryExpectedHoldingDaysMin !== null ||
+          detail.entryExpectedHoldingDaysMax !== null) && (
+          <>
+            <div className="text-muted-foreground">想定保有日数</div>
+            <div>
+              {detail.entryExpectedHoldingDaysMin ?? "?"} -{" "}
+              {detail.entryExpectedHoldingDaysMax ?? "?"} 日
+            </div>
+          </>
+        )}
+        <div className="text-muted-foreground">実現損益 (部分決済)</div>
+        <div className={pnlClass}>{jpy(detail.realizedPnlJpy)}</div>
+      </div>
+      {detail.entryReason && (
+        <div className="mt-2">
+          <div className="text-muted-foreground">エントリー理由</div>
+          <p className="whitespace-pre-wrap">{detail.entryReason}</p>
+        </div>
+      )}
+      {detail.entryExitCondition && (
+        <div className="mt-2">
+          <div className="text-muted-foreground">Exit 条件 (Entry 仮説)</div>
+          <p className="whitespace-pre-wrap">{detail.entryExitCondition}</p>
+        </div>
+      )}
+      {detail.pendingOrders.length > 0 && (
+        <div className="mt-2">
+          <div className="text-muted-foreground">配置中の逆指値 (active)</div>
+          <ul className="mt-1 ml-2 space-y-0.5">
+            {detail.pendingOrders.map((s) => (
+              <li key={s.id} className="font-mono">
+                {s.kind}: trigger {jpy(s.triggerPrice)}
+                {s.limitPrice !== null && ` / limit ${jpy(s.limitPrice)}`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // H: recentCycles の表示件数。?cycles=N で増やせる。"もっと見る" は同じ page を高い limit で再 fetch。
@@ -245,103 +383,13 @@ export default async function Home({
             <p className="text-muted-foreground text-sm">なし</p>
           ) : (
             <ul className="space-y-1 text-sm">
-              {openPositions.map((p) => {
-                // S: 銘柄ごとの含み損益を表示。ticker 失敗時 (バナー表示中) は 0 / 0% になるため
-                // current === avg なら含み P/L 行を出さない。
-                const hasMtm = p.currentPrice !== p.avgEntryPrice;
-                const pnlPct =
-                  p.avgEntryPrice > 0
-                    ? (p.unrealizedPnlJpy / (p.avgEntryPrice * p.quantity)) * 100
-                    : 0;
-                const pnlColor = p.unrealizedPnlJpy >= 0 ? "text-emerald-500" : "text-red-500";
-                const sign = p.unrealizedPnlJpy >= 0 ? "+" : "";
-                const detail = positionDetailsById.get(p.positionId);
-                return (
-                  <li key={p.positionId} className="rounded-md hover:bg-muted/30">
-                    <details>
-                      <summary className="flex cursor-pointer select-none items-center justify-between gap-3 px-2 py-1.5">
-                        <span className="font-medium">{p.symbol}</span>
-                        <div className="flex flex-col items-end text-xs">
-                          <span className="font-mono text-muted-foreground">
-                            {p.quantity} @ {jpy(p.avgEntryPrice)}・建玉日{" "}
-                            {formatJstDate(p.openedAt)}
-                          </span>
-                          {hasMtm && (
-                            <span className={`font-mono ${pnlColor}`}>
-                              {sign}
-                              {jpy(p.unrealizedPnlJpy)} ({sign}
-                              {pnlPct.toFixed(2)}%)
-                            </span>
-                          )}
-                        </div>
-                      </summary>
-                      {detail && (
-                        <div className="border-border border-t px-3 py-2 text-xs">
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono">
-                            <div className="text-muted-foreground">peak / trough</div>
-                            <div>
-                              {jpy(detail.peakPrice)} / {jpy(detail.troughPrice)}
-                            </div>
-                            {detail.entryTargetPriceJpy && (
-                              <>
-                                <div className="text-muted-foreground">target</div>
-                                <div>{jpy(detail.entryTargetPriceJpy)}</div>
-                              </>
-                            )}
-                            {(detail.entryExpectedHoldingDaysMin !== null ||
-                              detail.entryExpectedHoldingDaysMax !== null) && (
-                              <>
-                                <div className="text-muted-foreground">想定保有日数</div>
-                                <div>
-                                  {detail.entryExpectedHoldingDaysMin ?? "?"} -{" "}
-                                  {detail.entryExpectedHoldingDaysMax ?? "?"} 日
-                                </div>
-                              </>
-                            )}
-                            <div className="text-muted-foreground">実現損益 (部分決済)</div>
-                            <div
-                              className={
-                                detail.realizedPnlJpy > 0
-                                  ? "text-emerald-500"
-                                  : detail.realizedPnlJpy < 0
-                                    ? "text-red-500"
-                                    : ""
-                              }
-                            >
-                              {jpy(detail.realizedPnlJpy)}
-                            </div>
-                          </div>
-                          {detail.entryReason && (
-                            <div className="mt-2">
-                              <div className="text-muted-foreground">エントリー理由</div>
-                              <p className="whitespace-pre-wrap">{detail.entryReason}</p>
-                            </div>
-                          )}
-                          {detail.entryExitCondition && (
-                            <div className="mt-2">
-                              <div className="text-muted-foreground">Exit 条件 (Entry 仮説)</div>
-                              <p className="whitespace-pre-wrap">{detail.entryExitCondition}</p>
-                            </div>
-                          )}
-                          {detail.pendingOrders.length > 0 && (
-                            <div className="mt-2">
-                              <div className="text-muted-foreground">配置中の逆指値 (active)</div>
-                              <ul className="mt-1 ml-2 space-y-0.5">
-                                {detail.pendingOrders.map((s) => (
-                                  <li key={s.id} className="font-mono">
-                                    {s.kind}: trigger {jpy(s.triggerPrice)}
-                                    {s.limitPrice !== null && ` / limit ${jpy(s.limitPrice)}`}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </details>
-                  </li>
-                );
-              })}
+              {openPositions.map((p) => (
+                <PositionRow
+                  key={p.positionId}
+                  p={p}
+                  detail={positionDetailsById.get(p.positionId)}
+                />
+              ))}
             </ul>
           )}
         </CardContent>
@@ -361,47 +409,7 @@ export default async function Home({
           ) : (
             <ul className="divide-y divide-border">
               {recentCycles.map((c) => (
-                <li key={c.cycleId}>
-                  <Link
-                    href={`/cycles/${c.cycleId}`}
-                    className="flex items-center justify-between gap-3 py-3 hover:bg-muted/30"
-                  >
-                    <div className="flex flex-col gap-1">
-                      <span className="font-mono text-xs">{c.cycleId.slice(0, 8)}</span>
-                      <span className="text-muted-foreground text-xs">
-                        {formatJstDateTime(c.createdAt)}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground text-xs">{c.symbolCount} 銘柄</span>
-                      <Badge
-                        variant={
-                          c.criticDecision === "approve"
-                            ? "default"
-                            : c.criticDecision === "modify" ||
-                                c.criticDecision === "in_flight" ||
-                                c.criticDecision === "auto-skip"
-                              ? "outline"
-                              : "destructive"
-                        }
-                      >
-                        {c.criticDecision === "approve"
-                          ? "承認"
-                          : c.criticDecision === "modify"
-                            ? "修正"
-                            : c.criticDecision === "veto"
-                              ? "拒否"
-                              : c.criticDecision === "failed"
-                                ? "失敗"
-                                : c.criticDecision === "in_flight"
-                                  ? "実行中"
-                                  : c.criticDecision === "auto-skip"
-                                    ? "審査スキップ"
-                                    : c.criticDecision}
-                      </Badge>
-                    </div>
-                  </Link>
-                </li>
+                <CycleRow key={c.cycleId} c={c} />
               ))}
             </ul>
           )}

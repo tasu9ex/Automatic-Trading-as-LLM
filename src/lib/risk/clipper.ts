@@ -43,13 +43,141 @@ export interface ClippedProposal {
  *
  * 段 2 は default 1.0 (= 制限なし) で、UI から設定すれば有効化。
  */
+/**
+ * 段 2: per-coin 総エクスポージャ上限 (equity base)。既存控除した headroom。
+ * 戻り値: clip 後の値 (perCoinMinJpy 未満は null = drop)。
+ */
+function clipPerCoinTotalCap(args: {
+  symbol: string;
+  value: number;
+  originalJpy: number;
+  equity: number;
+  perCoinTotalRatio: number;
+  existing: number;
+  perCoinMinJpy: number;
+  changes: ClippedProposal["changes"];
+}): number | null {
+  if (args.perCoinTotalRatio >= 1.0) return args.value;
+  const totalCap = args.equity * args.perCoinTotalRatio;
+  const headroom = Math.max(0, totalCap - args.existing);
+  if (args.value <= headroom) return args.value;
+  args.changes.push({
+    symbol: args.symbol,
+    reason: "per-coin total cap",
+    from: args.value,
+    to: Math.floor(headroom),
+  });
+  const clipped = Math.floor(headroom);
+  if (clipped < args.perCoinMinJpy) {
+    args.changes.push({
+      symbol: args.symbol,
+      reason: "per-coin total cap (below min after headroom)",
+      from: args.originalJpy,
+      to: 0,
+    });
+    return null;
+  }
+  return clipped;
+}
+
+/**
+ * 段 1: per-cycle buy cap (cash base)。1 サイクル 1 銘柄あたりの新規 buy 上限。
+ */
+function clipPerCycleCap(args: {
+  symbol: string;
+  value: number;
+  perCoinCycleCap: number;
+  changes: ClippedProposal["changes"];
+}): number {
+  if (args.value <= args.perCoinCycleCap) return args.value;
+  args.changes.push({
+    symbol: args.symbol,
+    reason: "per-cycle buy cap",
+    from: args.value,
+    to: Math.floor(args.perCoinCycleCap),
+  });
+  return Math.floor(args.perCoinCycleCap);
+}
+
+/**
+ * 段 3: portfolio cap 比例縮小。合計が totalCapRoom を超えていたら scale 倍に。
+ * 副作用で clipped を直接書き換える。戻り値: scale が走ったかどうか。
+ */
+function applyTotalCapScale(args: {
+  clipped: AllocationProposal;
+  totalCapRoom: number;
+  perCoinMinJpy: number;
+  changes: ClippedProposal["changes"];
+}): boolean {
+  const total = Object.values(args.clipped).reduce((s, v) => s + v, 0);
+  if (total <= args.totalCapRoom || total === 0) return false;
+  const scale = args.totalCapRoom / total;
+  const preScale = { ...args.clipped };
+  for (const symbol of Object.keys(args.clipped)) {
+    const prev = preScale[symbol] ?? 0;
+    const scaled = Math.floor(prev * scale);
+    if (scaled < args.perCoinMinJpy) {
+      args.changes.push({
+        symbol,
+        reason: "total cap (below min after scale)",
+        from: prev,
+        to: 0,
+      });
+      delete args.clipped[symbol];
+    } else if (scaled !== prev) {
+      args.changes.push({ symbol, reason: "total cap proportional scale", from: prev, to: scaled });
+      args.clipped[symbol] = scaled;
+    }
+  }
+  return true;
+}
+
+/**
+ * NN: floor 連鎖で生じた端数 (= totalCapRoom - sum(clipped)) を最大配分銘柄に寄せる。
+ *     ただし per-cycle cap / per-coin total cap も両方を超えない範囲で。
+ */
+function injectFloorRemainder(args: {
+  clipped: AllocationProposal;
+  totalCapRoom: number;
+  perCoinCycleCap: number;
+  perCoinTotalRatio: number;
+  equity: number;
+  existingBySymbol: Record<string, number>;
+  changes: ClippedProposal["changes"];
+}): void {
+  const remaining = args.totalCapRoom - Object.values(args.clipped).reduce((s, v) => s + v, 0);
+  if (remaining <= 0 || Object.keys(args.clipped).length === 0) return;
+  const symbols = Object.keys(args.clipped).sort(
+    (a, b) => (args.clipped[b] ?? 0) - (args.clipped[a] ?? 0),
+  );
+  const top = symbols[0];
+  const topValue = args.clipped[top] ?? 0;
+  const headroomCycle = args.perCoinCycleCap - topValue;
+  const headroomTotal =
+    args.perCoinTotalRatio < 1.0
+      ? Math.max(
+          0,
+          args.equity * args.perCoinTotalRatio - (args.existingBySymbol[top] ?? 0) - topValue,
+        )
+      : Number.POSITIVE_INFINITY;
+  const inject = Math.floor(Math.max(0, Math.min(remaining, headroomCycle, headroomTotal)));
+  if (inject > 0) {
+    args.clipped[top] = topValue + inject;
+    args.changes.push({
+      symbol: top,
+      reason: "floor remainder injected",
+      from: topValue,
+      to: topValue + inject,
+    });
+  }
+}
+
 export function applyRiskClipper(input: RiskClipperInput): ClippedProposal {
   const perCoinCycleCap = input.availableCashJpy * input.perCoinMaxRatio;
   const totalCapRoom = Math.max(
     0,
     input.availableCashJpy * input.totalMaxRatio - input.currentInvestedJpy,
   );
-
   const equity = input.equityJpy ?? input.availableCashJpy + input.currentInvestedJpy;
   const perCoinTotalRatio = input.perCoinTotalMaxRatio ?? 1.0;
   const existingBySymbol = input.existingExposureBySymbol ?? {};
@@ -58,90 +186,45 @@ export function applyRiskClipper(input: RiskClipperInput): ClippedProposal {
   const clipped: AllocationProposal = {};
 
   for (const [symbol, jpy] of Object.entries(input.proposal)) {
-    let value = jpy;
-
-    if (value < input.perCoinMinJpy) {
+    if (jpy < input.perCoinMinJpy) {
       changes.push({ symbol, reason: "below per-coin min", from: jpy, to: 0 });
       continue;
     }
-
-    // 段 2: per-coin 総エクスポージャ上限 (equity base)。既存控除した headroom。
-    if (perCoinTotalRatio < 1.0) {
-      const totalCap = equity * perCoinTotalRatio;
-      const existing = existingBySymbol[symbol] ?? 0;
-      const headroom = Math.max(0, totalCap - existing);
-      if (value > headroom) {
-        changes.push({
-          symbol,
-          reason: "per-coin total cap",
-          from: value,
-          to: Math.floor(headroom),
-        });
-        value = Math.floor(headroom);
-        if (value < input.perCoinMinJpy) {
-          changes.push({
-            symbol,
-            reason: "per-coin total cap (below min after headroom)",
-            from: jpy,
-            to: 0,
-          });
-          continue;
-        }
-      }
-    }
-
-    // 段 1: per-cycle buy cap (cash base)
-    if (value > perCoinCycleCap) {
-      changes.push({
-        symbol,
-        reason: "per-cycle buy cap",
-        from: value,
-        to: Math.floor(perCoinCycleCap),
-      });
-      value = Math.floor(perCoinCycleCap);
-    }
-    clipped[symbol] = value;
+    const afterStage2 = clipPerCoinTotalCap({
+      symbol,
+      value: jpy,
+      originalJpy: jpy,
+      equity,
+      perCoinTotalRatio,
+      existing: existingBySymbol[symbol] ?? 0,
+      perCoinMinJpy: input.perCoinMinJpy,
+      changes,
+    });
+    if (afterStage2 === null) continue;
+    clipped[symbol] = clipPerCycleCap({
+      symbol,
+      value: afterStage2,
+      perCoinCycleCap,
+      changes,
+    });
   }
 
-  const total = Object.values(clipped).reduce((s, v) => s + v, 0);
-  if (total > totalCapRoom && total > 0) {
-    const scale = totalCapRoom / total;
-    const preScale = { ...clipped };
-    for (const symbol of Object.keys(clipped)) {
-      const prev = preScale[symbol] ?? 0;
-      const scaled = Math.floor(prev * scale);
-      if (scaled < input.perCoinMinJpy) {
-        changes.push({ symbol, reason: "total cap (below min after scale)", from: prev, to: 0 });
-        delete clipped[symbol];
-      } else if (scaled !== prev) {
-        changes.push({ symbol, reason: "total cap proportional scale", from: prev, to: scaled });
-        clipped[symbol] = scaled;
-      }
-    }
-
-    // NN: floor 連鎖で発生した端数 (= totalCapRoom - sum(clipped)) を最大配分銘柄に寄せる。
-    //     ただし per-cycle cap / per-coin total cap も両方を超えない範囲で。
-    const remaining = totalCapRoom - Object.values(clipped).reduce((s, v) => s + v, 0);
-    if (remaining > 0 && Object.keys(clipped).length > 0) {
-      const symbols = Object.keys(clipped).sort((a, b) => (clipped[b] ?? 0) - (clipped[a] ?? 0));
-      const top = symbols[0];
-      const topValue = clipped[top] ?? 0;
-      const headroomCycle = perCoinCycleCap - topValue;
-      const headroomTotal =
-        perCoinTotalRatio < 1.0
-          ? Math.max(0, equity * perCoinTotalRatio - (existingBySymbol[top] ?? 0) - topValue)
-          : Number.POSITIVE_INFINITY;
-      const inject = Math.floor(Math.max(0, Math.min(remaining, headroomCycle, headroomTotal)));
-      if (inject > 0) {
-        clipped[top] = topValue + inject;
-        changes.push({
-          symbol: top,
-          reason: "floor remainder injected",
-          from: topValue,
-          to: topValue + inject,
-        });
-      }
-    }
+  const scaled = applyTotalCapScale({
+    clipped,
+    totalCapRoom,
+    perCoinMinJpy: input.perCoinMinJpy,
+    changes,
+  });
+  if (scaled) {
+    injectFloorRemainder({
+      clipped,
+      totalCapRoom,
+      perCoinCycleCap,
+      perCoinTotalRatio,
+      equity,
+      existingBySymbol,
+      changes,
+    });
   }
 
   return { proposal: clipped, changes };

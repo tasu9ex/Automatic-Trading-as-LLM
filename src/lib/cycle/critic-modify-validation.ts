@@ -25,53 +25,78 @@ export interface ValidateModifyInput {
   perCoinTotalMaxRatio: number;
 }
 
-export function validateCriticModify(input: ValidateModifyInput): string | null {
-  const { plan, adjustments, buyCandidates, cashJpy, equityJpy } = input;
-  const buys = adjustments.buys ?? {};
-  const exits = adjustments.exits ?? {};
-
-  // --- exits 検算 ---
+function validateExits(
+  exits: Record<string, number>,
+  planExits: ExecutionPlan["exits"],
+): string | null {
   for (const [sym, pct] of Object.entries(exits)) {
-    if (!plan.exits[sym]) {
+    if (!planExits[sym]) {
       return `exits.${sym}: 計画に存在しない銘柄の Exit 開始は不可 (元々 hold 判定)`;
     }
     if (!Number.isInteger(pct) || pct < 10 || pct > 100) {
       return `exits.${sym}: closePct は 10-100 整数のみ (受信: ${pct})`;
     }
   }
+  return null;
+}
 
-  // --- buys 検算 ---
+function validateBuy(args: {
+  sym: string;
+  jpy: number;
+  buyCandidates: Set<string>;
+  perCoinCycleCap: number;
+  perCoinTotalRatio: number;
+  equityJpy: number;
+  existing: number;
+}): string | null {
+  const { sym, jpy } = args;
+  if (!args.buyCandidates.has(sym)) {
+    return `buys.${sym}: Allocator 候補外の銘柄 (Analyst が buy を出していない)`;
+  }
+  if (!Number.isFinite(jpy) || jpy < 0) {
+    return `buys.${sym}: 不正な金額 (受信: ${jpy})`;
+  }
+  if (jpy > 0 && jpy < PER_COIN_MIN_JPY) {
+    return `buys.${sym}: 0 < x < ${PER_COIN_MIN_JPY} は不可 (受信: ${jpy})`;
+  }
+  if (jpy > args.perCoinCycleCap) {
+    return `buys.${sym}: per-cycle cap 違反 (¥${Math.floor(jpy)} > ¥${Math.floor(args.perCoinCycleCap)})`;
+  }
+  if (args.perCoinTotalRatio < 1.0) {
+    const totalCap = args.equityJpy * args.perCoinTotalRatio;
+    if (args.existing + jpy > totalCap) {
+      return `buys.${sym}: per-coin total cap 違反 (既存¥${Math.floor(args.existing)} + 新規¥${Math.floor(jpy)} > 上限¥${Math.floor(totalCap)})`;
+    }
+  }
+  return null;
+}
+
+export function validateCriticModify(input: ValidateModifyInput): string | null {
+  const { plan, adjustments, buyCandidates, cashJpy, equityJpy } = input;
+  const buys = adjustments.buys ?? {};
+  const exits = adjustments.exits ?? {};
+
+  const exitsErr = validateExits(exits, plan.exits);
+  if (exitsErr) return exitsErr;
+
   const perCoinCycleCap = cashJpy * input.perCoinMaxRatio;
-  const perCoinTotalRatio = input.perCoinTotalMaxRatio;
   const totalCapRoom = cashJpy * TOTAL_MAX_RATIO;
 
   for (const [sym, jpy] of Object.entries(buys)) {
-    if (!buyCandidates.has(sym)) {
-      return `buys.${sym}: Allocator 候補外の銘柄 (Analyst が buy を出していない)`;
-    }
-    if (!Number.isFinite(jpy) || jpy < 0) {
-      return `buys.${sym}: 不正な金額 (受信: ${jpy})`;
-    }
-    if (jpy > 0 && jpy < PER_COIN_MIN_JPY) {
-      return `buys.${sym}: 0 < x < ${PER_COIN_MIN_JPY} は不可 (受信: ${jpy})`;
-    }
-    if (jpy > perCoinCycleCap) {
-      return `buys.${sym}: per-cycle cap 違反 (¥${Math.floor(jpy)} > ¥${Math.floor(perCoinCycleCap)})`;
-    }
-    if (perCoinTotalRatio < 1.0) {
-      const existing = plan.currentPositions[sym] ?? 0;
-      const totalCap = equityJpy * perCoinTotalRatio;
-      if (existing + jpy > totalCap) {
-        return `buys.${sym}: per-coin total cap 違反 (既存¥${Math.floor(existing)} + 新規¥${Math.floor(jpy)} > 上限¥${Math.floor(totalCap)})`;
-      }
-    }
+    const err = validateBuy({
+      sym,
+      jpy,
+      buyCandidates,
+      perCoinCycleCap,
+      perCoinTotalRatio: input.perCoinTotalMaxRatio,
+      equityJpy,
+      existing: plan.currentPositions[sym] ?? 0,
+    });
+    if (err) return err;
   }
 
   // 合計検算: modify 適用後の総 buy が cash を超えないか
-  const merged: Record<string, number> = { ...plan.entries };
-  for (const [sym, jpy] of Object.entries(buys)) {
-    merged[sym] = jpy;
-  }
+  const merged: Record<string, number> = { ...plan.entries, ...buys };
   const totalBuys = Object.values(merged).reduce((s, v) => s + v, 0);
   if (totalBuys > totalCapRoom) {
     return `Σ buys: 合計が cash を超過 (¥${Math.floor(totalBuys)} > ¥${Math.floor(totalCapRoom)})`;

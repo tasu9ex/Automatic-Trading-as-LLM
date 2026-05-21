@@ -15,7 +15,7 @@
  *   3. tier1PreAnalyst — 全コイン Haiku 並列
  *   4. tier2Analyst    — skip_flag=false のコイン Opus 並列
  *   5. tier3Decisions  — Entry (全) + Exit (保有のみ) Sonnet 並列
- *   6. finalize        — Exit 約定 → Allocator → Critic → Risk Clipper → Entry 約定 → state 更新
+ *   6. finalize        — Exit dry-run (Allocator + Clipper) → Critic → safety 実行 (Exit → Entry) → state 更新
  */
 
 import { db } from "@/db/client";
@@ -405,6 +405,139 @@ export async function tier2Analyst(cycleId: string, strategyId: string): Promise
   );
 }
 
+type CycleCoin = Awaited<ReturnType<typeof getCycleCoins>>[number];
+type AnalystRow = typeof analystOutputs.$inferSelect;
+
+function asAnalystRunLike(analyst: AnalystRow) {
+  return {
+    output: {
+      fundamental: analyst.fundamental,
+      sentiment: analyst.sentiment,
+      technical: analyst.technical,
+      synthesis: analyst.synthesis,
+    },
+    promptVersion: analyst.promptVersion,
+    llmModel: analyst.llmModel,
+  };
+}
+
+async function runEntryForCoin(args: {
+  coin: CycleCoin;
+  analyst: AnalystRow;
+  analystResLike: ReturnType<typeof asAnalystRunLike>;
+}): Promise<void> {
+  const existing = (
+    await db
+      .select({ id: decisions.id })
+      .from(decisions)
+      .where(and(eq(decisions.analystId, args.analyst.id), eq(decisions.kind, "entry")))
+      .limit(1)
+  )[0];
+  if (existing) return;
+
+  const entry = await runEntryDecision(
+    args.coin.symbol,
+    args.coin.name,
+    args.analystResLike as Parameters<typeof runEntryDecision>[2],
+  );
+  await db.insert(decisions).values({
+    analystId: args.analyst.id,
+    coinId: args.coin.id,
+    llmModel: entry.llmModel,
+    kind: "entry",
+    result: entry.output.decision,
+    confidence: entry.output.confidence.toFixed(3),
+    reasoning: entry.output.reasoning,
+    promptVersion: entry.promptVersion,
+    entryExpectedHoldingDaysMin:
+      entry.output.expected_holding_days?.min !== undefined
+        ? String(entry.output.expected_holding_days.min)
+        : null,
+    entryExpectedHoldingDaysMax:
+      entry.output.expected_holding_days?.max !== undefined
+        ? String(entry.output.expected_holding_days.max)
+        : null,
+    entryTargetPriceJpy: entry.output.target_price_jpy?.toFixed(4) ?? null,
+    entryExitCondition: entry.output.exit_condition ?? null,
+  });
+}
+
+async function runExitForCoin(args: {
+  coin: CycleCoin;
+  snapshotId: string;
+  analyst: AnalystRow;
+  analystResLike: ReturnType<typeof asAnalystRunLike>;
+  strategyId: string;
+}): Promise<void> {
+  const openPos = (
+    await db
+      .select()
+      .from(positions)
+      .where(
+        and(
+          eq(positions.strategyId, args.strategyId),
+          eq(positions.coinId, args.coin.id),
+          eq(positions.status, PositionStatusValue.OPEN),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (!openPos) return;
+
+  const existing = (
+    await db
+      .select({ id: decisions.id })
+      .from(decisions)
+      .where(and(eq(decisions.analystId, args.analyst.id), eq(decisions.kind, "exit")))
+      .limit(1)
+  )[0];
+  if (existing) return;
+
+  const { snap } = await loadSnapshot(args.snapshotId, args.coin);
+  const lastPrice = Number(snap.ticker.last) || 0;
+  const qty = Number(openPos.quantity);
+  const avg = Number(openPos.avgEntryPrice);
+  const expHoldingDays =
+    openPos.entryExpectedHoldingDaysMin && openPos.entryExpectedHoldingDaysMax
+      ? {
+          min: openPos.entryExpectedHoldingDaysMin,
+          max: openPos.entryExpectedHoldingDaysMax,
+        }
+      : null;
+
+  const exit = await runExitDecision(
+    {
+      symbol: args.coin.symbol,
+      name: args.coin.name,
+      avgEntryPrice: avg,
+      quantity: qty,
+      marketValueJpy: qty * lastPrice,
+      unrealizedPnlJpy: (lastPrice - avg) * qty,
+      holdingDays: Math.max(0, (Date.now() - openPos.openedAt.getTime()) / 86_400_000),
+      entryReason: openPos.entryReason,
+      peakPnlJpy: (Number(openPos.peakPrice) - avg) * qty,
+      troughPnlJpy: (Number(openPos.troughPrice) - avg) * qty,
+      entryExpectation: {
+        expectedHoldingDays: expHoldingDays,
+        targetPriceJpy: openPos.entryTargetPriceJpy ? Number(openPos.entryTargetPriceJpy) : null,
+        exitCondition: openPos.entryExitCondition,
+      },
+    },
+    args.analystResLike as Parameters<typeof runExitDecision>[1],
+  );
+  await db.insert(decisions).values({
+    analystId: args.analyst.id,
+    coinId: args.coin.id,
+    llmModel: exit.llmModel,
+    kind: "exit",
+    result: exit.output.decision,
+    confidence: exit.output.confidence.toFixed(3),
+    closePct: exit.output.close_pct.toFixed(2),
+    reasoning: exit.output.reasoning,
+    promptVersion: exit.promptVersion,
+  });
+}
+
 /** Phase 5: Tier 3 Entry/Exit Decision (ALL-or-NOTHING) */
 export async function tier3Decisions(cycleId: string, strategyId: string): Promise<void> {
   await assertNotEmergencyStop("tier3-decisions");
@@ -434,126 +567,14 @@ export async function tier3Decisions(cycleId: string, strategyId: string): Promi
           // → Entry/Exit 両方スキップ。保有中の銘柄は Tier 2 で必ず analyst が作られる。
           if (!analyst) return;
 
-          const analystResLike = {
-            output: {
-              fundamental: analyst.fundamental,
-              sentiment: analyst.sentiment,
-              technical: analyst.technical,
-              synthesis: analyst.synthesis,
-            },
-            promptVersion: analyst.promptVersion,
-            llmModel: analyst.llmModel,
-          };
-
-          // Entry decision (常に)
-          const existingEntry = (
-            await db
-              .select({ id: decisions.id })
-              .from(decisions)
-              .where(and(eq(decisions.analystId, analyst.id), eq(decisions.kind, "entry")))
-              .limit(1)
-          )[0];
-          if (!existingEntry) {
-            const entry = await runEntryDecision(
-              coin.symbol,
-              coin.name,
-              analystResLike as Parameters<typeof runEntryDecision>[2],
-            );
-            await db.insert(decisions).values({
-              analystId: analyst.id,
-              coinId: coin.id,
-              llmModel: entry.llmModel,
-              kind: "entry",
-              result: entry.output.decision,
-              confidence: entry.output.confidence.toFixed(3),
-              reasoning: entry.output.reasoning,
-              promptVersion: entry.promptVersion,
-              // §1: Entry 仮説 (Exit プロンプトが参考値として参照)
-              entryExpectedHoldingDaysMin:
-                entry.output.expected_holding_days?.min !== undefined
-                  ? String(entry.output.expected_holding_days.min)
-                  : null,
-              entryExpectedHoldingDaysMax:
-                entry.output.expected_holding_days?.max !== undefined
-                  ? String(entry.output.expected_holding_days.max)
-                  : null,
-              entryTargetPriceJpy: entry.output.target_price_jpy?.toFixed(4) ?? null,
-              entryExitCondition: entry.output.exit_condition ?? null,
-            });
-          }
-
-          // Exit decision (保有時のみ)
-          const openPos = (
-            await db
-              .select()
-              .from(positions)
-              .where(
-                and(
-                  eq(positions.strategyId, strategyId),
-                  eq(positions.coinId, coin.id),
-                  eq(positions.status, PositionStatusValue.OPEN),
-                ),
-              )
-              .limit(1)
-          )[0];
-          if (!openPos) return;
-
-          const existingExit = (
-            await db
-              .select({ id: decisions.id })
-              .from(decisions)
-              .where(and(eq(decisions.analystId, analyst.id), eq(decisions.kind, "exit")))
-              .limit(1)
-          )[0];
-          if (existingExit) return;
-
-          const { snap } = await loadSnapshot(snapshot.id, coin);
-          const lastPrice = Number(snap.ticker.last) || 0;
-          const qty = Number(openPos.quantity);
-          const avg = Number(openPos.avgEntryPrice);
-          const mkt = qty * lastPrice;
-          const pnl = (lastPrice - avg) * qty;
-          const holdingDays = Math.max(0, (Date.now() - openPos.openedAt.getTime()) / 86_400_000);
-          const expHoldingDays =
-            openPos.entryExpectedHoldingDaysMin && openPos.entryExpectedHoldingDaysMax
-              ? {
-                  min: openPos.entryExpectedHoldingDaysMin,
-                  max: openPos.entryExpectedHoldingDaysMax,
-                }
-              : null;
-
-          const exit = await runExitDecision(
-            {
-              symbol: coin.symbol,
-              name: coin.name,
-              avgEntryPrice: avg,
-              quantity: qty,
-              marketValueJpy: mkt,
-              unrealizedPnlJpy: pnl,
-              holdingDays,
-              entryReason: openPos.entryReason,
-              peakPnlJpy: (Number(openPos.peakPrice) - avg) * qty,
-              troughPnlJpy: (Number(openPos.troughPrice) - avg) * qty,
-              entryExpectation: {
-                expectedHoldingDays: expHoldingDays,
-                targetPriceJpy: openPos.entryTargetPriceJpy
-                  ? Number(openPos.entryTargetPriceJpy)
-                  : null,
-                exitCondition: openPos.entryExitCondition,
-              },
-            },
-            analystResLike as Parameters<typeof runExitDecision>[1],
-          );
-          await db.insert(decisions).values({
-            analystId: analyst.id,
-            coinId: coin.id,
-            llmModel: exit.llmModel,
-            kind: "exit",
-            result: exit.output.decision,
-            confidence: exit.output.confidence.toFixed(3),
-            closePct: exit.output.close_pct.toFixed(2),
-            reasoning: exit.output.reasoning,
-            promptVersion: exit.promptVersion,
+          const analystResLike = asAnalystRunLike(analyst);
+          await runEntryForCoin({ coin, analyst, analystResLike });
+          await runExitForCoin({
+            coin,
+            snapshotId: snapshot.id,
+            analyst,
+            analystResLike,
+            strategyId,
           });
         },
         { label: `tier3:${coin.symbol}` },
@@ -581,135 +602,131 @@ interface FinalizeInput {
   startedAt: number;
 }
 
-/** Phase 6: Exit 実行 → Critic → Risk Clipper → Entry 実行 → state 更新 → kill switch */
-export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
-  await assertNotEmergencyStop("finalize");
-  const { cycleId, strategyId, method, startedAt } = input;
-  const enabledCoins = await getCycleCoins(cycleId);
-  // §17: リスクパラメータを DB から取得 (UI から動的に変更される)
-  const riskParams = await getRiskParams();
+type CoinCtx = {
+  coin: CycleCoin;
+  snap: Snapshot;
+  analyst: typeof analystOutputs.$inferSelect | null;
+  entry: typeof decisions.$inferSelect | null;
+  exit: typeof decisions.$inferSelect | null;
+  openPos: typeof positions.$inferSelect | null;
+};
 
-  // 全コインのコンテキストを DB から組み立て
-  type CoinCtx = {
-    coin: (typeof enabledCoins)[number];
-    snap: Snapshot;
-    analyst: typeof analystOutputs.$inferSelect | null;
-    entry: typeof decisions.$inferSelect | null;
-    exit: typeof decisions.$inferSelect | null;
-    openPos: typeof positions.$inferSelect | null;
-  };
+async function buildCoinContext(
+  coin: CycleCoin,
+  cycleId: string,
+  strategyId: string,
+): Promise<CoinCtx> {
+  const snapshot = (
+    await db
+      .select()
+      .from(marketSnapshots)
+      .where(and(eq(marketSnapshots.cycleId, cycleId), eq(marketSnapshots.coinId, coin.id)))
+      .limit(1)
+  )[0];
+  if (!snapshot) throw new Error(`No snapshot for coin ${coin.symbol} in finalize`);
+  const { snap } = await loadSnapshot(snapshot.id, coin);
 
-  const ctxs: CoinCtx[] = await Promise.all(
-    enabledCoins.map(async (coin) => {
-      const snapshot = (
+  const analyst =
+    (
+      await db
+        .select()
+        .from(analystOutputs)
+        .where(eq(analystOutputs.snapshotId, snapshot.id))
+        .limit(1)
+    )[0] ?? null;
+
+  let entry: typeof decisions.$inferSelect | null = null;
+  let exit: typeof decisions.$inferSelect | null = null;
+  if (analyst) {
+    entry =
+      (
         await db
           .select()
-          .from(marketSnapshots)
-          .where(and(eq(marketSnapshots.cycleId, cycleId), eq(marketSnapshots.coinId, coin.id)))
+          .from(decisions)
+          .where(and(eq(decisions.analystId, analyst.id), eq(decisions.kind, "entry")))
           .limit(1)
-      )[0];
-      if (!snapshot) throw new Error(`No snapshot for coin ${coin.symbol} in finalize`);
-      const { snap } = await loadSnapshot(snapshot.id, coin);
+      )[0] ?? null;
+    exit =
+      (
+        await db
+          .select()
+          .from(decisions)
+          .where(and(eq(decisions.analystId, analyst.id), eq(decisions.kind, "exit")))
+          .limit(1)
+      )[0] ?? null;
+  }
 
-      const analyst =
-        (
-          await db
-            .select()
-            .from(analystOutputs)
-            .where(eq(analystOutputs.snapshotId, snapshot.id))
-            .limit(1)
-        )[0] ?? null;
+  const openPos =
+    (
+      await db
+        .select()
+        .from(positions)
+        .where(
+          and(
+            eq(positions.strategyId, strategyId),
+            eq(positions.coinId, coin.id),
+            eq(positions.status, PositionStatusValue.OPEN),
+          ),
+        )
+        .limit(1)
+    )[0] ?? null;
 
-      let entry: typeof decisions.$inferSelect | null = null;
-      let exit: typeof decisions.$inferSelect | null = null;
-      if (analyst) {
-        entry =
-          (
-            await db
-              .select()
-              .from(decisions)
-              .where(and(eq(decisions.analystId, analyst.id), eq(decisions.kind, "entry")))
-              .limit(1)
-          )[0] ?? null;
-        exit =
-          (
-            await db
-              .select()
-              .from(decisions)
-              .where(and(eq(decisions.analystId, analyst.id), eq(decisions.kind, "exit")))
-              .limit(1)
-          )[0] ?? null;
-      }
+  return { coin, snap, analyst, entry, exit, openPos };
+}
 
-      const openPos =
-        (
-          await db
-            .select()
-            .from(positions)
-            .where(
-              and(
-                eq(positions.strategyId, strategyId),
-                eq(positions.coinId, coin.id),
-                eq(positions.status, PositionStatusValue.OPEN),
-              ),
-            )
-            .limit(1)
-        )[0] ?? null;
-
-      return { coin, snap, analyst, entry, exit, openPos };
-    }),
-  );
-
-  // === 新フロー: dry-run 計画 → Critic ゲート → 実行 ===
-  // 旧 (Allocator → Critic → Exit → Clipper → Entry) は Critic が raw proposal を見て
-  // 形式承認になりがちだった。新フローは Exit dry-run + Allocator + Clipper を Critic 前に
-  // 完了させ、Critic は実発注計画そのものを判断する。
-  const currentPortfolio = (
-    await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
-  )[0];
-  const currentCashJpy = Number(currentPortfolio?.cashJpy ?? 0);
-
-  const signals: ExecutionPlanSignal[] = ctxs.map((c) => ({
-    symbol: c.coin.symbol,
-    lastPriceJpy: Number(c.snap.ticker.last) || 0,
-    takerFeeRate: Number(c.coin.takerFeeRate),
-    entry:
-      c.entry?.result === "buy"
-        ? { decision: "buy", confidence: Number(c.entry.confidence) }
-        : c.entry?.result === "no"
-          ? { decision: "no", confidence: Number(c.entry.confidence) }
-          : null,
-    exit:
-      c.exit?.result === "close"
+function ctxToSignal(c: CoinCtx): ExecutionPlanSignal {
+  const entry =
+    c.entry?.result === "buy"
+      ? ({ decision: "buy", confidence: Number(c.entry.confidence) } as const)
+      : c.entry?.result === "no"
+        ? ({ decision: "no", confidence: Number(c.entry.confidence) } as const)
+        : null;
+  const exit =
+    c.exit?.result === "close"
+      ? {
+          decision: "close" as const,
+          confidence: Number(c.exit.confidence),
+          closePct: c.exit.closePct ? Number(c.exit.closePct) : 100,
+        }
+      : c.exit?.result === "hold"
         ? {
-            decision: "close",
+            decision: "hold" as const,
             confidence: Number(c.exit.confidence),
             closePct: c.exit.closePct ? Number(c.exit.closePct) : 100,
           }
-        : c.exit?.result === "hold"
-          ? {
-              decision: "hold",
-              confidence: Number(c.exit.confidence),
-              closePct: c.exit.closePct ? Number(c.exit.closePct) : 100,
-            }
-          : null,
+        : null;
+  return {
+    symbol: c.coin.symbol,
+    lastPriceJpy: Number(c.snap.ticker.last) || 0,
+    takerFeeRate: Number(c.coin.takerFeeRate),
+    entry,
+    exit,
     openPosition: c.openPos
       ? {
           quantity: Number(c.openPos.quantity),
           avgEntryPrice: Number(c.openPos.avgEntryPrice),
         }
       : null,
-  }));
+  };
+}
 
-  const plan = buildExecutionPlan({
-    signals,
-    currentCashJpy,
-    method,
-    riskParams: {
-      perCoinMaxRatio: riskParams.perCoinMaxRatio,
-      perCoinTotalMaxRatio: riskParams.perCoinTotalMaxRatio,
-    },
-  });
+interface CriticDecisionResult {
+  final: { entries: Record<string, number>; exits: ExecutionPlan["exits"] };
+  modifiedPositions: Record<string, number> | null;
+  criticOutput: Awaited<ReturnType<typeof runCritic>>;
+}
+
+async function processCriticDecision(args: {
+  cycleId: string;
+  strategyId: string;
+  plan: ExecutionPlan;
+  ctxs: CoinCtx[];
+  buyCandidates: Set<string>;
+  currentCashJpy: number;
+  equityJpy: number;
+  riskParams: Awaited<ReturnType<typeof getRiskParams>>;
+}): Promise<CriticDecisionResult> {
+  const { plan, ctxs, buyCandidates, currentCashJpy, equityJpy, riskParams } = args;
 
   const analystSummariesBySymbol = Object.fromEntries(
     ctxs.filter((c) => c.analyst).map((c) => [c.coin.symbol, c.analyst?.synthesis]),
@@ -732,16 +749,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     ]),
   );
   const symbolToName = Object.fromEntries(ctxs.map((c) => [c.coin.symbol, c.coin.name]));
-  const equityForCritic =
-    currentCashJpy + Object.values(plan.currentPositions).reduce((s, v) => s + v, 0);
-
-  // §33: システム健全性スナップを Critic に渡す (データ不全銘柄を modify で弾けるように)
-  const systemHealth = await buildSystemHealth({ strategyId, ctxs });
-
-  // Allocator 候補 = Analyst が buy を出した銘柄 (Critic modify の whitelist)
-  const buyCandidates = new Set(
-    signals.filter((s) => s.entry?.decision === "buy").map((s) => s.symbol),
-  );
+  const systemHealth = await buildSystemHealth({ strategyId: args.strategyId, ctxs });
 
   // Critic skip: 計画に何も無ければ Opus 呼び出しを節約
   const hasNothingToDo =
@@ -762,15 +770,14 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     };
     logger.info("Critic skipped (no buy / no exit) — Opus call saved");
   } else {
-    // 0.1: Critic 必須化 (ALL-or-NOTHING 原則)。Critic 失敗は通常の failure path に流して
-    // recordCycleFailure 経由で llm_failure event + Discord 通知 + consecutiveFailures++ する。
+    // 0.1: Critic 必須化 (ALL-or-NOTHING)。失敗は通常 failure path 経由で consecutiveFailures++。
     critic = await runCritic({
       plan,
       analystSummariesBySymbol,
       decisionsBySymbol,
       symbolToName,
       currentCashJpy,
-      equityJpy: equityForCritic,
+      equityJpy,
       riskParams: {
         perCoinMaxRatio: riskParams.perCoinMaxRatio,
         perCoinTotalMaxRatio: riskParams.perCoinTotalMaxRatio,
@@ -780,15 +787,14 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     });
   }
 
-  // Critic modify の機械検算 (ALL-or-NOTHING)。cap 違反 / 銘柄ホワイトリスト違反は throw。
-  // approve / veto は検算スキップ。modify でも adjustments null なら null 同義で approve 扱い。
+  // Critic modify の機械検算 (ALL-or-NOTHING)。違反は throw。
   if (critic.output.decision === "modify" && critic.output.adjustments) {
     const violation = validateCriticModify({
       plan,
       adjustments: critic.output.adjustments,
       buyCandidates,
       cashJpy: currentCashJpy,
-      equityJpy: equityForCritic,
+      equityJpy,
       perCoinMaxRatio: riskParams.perCoinMaxRatio,
       perCoinTotalMaxRatio: riskParams.perCoinTotalMaxRatio,
     });
@@ -798,7 +804,6 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     }
   }
 
-  // 計画 → 修正後の最終形を組み立て (veto 時は空)
   const final =
     critic.output.decision === "veto"
       ? { entries: {} as Record<string, number>, exits: {} as ExecutionPlan["exits"] }
@@ -810,7 +815,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     critic.output.decision === "modify" ? computeModifiedPositions(plan, final) : null;
 
   await db.insert(criticOutputs).values({
-    cycleId,
+    cycleId: args.cycleId,
     llmModel: critic.llmModel,
     decision: critic.output.decision,
     executionPlan: plan,
@@ -820,6 +825,25 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     promptVersion: critic.promptVersion,
   });
 
+  await notifyCriticDecision({
+    cycleId: args.cycleId,
+    strategyId: args.strategyId,
+    critic,
+    plan,
+    final,
+  });
+
+  return { final, modifiedPositions, criticOutput: critic };
+}
+
+async function notifyCriticDecision(args: {
+  cycleId: string;
+  strategyId: string;
+  critic: Awaited<ReturnType<typeof runCritic>>;
+  plan: ExecutionPlan;
+  final: { entries: Record<string, number>; exits: ExecutionPlan["exits"] };
+}): Promise<void> {
+  const { critic, plan, final, cycleId, strategyId } = args;
   if (critic.output.decision === "veto") {
     logger.warn({ reason: critic.output.reasoning }, "Critic vetoed this cycle");
     await db.insert(systemEvents).values({
@@ -847,158 +871,342 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
         拒否売り: vetoExitList.slice(0, 200),
       },
     });
-  } else if (critic.output.decision === "modify" && critic.output.adjustments) {
-    const buys = critic.output.adjustments.buys ?? {};
-    const exits = critic.output.adjustments.exits ?? {};
-    await db.insert(systemEvents).values({
-      strategyId,
-      kind: "critic_modify",
-      severity: "info",
-      message: `Critic modified: ${critic.output.reasoning.slice(0, 200)}`,
-      payload: {
-        cycleId,
-        before: { entries: plan.entries, exits: plan.exits },
-        after: { entries: final.entries, exits: final.exits },
-      },
+    return;
+  }
+  if (critic.output.decision !== "modify" || !critic.output.adjustments) return;
+
+  const buys = critic.output.adjustments.buys ?? {};
+  const exits = critic.output.adjustments.exits ?? {};
+  await db.insert(systemEvents).values({
+    strategyId,
+    kind: "critic_modify",
+    severity: "info",
+    message: `Critic modified: ${critic.output.reasoning.slice(0, 200)}`,
+    payload: {
       cycleId,
+      before: { entries: plan.entries, exits: plan.exits },
+      after: { entries: final.entries, exits: final.exits },
+    },
+    cycleId,
+  });
+  await notify({
+    level: "info",
+    title: "✏️ Critic 修正 (MODIFY)",
+    body: critic.output.reasoning.slice(0, 1000),
+    fields: {
+      買い修正: Object.keys(buys).length > 0 ? JSON.stringify(buys).slice(0, 200) : "なし",
+      売り修正: Object.keys(exits).length > 0 ? JSON.stringify(exits).slice(0, 200) : "なし",
+    },
+  });
+}
+
+interface ExecutionResult {
+  exitsExecuted: number;
+  entriesExecuted: number;
+  executedEntries: Array<{ symbol: string; budget: number }>;
+  skippedEntries: Array<{ symbol: string; budget: number; reason: string }>;
+}
+
+async function executeOneExit(args: {
+  strategyId: string;
+  symbol: string;
+  ctx: CoinCtx;
+  closePct: number;
+  modifiedByCritic: boolean;
+}): Promise<boolean> {
+  const { ctx, symbol, closePct, modifiedByCritic } = args;
+  const lastPrice = Number(ctx.snap.ticker.last) || 0;
+  if (lastPrice <= 0) return false;
+  try {
+    await executeExit({
+      strategyId: args.strategyId,
+      symbol,
+      decisionId: ctx.exit?.id ?? null,
+      marketPrice: lastPrice,
+      takerFeeRate: Number(ctx.coin.takerFeeRate),
+      quantityRatio: closePct / 100,
+      reason: modifiedByCritic ? `llm decision (critic modified → ${closePct}%)` : "llm decision",
     });
+    return true;
+  } catch (err) {
+    logger.error({ err, symbol }, "executeExit failed");
     await notify({
-      level: "info",
-      title: "✏️ Critic 修正 (MODIFY)",
-      body: critic.output.reasoning.slice(0, 1000),
+      level: "error",
+      title: `🚨 Exit 失敗 ${symbol}`,
+      body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
       fields: {
-        買い修正: Object.keys(buys).length > 0 ? JSON.stringify(buys).slice(0, 200) : "なし",
-        売り修正: Object.keys(exits).length > 0 ? JSON.stringify(exits).slice(0, 200) : "なし",
+        意図: `${closePct}% 決済`,
+        参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
+        影響: "ポジション保有継続、price-monitor SL に依存",
       },
     });
+    return false;
+  }
+}
+
+async function executeOneEntry(args: {
+  strategyId: string;
+  symbol: string;
+  ctx: CoinCtx;
+  budget: number;
+}): Promise<{ ok: boolean; reason?: string }> {
+  const { ctx, symbol, budget } = args;
+  const lastPrice = Number(ctx.snap.ticker.last) || 0;
+  if (lastPrice <= 0) {
+    logger.warn({ symbol, budget }, "executeEntry skipped: lastPrice <= 0 (1m bar empty)");
+    return { ok: false, reason: "1m bar 空で参考価格 0 円 (Tier 0 データ取得問題)" };
+  }
+  try {
+    const minDays = ctx.entry?.entryExpectedHoldingDaysMin
+      ? Number(ctx.entry.entryExpectedHoldingDaysMin)
+      : null;
+    const maxDays = ctx.entry?.entryExpectedHoldingDaysMax
+      ? Number(ctx.entry.entryExpectedHoldingDaysMax)
+      : null;
+    await executeEntry({
+      strategyId: args.strategyId,
+      symbol,
+      decisionId: ctx.entry?.id ?? null,
+      marketPrice: lastPrice,
+      budgetJpy: budget,
+      takerFeeRate: Number(ctx.coin.takerFeeRate),
+      entryReason: ctx.entry?.reasoning ?? null,
+      expectedHoldingDays:
+        minDays !== null && maxDays !== null ? { min: minDays, max: maxDays } : null,
+      targetPriceJpy: ctx.entry?.entryTargetPriceJpy ? Number(ctx.entry.entryTargetPriceJpy) : null,
+      exitCondition: ctx.entry?.entryExitCondition ?? null,
+    });
+    return { ok: true };
+  } catch (err) {
+    logger.error({ err, symbol }, "executeEntry failed");
+    const msg = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
+    await notify({
+      level: "error",
+      title: `🚨 Entry 失敗 ${symbol}`,
+      body: msg,
+      fields: {
+        配分: `¥${budget.toLocaleString()}`,
+        参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
+        影響: "この銘柄の Entry をスキップ、次サイクル待ち",
+      },
+    });
+    return { ok: false, reason: msg.slice(0, 200) };
+  }
+}
+
+/** Exit 後の実 cash で Entry 合計を比例縮小 (cash 不足ガード)。 */
+async function safetyScaleEntries(args: {
+  strategyId: string;
+  entries: Record<string, number>;
+}): Promise<Record<string, number>> {
+  const refreshedPortfolio = (
+    await db.select().from(portfolios).where(eq(portfolios.strategyId, args.strategyId)).limit(1)
+  )[0];
+  const cashAfterExits = Number(refreshedPortfolio?.cashJpy ?? 0);
+  const cashRoom = cashAfterExits * TOTAL_MAX_RATIO;
+  const plannedSum = Object.values(args.entries).reduce((s, v) => s + v, 0);
+  if (plannedSum <= cashRoom || plannedSum === 0) return args.entries;
+  const scale = cashRoom / plannedSum;
+  logger.warn({ plannedSum, cashRoom, scale }, "Exit 部分失敗で実 cash 不足 — Entry を比例縮小");
+  const scaled: Record<string, number> = {};
+  for (const [sym, jpy] of Object.entries(args.entries)) {
+    const v = Math.floor(jpy * scale);
+    if (v >= PER_COIN_MIN_JPY) scaled[sym] = v;
+  }
+  return scaled;
+}
+
+async function executeExitsAndEntries(args: {
+  strategyId: string;
+  ctxBySymbol: Map<string, CoinCtx>;
+  final: { entries: Record<string, number>; exits: ExecutionPlan["exits"] };
+  critic: Awaited<ReturnType<typeof runCritic>>;
+}): Promise<ExecutionResult> {
+  const { strategyId, ctxBySymbol, final, critic } = args;
+  const result: ExecutionResult = {
+    exitsExecuted: 0,
+    entriesExecuted: 0,
+    executedEntries: [],
+    skippedEntries: [],
+  };
+  if (critic.output.decision === "veto") return result;
+
+  for (const [symbol, exitPlan] of Object.entries(final.exits)) {
+    const c = ctxBySymbol.get(symbol);
+    if (!c || !c.openPos) continue;
+    const modified =
+      critic.output.decision === "modify" &&
+      critic.output.adjustments?.exits?.[symbol] !== undefined;
+    const ok = await executeOneExit({
+      strategyId,
+      symbol,
+      ctx: c,
+      closePct: exitPlan.closePct,
+      modifiedByCritic: modified,
+    });
+    if (ok) result.exitsExecuted++;
   }
 
-  // === 実行フェーズ ===
-  // approve / modify: Exit 実行 → cash safety check → Entry 実行
-  // veto: 何もしない
-  let exitsExecuted = 0;
-  let entriesExecutedFinal = 0;
-  const executedEntries: Array<{ symbol: string; budget: number }> = [];
-  const skippedEntries: Array<{ symbol: string; budget: number; reason: string }> = [];
+  const finalEntries = await safetyScaleEntries({ strategyId, entries: final.entries });
+
+  for (const [symbol, budget] of Object.entries(finalEntries)) {
+    const c = ctxBySymbol.get(symbol);
+    if (!c) continue;
+    const res = await executeOneEntry({ strategyId, symbol, ctx: c, budget });
+    if (res.ok) {
+      result.executedEntries.push({ symbol, budget });
+      result.entriesExecuted++;
+    } else if (res.reason) {
+      result.skippedEntries.push({ symbol, budget, reason: res.reason });
+    }
+  }
+  return result;
+}
+
+async function sendCycleCompletionNotification(args: {
+  strategyId: string;
+  ctxs: CoinCtx[];
+  enabledCoinsCount: number;
+  startedAt: number;
+  elapsedMs: number;
+  symbolsProcessed: number;
+  symbolsSkipped: number;
+  execution: ExecutionResult;
+  finalExits: ExecutionPlan["exits"];
+  criticDecision: string;
+}): Promise<void> {
+  const { strategyId, ctxs, execution, finalExits, criticDecision } = args;
+  const buys = execution.executedEntries.map((e) => `• ${e.symbol}: ¥${e.budget.toLocaleString()}`);
+  const skippedBuys = execution.skippedEntries.map(
+    (e) => `• ${e.symbol}: ¥${e.budget.toLocaleString()} — ${e.reason}`,
+  );
+  const closes = criticDecision === "veto" ? [] : Object.keys(finalExits).map((sym) => `• ${sym}`);
+
+  const refreshedAfterEntries = (
+    await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
+  )[0];
+  const cashAfter = Number(refreshedAfterEntries?.cashJpy ?? 0);
+  const initialCash = Number(refreshedAfterEntries?.initialCashJpy ?? 0);
+  const openPositions = await db
+    .select()
+    .from(positions)
+    .where(
+      and(eq(positions.strategyId, strategyId), eq(positions.status, PositionStatusValue.OPEN)),
+    );
+
+  const lastPriceByCoinId = new Map<string, number>(
+    ctxs.map((c) => [c.coin.id, Number(c.snap.ticker.last) || 0]),
+  );
+
+  const positionLines = await Promise.all(
+    openPositions.map(async (p) => {
+      const c = (await db.select().from(coins).where(eq(coins.id, p.coinId)).limit(1))[0];
+      const sym = c?.symbol ?? "?";
+      const qtyNum = Number(p.quantity);
+      const qty = qtyNum.toFixed(6);
+      const avg = Math.round(Number(p.avgEntryPrice)).toLocaleString();
+      const price = lastPriceByCoinId.get(p.coinId) ?? 0;
+      const valueJpy = Math.round(qtyNum * price).toLocaleString();
+      return `• ${sym}: ${qty} @ ¥${avg} (¥${valueJpy})`;
+    }),
+  );
+
+  const marketValue = openPositions.reduce((sum, p) => {
+    const price = lastPriceByCoinId.get(p.coinId) ?? 0;
+    return sum + Number(p.quantity) * price;
+  }, 0);
+  const totalAssetJpy = cashAfter + marketValue;
+
+  const cycleTrades = await db
+    .select({ pnl: trades.pnlJpy })
+    .from(trades)
+    .where(
+      and(eq(trades.strategyId, strategyId), gte(trades.executedAt, new Date(args.startedAt))),
+    );
+  const realizedPnlCycle = cycleTrades.reduce((s, t) => s + Number(t.pnl ?? 0), 0);
+  const cumulativePnl = totalAssetJpy - initialCash;
+  const fmtJpySigned = (v: number) =>
+    `${v >= 0 ? "+" : "-"}¥${Math.abs(Math.round(v)).toLocaleString()}`;
+
+  const bodyParts: string[] = [];
+  if (buys.length > 0) bodyParts.push(`**📥 新規 Entry**\n${buys.join("\n")}`);
+  if (skippedBuys.length > 0) bodyParts.push(`**⚠️ Entry 未実行**\n${skippedBuys.join("\n")}`);
+  if (closes.length > 0) bodyParts.push(`**📕 Exit**\n${closes.join("\n")}`);
+  if (positionLines.length > 0) {
+    bodyParts.push(`**📊 保有ポジション (${positionLines.length})**\n${positionLines.join("\n")}`);
+  }
+  bodyParts.push(
+    [
+      `**💰 現金**: ¥${Math.round(cashAfter).toLocaleString()}`,
+      `**🏦 資産時価総額**: ¥${Math.round(totalAssetJpy).toLocaleString()}`,
+      `**📈 実現損益 (今回)**: ${fmtJpySigned(realizedPnlCycle)}`,
+      `**🧮 累計損益**: ${fmtJpySigned(cumulativePnl)} (初期 ¥${Math.round(initialCash).toLocaleString()})`,
+    ].join("\n"),
+  );
+
+  const CRITIC_JP: Record<string, string> = { approve: "承認", veto: "拒否", modify: "修正" };
+  await notify({
+    level: "info",
+    title: "🔁 サイクル完了",
+    body: bodyParts.join("\n\n"),
+    fields: {
+      処理銘柄: `${args.symbolsProcessed}/${args.enabledCoinsCount}`,
+      Tier1スキップ: `${args.symbolsSkipped}/${args.enabledCoinsCount}`,
+      entry: `${execution.entriesExecuted}件`,
+      exit: `${execution.exitsExecuted}件`,
+      Critic判定: CRITIC_JP[criticDecision] ?? criticDecision,
+      所要時間: `${(args.elapsedMs / 1000).toFixed(1)}秒`,
+    },
+  });
+}
+
+/** Phase 6: Exit dry-run (Allocator + Clipper) → Critic → safety 実行 (Exit → Entry) → state 更新 → kill switch */
+export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
+  await assertNotEmergencyStop("finalize");
+  const { cycleId, strategyId, method, startedAt } = input;
+  const enabledCoins = await getCycleCoins(cycleId);
+  const riskParams = await getRiskParams();
+
+  const ctxs: CoinCtx[] = await Promise.all(
+    enabledCoins.map((coin) => buildCoinContext(coin, cycleId, strategyId)),
+  );
+
+  const currentPortfolio = (
+    await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
+  )[0];
+  const currentCashJpy = Number(currentPortfolio?.cashJpy ?? 0);
+  const signals: ExecutionPlanSignal[] = ctxs.map(ctxToSignal);
+
+  const plan = buildExecutionPlan({
+    signals,
+    currentCashJpy,
+    method,
+    riskParams: {
+      perCoinMaxRatio: riskParams.perCoinMaxRatio,
+      perCoinTotalMaxRatio: riskParams.perCoinTotalMaxRatio,
+    },
+  });
+
+  const equityForCritic =
+    currentCashJpy + Object.values(plan.currentPositions).reduce((s, v) => s + v, 0);
+  // Allocator 候補 = Analyst が buy を出した銘柄 (Critic modify の whitelist)
+  const buyCandidates = new Set(
+    signals.filter((s) => s.entry?.decision === "buy").map((s) => s.symbol),
+  );
+
+  const { final, criticOutput: critic } = await processCriticDecision({
+    cycleId,
+    strategyId,
+    plan,
+    ctxs,
+    buyCandidates,
+    currentCashJpy,
+    equityJpy: equityForCritic,
+    riskParams,
+  });
+
   const ctxBySymbol = new Map(ctxs.map((c) => [c.coin.symbol, c]));
-  let finalEntries: Record<string, number> = { ...final.entries };
-
-  if (critic.output.decision !== "veto") {
-    // Exit 実行
-    for (const [symbol, exitPlan] of Object.entries(final.exits)) {
-      const c = ctxBySymbol.get(symbol);
-      if (!c || !c.openPos) continue;
-      const lastPrice = Number(c.snap.ticker.last) || 0;
-      if (lastPrice <= 0) continue;
-      try {
-        await executeExit({
-          strategyId,
-          symbol,
-          decisionId: c.exit?.id ?? null,
-          marketPrice: lastPrice,
-          takerFeeRate: Number(c.coin.takerFeeRate),
-          quantityRatio: exitPlan.closePct / 100,
-          reason:
-            critic.output.decision === "modify" &&
-            critic.output.adjustments?.exits?.[symbol] !== undefined
-              ? `llm decision (critic modified → ${exitPlan.closePct}%)`
-              : "llm decision",
-        });
-        exitsExecuted++;
-      } catch (err) {
-        logger.error({ err, symbol }, "executeExit failed");
-        await notify({
-          level: "error",
-          title: `🚨 Exit 失敗 ${symbol}`,
-          body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
-          fields: {
-            意図: `${exitPlan.closePct}% 決済`,
-            参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
-            影響: "ポジション保有継続、price-monitor SL に依存",
-          },
-        });
-      }
-    }
-
-    // Exit 後の cash 再 fetch + safety re-check
-    // 計画は projectedCashJpy ベース。Exit 部分失敗で実 cash が下回ったら
-    // Entry 合計を比例縮小する (前段 Clipper を完全に再走させるより軽量)。
-    const refreshedPortfolio = (
-      await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
-    )[0];
-    const cashAfterExits = Number(refreshedPortfolio?.cashJpy ?? 0);
-    const cashRoom = cashAfterExits * TOTAL_MAX_RATIO;
-    const plannedSum = Object.values(finalEntries).reduce((s, v) => s + v, 0);
-    if (plannedSum > cashRoom && plannedSum > 0) {
-      const scale = cashRoom / plannedSum;
-      logger.warn(
-        { plannedSum, cashRoom, scale },
-        "Exit 部分失敗で実 cash 不足 — Entry を比例縮小",
-      );
-      const scaled: Record<string, number> = {};
-      for (const [sym, jpy] of Object.entries(finalEntries)) {
-        const v = Math.floor(jpy * scale);
-        if (v >= PER_COIN_MIN_JPY) scaled[sym] = v;
-      }
-      finalEntries = scaled;
-    }
-
-    // Entry 実行
-    for (const [symbol, budget] of Object.entries(finalEntries)) {
-      const c = ctxBySymbol.get(symbol);
-      if (!c) continue;
-      const lastPrice = Number(c.snap.ticker.last) || 0;
-      if (lastPrice <= 0) {
-        skippedEntries.push({
-          symbol,
-          budget,
-          reason: "1m bar 空で参考価格 0 円 (Tier 0 データ取得問題)",
-        });
-        logger.warn({ symbol, budget }, "executeEntry skipped: lastPrice <= 0 (1m bar empty)");
-        continue;
-      }
-      try {
-        const minDays = c.entry?.entryExpectedHoldingDaysMin
-          ? Number(c.entry.entryExpectedHoldingDaysMin)
-          : null;
-        const maxDays = c.entry?.entryExpectedHoldingDaysMax
-          ? Number(c.entry.entryExpectedHoldingDaysMax)
-          : null;
-        await executeEntry({
-          strategyId,
-          symbol,
-          decisionId: c.entry?.id ?? null,
-          marketPrice: lastPrice,
-          budgetJpy: budget,
-          takerFeeRate: Number(c.coin.takerFeeRate),
-          entryReason: c.entry?.reasoning ?? null,
-          expectedHoldingDays:
-            minDays !== null && maxDays !== null ? { min: minDays, max: maxDays } : null,
-          targetPriceJpy: c.entry?.entryTargetPriceJpy ? Number(c.entry.entryTargetPriceJpy) : null,
-          exitCondition: c.entry?.entryExitCondition ?? null,
-        });
-        executedEntries.push({ symbol, budget });
-        entriesExecutedFinal++;
-      } catch (err) {
-        logger.error({ err, symbol }, "executeEntry failed");
-        skippedEntries.push({
-          symbol,
-          budget,
-          reason: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
-        });
-        await notify({
-          level: "error",
-          title: `🚨 Entry 失敗 ${symbol}`,
-          body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
-          fields: {
-            配分: `¥${budget.toLocaleString()}`,
-            参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
-            影響: "この銘柄の Entry をスキップ、次サイクル待ち",
-          },
-        });
-      }
-    }
-  }
+  const execution = await executeExitsAndEntries({ strategyId, ctxBySymbol, final, critic });
 
   // system_state 更新 (連続失敗カウンタ + last_failure_kind をリセット)
   // EE: state は上書きしない。cycle 中にダッシュボードから「一時停止」を押した場合、
@@ -1017,13 +1225,9 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     .where(eq(systemState.id, "singleton"));
 
   await db.update(cycles).set({ completedAt: new Date() }).where(eq(cycles.id, cycleId));
-
   await checkAndTriggerKillSwitch({ strategyId });
 
   const elapsedMs = Date.now() - startedAt;
-  // 実際に走った数 (veto なら 0)
-  const exitsTriggered = exitsExecuted;
-  const entriesExecuted = entriesExecutedFinal;
   const symbolsSkipped = ctxs.filter((c) => c.analyst === null).length;
   const symbolsProcessed = ctxs.length;
 
@@ -1034,110 +1238,25 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       symbolsProcessed,
       symbolsSkipped,
       buySignals: buyCandidates.size,
-      exitsTriggered,
-      entriesExecuted,
-      finalEntries,
+      exitsTriggered: execution.exitsExecuted,
+      entriesExecuted: execution.entriesExecuted,
+      finalEntries: final.entries,
       criticDecision: critic.output.decision,
     },
     "Cycle done",
   );
 
-  // 約定明細 + 現ポジ一覧を embed body (markdown) に詰める
-  // buys は "実際に約定した銘柄" のみ。提案 (proposal) と実約定の差は skippedEntries に集約。
-  const buys = executedEntries.map((e) => `• ${e.symbol}: ¥${e.budget.toLocaleString()}`);
-  const skippedBuys = skippedEntries.map(
-    (e) => `• ${e.symbol}: ¥${e.budget.toLocaleString()} — ${e.reason}`,
-  );
-  // veto された場合 closes/buys は空 (Exit 実行スキップ済み)
-  const closes =
-    critic.output.decision === "veto" ? [] : Object.keys(final.exits).map((sym) => `• ${sym}`);
-
-  const refreshedAfterEntries = (
-    await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
-  )[0];
-  const cashAfter = Number(refreshedAfterEntries?.cashJpy ?? 0);
-  const initialCash = Number(refreshedAfterEntries?.initialCashJpy ?? 0);
-  const openPositions = await db
-    .select()
-    .from(positions)
-    .where(
-      and(eq(positions.strategyId, strategyId), eq(positions.status, PositionStatusValue.OPEN)),
-    );
-
-  // coinId → 最終価格 (このサイクルの snapshot から)
-  const lastPriceByCoinId = new Map<string, number>(
-    ctxs.map((c) => [c.coin.id, Number(c.snap.ticker.last) || 0]),
-  );
-
-  const positionLines = await Promise.all(
-    openPositions.map(async (p) => {
-      const c = (await db.select().from(coins).where(eq(coins.id, p.coinId)).limit(1))[0];
-      const sym = c?.symbol ?? "?";
-      const qtyNum = Number(p.quantity);
-      const qty = qtyNum.toFixed(6);
-      const avg = Math.round(Number(p.avgEntryPrice)).toLocaleString();
-      const price = lastPriceByCoinId.get(p.coinId) ?? 0;
-      const valueJpy = Math.round(qtyNum * price).toLocaleString();
-      return `• ${sym}: ${qty} @ ¥${avg} (¥${valueJpy})`;
-    }),
-  );
-
-  // 含み = Σ(qty × 直近価格)、資産時価総額 = 現金 + 含み
-  const marketValue = openPositions.reduce((sum, p) => {
-    const price = lastPriceByCoinId.get(p.coinId) ?? 0;
-    return sum + Number(p.quantity) * price;
-  }, 0);
-  const totalAssetJpy = cashAfter + marketValue;
-
-  // 今回サイクルの実現損益 = startedAt 以降に約定した trade の pnlJpy 合計
-  const cycleTrades = await db
-    .select({ pnl: trades.pnlJpy })
-    .from(trades)
-    .where(and(eq(trades.strategyId, strategyId), gte(trades.executedAt, new Date(startedAt))));
-  const realizedPnlCycle = cycleTrades.reduce((s, t) => s + Number(t.pnl ?? 0), 0);
-
-  // 累計損益 = 資産時価総額 − 初期資本 (実現 + 含み)
-  const cumulativePnl = totalAssetJpy - initialCash;
-
-  const fmtJpySigned = (v: number) =>
-    `${v >= 0 ? "+" : "-"}¥${Math.abs(Math.round(v)).toLocaleString()}`;
-
-  const bodyParts: string[] = [];
-  if (buys.length > 0) bodyParts.push(`**📥 新規 Entry**\n${buys.join("\n")}`);
-  if (skippedBuys.length > 0) {
-    bodyParts.push(`**⚠️ Entry 未実行**\n${skippedBuys.join("\n")}`);
-  }
-  if (closes.length > 0) bodyParts.push(`**📕 Exit**\n${closes.join("\n")}`);
-  if (positionLines.length > 0) {
-    bodyParts.push(`**📊 保有ポジション (${positionLines.length})**\n${positionLines.join("\n")}`);
-  }
-  bodyParts.push(
-    [
-      `**💰 現金**: ¥${Math.round(cashAfter).toLocaleString()}`,
-      `**🏦 資産時価総額**: ¥${Math.round(totalAssetJpy).toLocaleString()}`,
-      `**📈 実現損益 (今回)**: ${fmtJpySigned(realizedPnlCycle)}`,
-      `**🧮 累計損益**: ${fmtJpySigned(cumulativePnl)} (初期 ¥${Math.round(initialCash).toLocaleString()})`,
-    ].join("\n"),
-  );
-
-  const CRITIC_JP: Record<string, string> = {
-    approve: "承認",
-    veto: "拒否",
-    modify: "修正",
-  };
-
-  await notify({
-    level: "info",
-    title: "🔁 サイクル完了",
-    body: bodyParts.join("\n\n"),
-    fields: {
-      処理銘柄: `${symbolsProcessed}/${enabledCoins.length}`,
-      Tier1スキップ: `${symbolsSkipped}/${enabledCoins.length}`,
-      entry: `${entriesExecuted}件`,
-      exit: `${exitsTriggered}件`,
-      Critic判定: CRITIC_JP[critic.output.decision] ?? critic.output.decision,
-      所要時間: `${(elapsedMs / 1000).toFixed(1)}秒`,
-    },
+  await sendCycleCompletionNotification({
+    strategyId,
+    ctxs,
+    enabledCoinsCount: enabledCoins.length,
+    startedAt,
+    elapsedMs,
+    symbolsProcessed,
+    symbolsSkipped,
+    execution,
+    finalExits: final.exits,
+    criticDecision: critic.output.decision,
   });
 
   return {
@@ -1147,8 +1266,8 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     symbolsSkipped,
     symbolsFailed: 0,
     buySignals: buyCandidates.size,
-    exitsTriggered,
-    entriesExecuted,
+    exitsTriggered: execution.exitsExecuted,
+    entriesExecuted: execution.entriesExecuted,
     criticDecision: critic.output.decision,
   };
 }

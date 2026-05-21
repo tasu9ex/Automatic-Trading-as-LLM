@@ -42,6 +42,121 @@ function stateBadgeVariant(state: string): "default" | "destructive" | "outline"
   return "outline";
 }
 
+function nextScheduleText(args: {
+  isRunning: boolean;
+  isPaused: boolean;
+  isStopped: boolean;
+  nextScheduledAt: string | null;
+}): string {
+  if (args.isRunning && args.nextScheduledAt) {
+    return new Date(args.nextScheduledAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
+  }
+  if (args.isPaused || args.isStopped) return "再開・起動後に決定";
+  return "—";
+}
+
+interface ActionButtonsProps {
+  effectiveState: "stopped" | "paused" | "running" | "killed" | string;
+  emergencyStop: boolean;
+  actionsDisabled: boolean;
+  runAction: (
+    title: string,
+    action: () => Promise<SystemControlActionResult>,
+    opts?: {
+      message?: string;
+      destructive?: boolean;
+      optimisticTarget?: string;
+      confirmLabel?: string;
+    },
+  ) => void;
+}
+
+function ActionButtons({
+  effectiveState,
+  emergencyStop,
+  actionsDisabled,
+  runAction,
+}: ActionButtonsProps) {
+  const isKilled = effectiveState === "killed";
+  const isRunning = effectiveState === "running";
+  const isStopped = effectiveState === "stopped";
+  const isPaused = effectiveState === "paused";
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {isStopped && (
+        <Button
+          disabled={actionsDisabled || isKilled}
+          onClick={() =>
+            runAction("システムを起動しますか?", startSystemAction, {
+              message: "次のスケジュール枠から判定サイクルが開始します。",
+              optimisticTarget: "running",
+              confirmLabel: "起動する",
+            })
+          }
+        >
+          システム起動
+        </Button>
+      )}
+      {isPaused && (
+        <Button
+          disabled={actionsDisabled || isKilled}
+          onClick={() =>
+            runAction("判定を再開しますか?", resumeSystemAction, {
+              message: "緊急停止フラグが立っていれば同時に解除されます。",
+              optimisticTarget: "running",
+              confirmLabel: "再開する",
+            })
+          }
+        >
+          再開
+        </Button>
+      )}
+      {isRunning && (
+        <Button
+          variant="outline"
+          disabled={actionsDisabled}
+          onClick={() =>
+            runAction("LLM 判定を一時停止しますか?", pauseSystemAction, {
+              message:
+                "現在実行中のサイクルは最後まで完走し、停止は次サイクルから反映されます。\n進行中のサイクルも即座に止めたい場合は「緊急停止」を使ってください。",
+              optimisticTarget: "paused",
+              confirmLabel: "一時停止する",
+            })
+          }
+        >
+          一時停止
+        </Button>
+      )}
+      {(isRunning || isPaused) && !emergencyStop && (
+        <Button
+          variant="destructive"
+          disabled={actionsDisabled || isKilled}
+          onClick={() =>
+            runAction("🛑 緊急停止を実行しますか?", emergencyStopAction, {
+              message:
+                "進行中のサイクルを次の phase 境界で即座に中断します。\n次サイクルも停止します (再開ボタンで両方解除)。",
+              destructive: true,
+              optimisticTarget: "paused",
+              confirmLabel: "緊急停止する",
+            })
+          }
+        >
+          緊急停止
+        </Button>
+      )}
+      {emergencyStop && (
+        <p className="text-amber-600 text-sm dark:text-amber-400">緊急停止中 (再開ボタンで解除)</p>
+      )}
+      {isKilled && (
+        <p className="text-muted-foreground text-sm">
+          Kill Switch 発動中です。再開は現状 DB 操作が必要です。
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function SystemControls({
   state,
   killReason,
@@ -205,91 +320,17 @@ export function SystemControls({
             <div className="flex flex-col gap-1.5">
               <span className="text-muted-foreground text-xs">次回判定サイクル (JST)</span>
               <span className="font-mono text-sm">
-                {isRunning && nextScheduledAt
-                  ? new Date(nextScheduledAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })
-                  : isRunning
-                    ? "—"
-                    : isPaused || isStopped
-                      ? "再開・起動後に決定"
-                      : "—"}
+                {nextScheduleText({ isRunning, isPaused, isStopped, nextScheduledAt })}
               </span>
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            {isStopped && (
-              <Button
-                disabled={actionsDisabled || isKilled}
-                onClick={() =>
-                  runAction("システムを起動しますか?", startSystemAction, {
-                    message: "次のスケジュール枠から判定サイクルが開始します。",
-                    optimisticTarget: "running",
-                    confirmLabel: "起動する",
-                  })
-                }
-              >
-                システム起動
-              </Button>
-            )}
-            {isPaused && (
-              <Button
-                disabled={actionsDisabled || isKilled}
-                onClick={() =>
-                  runAction("判定を再開しますか?", resumeSystemAction, {
-                    message: "緊急停止フラグが立っていれば同時に解除されます。",
-                    optimisticTarget: "running",
-                    confirmLabel: "再開する",
-                  })
-                }
-              >
-                再開
-              </Button>
-            )}
-            {isRunning && (
-              <Button
-                variant="outline"
-                disabled={actionsDisabled}
-                onClick={() =>
-                  runAction("LLM 判定を一時停止しますか?", pauseSystemAction, {
-                    // BB-1: 通常 pause の挙動を明示
-                    message:
-                      "現在実行中のサイクルは最後まで完走し、停止は次サイクルから反映されます。\n進行中のサイクルも即座に止めたい場合は「緊急停止」を使ってください。",
-                    optimisticTarget: "paused",
-                    confirmLabel: "一時停止する",
-                  })
-                }
-              >
-                一時停止
-              </Button>
-            )}
-            {(isRunning || isPaused) && !emergencyStop && (
-              <Button
-                variant="destructive"
-                disabled={actionsDisabled || isKilled}
-                onClick={() =>
-                  runAction("🛑 緊急停止を実行しますか?", emergencyStopAction, {
-                    message:
-                      "進行中のサイクルを次の phase 境界で即座に中断します。\n次サイクルも停止します (再開ボタンで両方解除)。",
-                    destructive: true,
-                    optimisticTarget: "paused",
-                    confirmLabel: "緊急停止する",
-                  })
-                }
-              >
-                緊急停止
-              </Button>
-            )}
-            {emergencyStop && (
-              <p className="text-amber-600 text-sm dark:text-amber-400">
-                緊急停止中 (再開ボタンで解除)
-              </p>
-            )}
-            {isKilled && (
-              <p className="text-muted-foreground text-sm">
-                Kill Switch 発動中です。再開は現状 DB 操作が必要です。
-              </p>
-            )}
-          </div>
+          <ActionButtons
+            effectiveState={effectiveState}
+            emergencyStop={emergencyStop}
+            actionsDisabled={actionsDisabled}
+            runAction={runAction}
+          />
 
           {error && <p className="text-destructive text-sm">{error}</p>}
         </CardContent>
