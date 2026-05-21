@@ -10,7 +10,7 @@ import {
 } from "@/app/actions/system-control";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   CYCLE_INTERVAL_HOURS,
@@ -53,6 +53,8 @@ export function SystemControls({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [interval, setIntervalHours] = useState<CycleIntervalHours>(cycleIntervalHours);
+  // ロック解除しないと操作できない (誤操作防止)
+  const [unlocked, setUnlocked] = useState(false);
 
   useEffect(() => {
     setIntervalHours(cycleIntervalHours);
@@ -131,126 +133,147 @@ export function SystemControls({
     });
   }
 
+  const actionsDisabled = pending || !unlocked;
+
   return (
     <Card>
-      <CardHeader className="pb-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+      <details>
+        <summary className="flex cursor-pointer select-none items-center justify-between px-6 py-4 hover:bg-muted/30">
           <div>
             <CardTitle className="text-base">システム制御</CardTitle>
             <CardDescription>LLM 判定の停止・再開と実行間隔</CardDescription>
           </div>
-          <Badge variant={stateBadgeVariant(effectiveState)}>
-            {STATE_LABELS[effectiveState] ?? effectiveState}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {killReason && <p className="text-destructive text-sm">Kill Switch: {killReason}</p>}
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <span className="text-muted-foreground text-xs">実行レート</span>
-            <select
-              className="h-8 rounded-lg border border-border bg-background px-2 text-sm disabled:opacity-50"
-              value={interval}
-              disabled={pending || isKilled}
-              onChange={(e) => onIntervalChange(Number(e.target.value) as CycleIntervalHours)}
-            >
-              {CYCLE_INTERVAL_HOURS.map((h) => (
-                <option key={h} value={h}>
-                  {formatIntervalLabel(h)}
-                </option>
-              ))}
-            </select>
+          <div className="flex items-center gap-2">
+            <Badge variant={stateBadgeVariant(effectiveState)}>
+              {STATE_LABELS[effectiveState] ?? effectiveState}
+            </Badge>
+            <span className="text-muted-foreground text-xs">▼ 展開</span>
           </div>
-
-          <div className="flex flex-col gap-1.5">
-            <span className="text-muted-foreground text-xs">次回判定サイクル (JST)</span>
-            <span className="font-mono text-sm">
-              {isRunning && nextScheduledAt
-                ? new Date(nextScheduledAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })
-                : isRunning
-                  ? "—"
-                  : isPaused || isStopped
-                    ? "再開・起動後に決定"
-                    : "—"}
+        </summary>
+        <CardContent className="flex flex-col gap-4 border-border border-t pt-4">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground text-xs">
+              {unlocked
+                ? "🔓 編集モード (再度押すとロックされます)"
+                : "🔒 ロック中 — 制御操作には右のボタンを押してください"}
             </span>
+            <Button
+              type="button"
+              variant={unlocked ? "outline" : "default"}
+              size="sm"
+              onClick={() => setUnlocked(!unlocked)}
+            >
+              {unlocked ? "🔒 ロック" : "🔓 ロック解除"}
+            </Button>
           </div>
-        </div>
 
-        <div className="flex flex-wrap gap-2">
-          {isStopped && (
-            <Button
-              disabled={pending || isKilled}
-              onClick={() =>
-                runAction("システムを起動しますか?", startSystemAction, {
-                  message: "次のスケジュール枠から判定サイクルが開始します。",
-                  optimisticTarget: "running",
-                })
-              }
-            >
-              システム起動
-            </Button>
-          )}
-          {isPaused && (
-            <Button
-              disabled={pending || isKilled}
-              onClick={() =>
-                runAction("判定を再開しますか?", resumeSystemAction, {
-                  message: "緊急停止フラグが立っていれば同時に解除されます。",
-                  optimisticTarget: "running",
-                })
-              }
-            >
-              再開
-            </Button>
-          )}
-          {isRunning && (
-            <Button
-              variant="outline"
-              disabled={pending}
-              onClick={() =>
-                runAction("LLM 判定を一時停止しますか?", pauseSystemAction, {
-                  // BB-1: 通常 pause の挙動を明示
-                  message:
-                    "現在実行中のサイクルは最後まで完走し、停止は次サイクルから反映されます。\n進行中のサイクルも即座に止めたい場合は「緊急停止」を使ってください。",
-                  optimisticTarget: "paused",
-                })
-              }
-            >
-              一時停止
-            </Button>
-          )}
-          {(isRunning || isPaused) && !emergencyStop && (
-            <Button
-              variant="destructive"
-              disabled={pending || isKilled}
-              onClick={() =>
-                runAction("🛑 緊急停止を実行しますか?", emergencyStopAction, {
-                  message:
-                    "進行中のサイクルを次の phase 境界で即座に中断します。\n次サイクルも停止します (再開ボタンで両方解除)。",
-                  destructive: true,
-                  optimisticTarget: "paused",
-                })
-              }
-            >
-              緊急停止
-            </Button>
-          )}
-          {emergencyStop && (
-            <p className="text-amber-600 text-sm dark:text-amber-400">
-              緊急停止中 (再開ボタンで解除)
-            </p>
-          )}
-          {isKilled && (
-            <p className="text-muted-foreground text-sm">
-              Kill Switch 発動中です。再開は現状 DB 操作が必要です。
-            </p>
-          )}
-        </div>
+          {killReason && <p className="text-destructive text-sm">Kill Switch: {killReason}</p>}
 
-        {error && <p className="text-destructive text-sm">{error}</p>}
-      </CardContent>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-muted-foreground text-xs">実行レート</span>
+              <select
+                className="h-8 rounded-lg border border-border bg-background px-2 text-sm disabled:opacity-50"
+                value={interval}
+                disabled={actionsDisabled || isKilled}
+                onChange={(e) => onIntervalChange(Number(e.target.value) as CycleIntervalHours)}
+              >
+                {CYCLE_INTERVAL_HOURS.map((h) => (
+                  <option key={h} value={h}>
+                    {formatIntervalLabel(h)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <span className="text-muted-foreground text-xs">次回判定サイクル (JST)</span>
+              <span className="font-mono text-sm">
+                {isRunning && nextScheduledAt
+                  ? new Date(nextScheduledAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })
+                  : isRunning
+                    ? "—"
+                    : isPaused || isStopped
+                      ? "再開・起動後に決定"
+                      : "—"}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {isStopped && (
+              <Button
+                disabled={actionsDisabled || isKilled}
+                onClick={() =>
+                  runAction("システムを起動しますか?", startSystemAction, {
+                    message: "次のスケジュール枠から判定サイクルが開始します。",
+                    optimisticTarget: "running",
+                  })
+                }
+              >
+                システム起動
+              </Button>
+            )}
+            {isPaused && (
+              <Button
+                disabled={actionsDisabled || isKilled}
+                onClick={() =>
+                  runAction("判定を再開しますか?", resumeSystemAction, {
+                    message: "緊急停止フラグが立っていれば同時に解除されます。",
+                    optimisticTarget: "running",
+                  })
+                }
+              >
+                再開
+              </Button>
+            )}
+            {isRunning && (
+              <Button
+                variant="outline"
+                disabled={actionsDisabled}
+                onClick={() =>
+                  runAction("LLM 判定を一時停止しますか?", pauseSystemAction, {
+                    // BB-1: 通常 pause の挙動を明示
+                    message:
+                      "現在実行中のサイクルは最後まで完走し、停止は次サイクルから反映されます。\n進行中のサイクルも即座に止めたい場合は「緊急停止」を使ってください。",
+                    optimisticTarget: "paused",
+                  })
+                }
+              >
+                一時停止
+              </Button>
+            )}
+            {(isRunning || isPaused) && !emergencyStop && (
+              <Button
+                variant="destructive"
+                disabled={actionsDisabled || isKilled}
+                onClick={() =>
+                  runAction("🛑 緊急停止を実行しますか?", emergencyStopAction, {
+                    message:
+                      "進行中のサイクルを次の phase 境界で即座に中断します。\n次サイクルも停止します (再開ボタンで両方解除)。",
+                    destructive: true,
+                    optimisticTarget: "paused",
+                  })
+                }
+              >
+                緊急停止
+              </Button>
+            )}
+            {emergencyStop && (
+              <p className="text-amber-600 text-sm dark:text-amber-400">
+                緊急停止中 (再開ボタンで解除)
+              </p>
+            )}
+            {isKilled && (
+              <p className="text-muted-foreground text-sm">
+                Kill Switch 発動中です。再開は現状 DB 操作が必要です。
+              </p>
+            )}
+          </div>
+
+          {error && <p className="text-destructive text-sm">{error}</p>}
+        </CardContent>
+      </details>
       <ConfirmDialog
         open={confirm !== null}
         title={confirm?.title ?? ""}

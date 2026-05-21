@@ -2,7 +2,7 @@
 
 import { setRiskParamsAction } from "@/app/actions/system-control";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -29,6 +29,8 @@ export function RiskParams({
   const [dd, setDd] = useState((portfolioDdTrigger * 100).toFixed(1));
   const [threshold, setThreshold] = useState(String(autoPauseThreshold));
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // ロック解除しないと編集できない (誤操作防止)。default は locked。
+  const [unlocked, setUnlocked] = useState(false);
 
   // Q: 入力バリデーション。空 / NaN / 範囲外で保存ボタンを disable + ヒント表示。
   // サーバ側 (setRiskParamsAction) でも同じ範囲を再チェックする (defence in depth)。
@@ -85,68 +87,101 @@ export function RiskParams({
     });
   }
 
+  const inputsDisabled = pending || !unlocked;
+
   return (
     <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base">リスクパラメータ</CardTitle>
-        <CardDescription>
-          ハードガード閾値。次サイクル開始時に反映される。値は DB (system_state) に保存。
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Field
-            label="段 1: per-cycle 上限 (%)"
-            help="1 サイクル内の 1 銘柄あたり新規 buy 上限 (現金 × この比率)"
-            value={perCoin}
-            min={1}
-            max={100}
-            step={0.1}
-            onChange={setPerCoin}
-            disabled={pending}
-            error={perCoinError}
-          />
-          <Field
-            label="段 2: per-coin 総上限 (%)"
-            help="1 銘柄の総エクスポージャ上限 (時価総額 × この比率、100% = 制限なし)"
-            value={perCoinTotal}
-            min={1}
-            max={100}
-            step={0.1}
-            onChange={setPerCoinTotal}
-            disabled={pending}
-            error={perCoinTotalError}
-          />
-          <Field
-            label="最大 DD (HWM 比) (%)"
-            help="HWM (資産時価総額のピーク) からの DD がこの値以上 → 全 close + killed"
-            value={dd}
-            min={5}
-            max={99}
-            step={0.1}
-            onChange={setDd}
-            disabled={pending}
-            error={ddError}
-          />
-          <Field
-            label="連続失敗 auto-pause"
-            help="この回数の連続失敗で paused"
-            value={threshold}
-            min={1}
-            max={10}
-            step={1}
-            onChange={setThreshold}
-            disabled={pending}
-            error={thresholdError}
-          />
-        </div>
-        <div className="flex items-center justify-between">
-          <Button onClick={() => setConfirmOpen(true)} disabled={!dirty || pending}>
-            保存
-          </Button>
-          {error && <p className="text-destructive text-sm">{error}</p>}
-        </div>
-      </CardContent>
+      <details>
+        <summary className="flex cursor-pointer select-none items-center justify-between px-6 py-4 hover:bg-muted/30">
+          <div>
+            <CardTitle className="text-base">リスクパラメータ</CardTitle>
+            <CardDescription>
+              ハードガード閾値。次サイクル開始時に反映される。値は DB (system_state) に保存。
+            </CardDescription>
+          </div>
+          <span className="text-muted-foreground text-xs">▼ 展開</span>
+        </summary>
+        <CardContent className="flex flex-col gap-4 border-border border-t pt-4">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground text-xs">
+              {unlocked
+                ? "🔓 編集モード (保存するか、ロックすると元に戻ります)"
+                : "🔒 ロック中 — 値を変更するには右のボタンを押してください"}
+            </span>
+            <Button
+              type="button"
+              variant={unlocked ? "outline" : "default"}
+              size="sm"
+              onClick={() => {
+                if (unlocked) {
+                  // ロックに戻す: 編集内容を破棄
+                  setPerCoin((perCoinMaxRatio * 100).toFixed(1));
+                  setPerCoinTotal((perCoinTotalMaxRatio * 100).toFixed(1));
+                  setDd((portfolioDdTrigger * 100).toFixed(1));
+                  setThreshold(String(autoPauseThreshold));
+                  setError(null);
+                }
+                setUnlocked(!unlocked);
+              }}
+              disabled={pending}
+            >
+              {unlocked ? "🔒 ロック" : "🔓 ロック解除"}
+            </Button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Field
+              label="段 1: per-cycle 上限 (%)"
+              help="1 サイクル内の 1 銘柄あたり新規 buy 上限 (現金 × この比率)"
+              value={perCoin}
+              min={1}
+              max={100}
+              step={0.1}
+              onChange={setPerCoin}
+              disabled={inputsDisabled}
+              error={perCoinError}
+            />
+            <Field
+              label="段 2: per-coin 総上限 (%)"
+              help="1 銘柄の総エクスポージャ上限 (時価総額 × この比率、100% = 制限なし)"
+              value={perCoinTotal}
+              min={1}
+              max={100}
+              step={0.1}
+              onChange={setPerCoinTotal}
+              disabled={inputsDisabled}
+              error={perCoinTotalError}
+            />
+            <Field
+              label="最大 DD (HWM 比) (%)"
+              help="HWM (資産時価総額のピーク) からの DD がこの値以上 → 全 close + killed"
+              value={dd}
+              min={5}
+              max={99}
+              step={0.1}
+              onChange={setDd}
+              disabled={inputsDisabled}
+              error={ddError}
+            />
+            <Field
+              label="連続失敗 auto-pause"
+              help="この回数の連続失敗で paused"
+              value={threshold}
+              min={1}
+              max={10}
+              step={1}
+              onChange={setThreshold}
+              disabled={inputsDisabled}
+              error={thresholdError}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Button onClick={() => setConfirmOpen(true)} disabled={!dirty || pending || !unlocked}>
+              保存
+            </Button>
+            {error && <p className="text-destructive text-sm">{error}</p>}
+          </div>
+        </CardContent>
+      </details>
       <ConfirmDialog
         open={confirmOpen}
         title="リスクパラメータを更新しますか?"
