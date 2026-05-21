@@ -50,7 +50,11 @@ export function SystemControls({
   emergencyStop,
 }: SystemControlsProps) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  // 起動/停止/再開/緊急停止系 (= action) と、実行レート変更 (= interval) を独立トラッキング。
+  // 全部一個の useTransition で pending 共有していると、実行レート保存中に起動ボタンも
+  // グレーアウトする副作用がある。
+  const [actionPending, startActionTransition] = useTransition();
+  const [intervalPending, startIntervalTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [interval, setIntervalHours] = useState<CycleIntervalHours>(cycleIntervalHours);
   // ロック解除しないと操作できない (誤操作防止)
@@ -101,7 +105,7 @@ export function SystemControls({
         setConfirm(null);
         setError(null);
         if (opts?.optimisticTarget) setOptimisticState(opts.optimisticTarget);
-        startTransition(async () => {
+        startActionTransition(async () => {
           const res = await action();
           if (!res.ok) {
             setOptimisticState(null); // 失敗 → 旧表示に戻す
@@ -125,7 +129,7 @@ export function SystemControls({
       onConfirm: () => {
         setConfirm(null);
         setError(null);
-        startTransition(async () => {
+        startIntervalTransition(async () => {
           const res = await setCycleIntervalAction(hours);
           if (!res.ok) {
             setError(res.error);
@@ -142,7 +146,10 @@ export function SystemControls({
     });
   }
 
-  const actionsDisabled = pending || !unlocked;
+  // action buttons (起動/停止/再開/緊急停止) は interval 変更とは独立
+  const actionsDisabled = actionPending || !unlocked;
+  // select disabled は interval pending のみ。actionPending とは独立
+  const selectDisabled = intervalPending || !unlocked;
 
   return (
     <Card>
@@ -184,7 +191,7 @@ export function SystemControls({
               <select
                 className="h-8 rounded-lg border border-border bg-background px-2 text-sm disabled:opacity-50"
                 value={interval}
-                disabled={actionsDisabled || isKilled}
+                disabled={selectDisabled || isKilled}
                 onChange={(e) => onIntervalChange(Number(e.target.value) as CycleIntervalHours)}
               >
                 {CYCLE_INTERVAL_HOURS.map((h) => (
