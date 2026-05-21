@@ -95,9 +95,7 @@ export function RiskParams({
         <summary className="flex cursor-pointer select-none items-center justify-between px-6 py-4 hover:bg-muted/30">
           <div>
             <CardTitle className="text-base">リスクパラメータ</CardTitle>
-            <CardDescription>
-              ハードガード閾値。次サイクル開始時に反映される。値は DB (system_state) に保存。
-            </CardDescription>
+            <CardDescription>ハードガード閾値。次サイクル開始時に反映される。</CardDescription>
           </div>
           <span className="text-muted-foreground text-xs">▼ 展開</span>
         </summary>

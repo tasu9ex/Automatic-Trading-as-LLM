@@ -1,16 +1,21 @@
 import { signOutAction } from "@/app/actions/auth";
 import { AutoRefresh } from "@/components/dashboard/auto-refresh";
+import { CapitalEvents } from "@/components/dashboard/capital-events";
 import { CoinChecklist } from "@/components/dashboard/coin-checklist";
+import { RecentEvents } from "@/components/dashboard/recent-events";
 import { RiskParams } from "@/components/dashboard/risk-params";
 import { SystemControls } from "@/components/dashboard/system-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  getCapitalEvents,
   getCoinChecklist,
   getDashboardStats,
   getOpenPositions,
+  getPositionDetails,
   getRecentCycles,
+  getRecentSystemEvents,
   getTickerSnapshot,
   isCycleInFlight,
 } from "@/lib/cycle/queries";
@@ -42,15 +47,28 @@ export default async function Home({
 
   // M: 認証は middleware (updateSession) が一手に担う。未ログインは middleware で /login へ
   //    redirect されるためここに到達しない。重複 getUser() の Supabase 往復を削減。
-  const [stats, openPositions, recentCycles, coinChecklist, cycleInFlight, ticker] =
-    await Promise.all([
-      getDashboardStats(),
-      getOpenPositions(),
-      getRecentCycles(cyclesLimit),
-      getCoinChecklist(),
-      isCycleInFlight(),
-      getTickerSnapshot(),
-    ]);
+  const [
+    stats,
+    openPositions,
+    recentCycles,
+    coinChecklist,
+    cycleInFlight,
+    ticker,
+    recentEvents,
+    capitalEvents,
+    positionDetails,
+  ] = await Promise.all([
+    getDashboardStats(),
+    getOpenPositions(),
+    getRecentCycles(cyclesLimit),
+    getCoinChecklist(),
+    isCycleInFlight(),
+    getTickerSnapshot(),
+    getRecentSystemEvents(20),
+    getCapitalEvents(20),
+    getPositionDetails(),
+  ]);
+  const positionDetailsById = new Map(positionDetails.map((d) => [d.positionId, d]));
 
   // 時価評価: 現金 + 全 open position の (現在価格 × qty) - 元本
   // realized は cash に既に反映済みなので加算しない (二重計上回避)
@@ -102,51 +120,113 @@ export default async function Home({
         autoPauseThreshold={stats.autoPauseThreshold}
       />
 
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>現金</CardDescription>
-            <CardTitle className="font-mono text-lg">{jpy(stats.cashJpy)}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>実現損益</CardDescription>
-            <CardTitle
-              className={`font-mono text-lg ${
-                stats.realizedPnlJpy >= 0 ? "text-emerald-500" : "text-red-500"
-              }`}
-            >
-              {jpy(stats.realizedPnlJpy)}
-            </CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>資産時価総額</CardDescription>
-            <CardTitle className="font-mono text-lg">{jpy(equity)}</CardTitle>
-            <CardDescription className="pt-1 text-xs">
-              累計:{" "}
-              <span className={totalPnl >= 0 ? "text-emerald-500" : "text-red-500"}>
-                {jpy(totalPnl)} ({totalPnlPct.toFixed(2)}%)
-              </span>
-              {" / "}
-              含み:{" "}
-              <span className={unrealizedPnl >= 0 ? "text-emerald-500" : "text-red-500"}>
-                {jpy(unrealizedPnl)}
-              </span>
-            </CardDescription>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>本日 / 累計 サイクル</CardDescription>
-            <CardTitle className="font-mono text-lg">
-              {stats.cyclesToday} / {stats.cyclesTotal}
-            </CardTitle>
-          </CardHeader>
-        </Card>
-      </section>
+      {/* HWM-base DD (現在の Kill Switch 距離感) */}
+      {(() => {
+        const hwm = stats.highWaterMarkJpy;
+        const ddFromHwm = hwm > 0 ? (hwm - equity) / hwm : 0;
+        const ddPct = (ddFromHwm * 100).toFixed(2);
+        const triggerPct = (stats.portfolioDdTrigger * 100).toFixed(1);
+        const ddColor =
+          ddFromHwm >= 0.5 * stats.portfolioDdTrigger ? "text-red-500" : "text-muted-foreground";
+        return (
+          <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>現金</CardDescription>
+                <CardTitle className="font-mono text-lg">{jpy(stats.cashJpy)}</CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>実現損益</CardDescription>
+                <CardTitle
+                  className={`font-mono text-lg ${
+                    stats.realizedPnlJpy >= 0 ? "text-emerald-500" : "text-red-500"
+                  }`}
+                >
+                  {jpy(stats.realizedPnlJpy)}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>資産時価総額</CardDescription>
+                <CardTitle className="font-mono text-lg">{jpy(equity)}</CardTitle>
+                <CardDescription className="pt-1 text-xs">
+                  累計:{" "}
+                  <span className={totalPnl >= 0 ? "text-emerald-500" : "text-red-500"}>
+                    {jpy(totalPnl)} ({totalPnlPct.toFixed(2)}%)
+                  </span>
+                  {" / "}
+                  含み:{" "}
+                  <span className={unrealizedPnl >= 0 ? "text-emerald-500" : "text-red-500"}>
+                    {jpy(unrealizedPnl)}
+                  </span>
+                </CardDescription>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>本日 / 累計 サイクル</CardDescription>
+                <CardTitle className="font-mono text-lg">
+                  {stats.cyclesToday} / {stats.cyclesTotal}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>HWM (資産ピーク)</CardDescription>
+                <CardTitle className="font-mono text-lg">{jpy(hwm)}</CardTitle>
+                <CardDescription className={`pt-1 text-xs ${ddColor}`}>
+                  現在 DD: {ddPct}% / Kill 閾値: {triggerPct}%
+                </CardDescription>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>連続失敗</CardDescription>
+                <CardTitle
+                  className={`font-mono text-lg ${
+                    stats.consecutiveFailures > 0 ? "text-amber-600 dark:text-amber-400" : ""
+                  }`}
+                >
+                  {stats.consecutiveFailures} / {stats.autoPauseThreshold}
+                </CardTitle>
+                {stats.lastFailureKind && (
+                  <CardDescription className="pt-1 text-xs">
+                    種別: {stats.lastFailureKind}
+                  </CardDescription>
+                )}
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>累計 API コスト (USD)</CardDescription>
+                <CardTitle className="font-mono text-lg">
+                  ${stats.cumulativeCostUsd.toFixed(2)}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Kill Switch 状態</CardDescription>
+                <CardTitle
+                  className={`font-mono text-lg ${
+                    stats.state === "killed" ? "text-red-500" : "text-emerald-500"
+                  }`}
+                >
+                  {stats.state === "killed" ? "発動中" : "未発動"}
+                </CardTitle>
+                {stats.killedAt && (
+                  <CardDescription className="pt-1 text-xs">
+                    {formatJstDateTime(stats.killedAt)}
+                  </CardDescription>
+                )}
+              </CardHeader>
+            </Card>
+          </section>
+        );
+      })()}
 
       <Card>
         <CardHeader>
@@ -164,7 +244,7 @@ export default async function Home({
           {openPositions.length === 0 ? (
             <p className="text-muted-foreground text-sm">なし</p>
           ) : (
-            <ul className="space-y-2 text-sm">
+            <ul className="space-y-1 text-sm">
               {openPositions.map((p) => {
                 // S: 銘柄ごとの含み損益を表示。ticker 失敗時 (バナー表示中) は 0 / 0% になるため
                 // current === avg なら含み P/L 行を出さない。
@@ -175,21 +255,90 @@ export default async function Home({
                     : 0;
                 const pnlColor = p.unrealizedPnlJpy >= 0 ? "text-emerald-500" : "text-red-500";
                 const sign = p.unrealizedPnlJpy >= 0 ? "+" : "";
+                const detail = positionDetailsById.get(p.positionId);
                 return (
-                  <li key={p.positionId} className="flex items-center justify-between gap-3">
-                    <span className="font-medium">{p.symbol}</span>
-                    <div className="flex flex-col items-end text-xs">
-                      <span className="font-mono text-muted-foreground">
-                        {p.quantity} @ {jpy(p.avgEntryPrice)}・建玉日 {formatJstDate(p.openedAt)}
-                      </span>
-                      {hasMtm && (
-                        <span className={`font-mono ${pnlColor}`}>
-                          {sign}
-                          {jpy(p.unrealizedPnlJpy)} ({sign}
-                          {pnlPct.toFixed(2)}%)
-                        </span>
+                  <li key={p.positionId} className="rounded-md hover:bg-muted/30">
+                    <details>
+                      <summary className="flex cursor-pointer select-none items-center justify-between gap-3 px-2 py-1.5">
+                        <span className="font-medium">{p.symbol}</span>
+                        <div className="flex flex-col items-end text-xs">
+                          <span className="font-mono text-muted-foreground">
+                            {p.quantity} @ {jpy(p.avgEntryPrice)}・建玉日{" "}
+                            {formatJstDate(p.openedAt)}
+                          </span>
+                          {hasMtm && (
+                            <span className={`font-mono ${pnlColor}`}>
+                              {sign}
+                              {jpy(p.unrealizedPnlJpy)} ({sign}
+                              {pnlPct.toFixed(2)}%)
+                            </span>
+                          )}
+                        </div>
+                      </summary>
+                      {detail && (
+                        <div className="border-border border-t px-3 py-2 text-xs">
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono">
+                            <div className="text-muted-foreground">peak / trough</div>
+                            <div>
+                              {jpy(detail.peakPrice)} / {jpy(detail.troughPrice)}
+                            </div>
+                            {detail.entryTargetPriceJpy && (
+                              <>
+                                <div className="text-muted-foreground">target</div>
+                                <div>{jpy(detail.entryTargetPriceJpy)}</div>
+                              </>
+                            )}
+                            {(detail.entryExpectedHoldingDaysMin !== null ||
+                              detail.entryExpectedHoldingDaysMax !== null) && (
+                              <>
+                                <div className="text-muted-foreground">想定保有日数</div>
+                                <div>
+                                  {detail.entryExpectedHoldingDaysMin ?? "?"} -{" "}
+                                  {detail.entryExpectedHoldingDaysMax ?? "?"} 日
+                                </div>
+                              </>
+                            )}
+                            <div className="text-muted-foreground">実現損益 (部分決済)</div>
+                            <div
+                              className={
+                                detail.realizedPnlJpy > 0
+                                  ? "text-emerald-500"
+                                  : detail.realizedPnlJpy < 0
+                                    ? "text-red-500"
+                                    : ""
+                              }
+                            >
+                              {jpy(detail.realizedPnlJpy)}
+                            </div>
+                          </div>
+                          {detail.entryReason && (
+                            <div className="mt-2">
+                              <div className="text-muted-foreground">エントリー理由</div>
+                              <p className="whitespace-pre-wrap">{detail.entryReason}</p>
+                            </div>
+                          )}
+                          {detail.entryExitCondition && (
+                            <div className="mt-2">
+                              <div className="text-muted-foreground">Exit 条件 (Entry 仮説)</div>
+                              <p className="whitespace-pre-wrap">{detail.entryExitCondition}</p>
+                            </div>
+                          )}
+                          {detail.pendingOrders.length > 0 && (
+                            <div className="mt-2">
+                              <div className="text-muted-foreground">配置中の逆指値 (active)</div>
+                              <ul className="mt-1 ml-2 space-y-0.5">
+                                {detail.pendingOrders.map((s) => (
+                                  <li key={s.id} className="font-mono">
+                                    {s.kind}: trigger {jpy(s.triggerPrice)}
+                                    {s.limitPrice !== null && ` / limit ${jpy(s.limitPrice)}`}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
                       )}
-                    </div>
+                    </details>
                   </li>
                 );
               })}
@@ -197,6 +346,9 @@ export default async function Home({
           )}
         </CardContent>
       </Card>
+
+      <RecentEvents events={recentEvents} />
+      <CapitalEvents events={capitalEvents} />
 
       <Card>
         <CardHeader>

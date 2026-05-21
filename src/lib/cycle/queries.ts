@@ -10,6 +10,8 @@ import {
   cycles,
   decisions,
   marketSnapshots,
+  pendingOrders,
+  portfolioCapitalEvents,
   portfolios,
   positions,
   preAnalystOutputs,
@@ -42,8 +44,16 @@ const STRATEGY_ID = "trial-5";
 export interface DashboardStats {
   state: string | undefined;
   killReason: string | null;
+  /** Kill Switch 発動時刻 */
+  killedAt: Date | null;
   /** BB-2: 緊急停止フラグ */
   emergencyStop: boolean;
+  /** 連続失敗カウント (auto-pause threshold まで残り何回か可視化用) */
+  consecutiveFailures: number;
+  /** 連続失敗の種別 ("transient" / "permanent" / "quota") */
+  lastFailureKind: string | null;
+  /** 累計 API コスト (USD) */
+  cumulativeCostUsd: number;
   cycleIntervalHours: CycleIntervalHours;
   nextScheduledAt: Date | null;
   lastCycleAt: Date | null;
@@ -74,6 +84,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     ...cached,
     nextScheduledAt: reviveDate(cached.nextScheduledAt),
     lastCycleAt: reviveDate(cached.lastCycleAt),
+    killedAt: reviveDate(cached.killedAt),
   };
 }
 
@@ -126,7 +137,11 @@ export async function getDashboardStatsImpl(): Promise<DashboardStats> {
   return {
     state: state?.state,
     killReason: state?.killReason ?? null,
+    killedAt: state?.killedAt ?? null,
     emergencyStop: state?.emergencyStop ?? false,
+    consecutiveFailures: state?.consecutiveFailures ?? 0,
+    lastFailureKind: state?.lastFailureKind ?? null,
+    cumulativeCostUsd: Number(state?.cumulativeCostUsd ?? 0),
     cycleIntervalHours,
     nextScheduledAt: state?.nextScheduledAt ?? null,
     lastCycleAt: state?.lastCycleAt ?? null,
@@ -578,4 +593,172 @@ async function isCycleInFlightImpl(): Promise<boolean> {
       .limit(1)
   )[0];
   return !!row;
+}
+
+// =============================================================================
+// 直近 system events (運用ログ可視化)
+// =============================================================================
+
+export interface SystemEventRow {
+  id: string;
+  kind: string;
+  severity: string;
+  message: string;
+  cycleId: string | null;
+  occurredAt: Date;
+}
+
+const _cachedRecentEvents = unstable_cache(
+  (limit = 20) => getRecentEventsImpl(limit),
+  ["dashboard.recent-events"],
+  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+);
+
+export async function getRecentSystemEvents(limit = 20): Promise<SystemEventRow[]> {
+  const rows = await _cachedRecentEvents(limit);
+  return rows.map((r) => ({ ...r, occurredAt: reviveDate(r.occurredAt) ?? new Date(0) }));
+}
+
+async function getRecentEventsImpl(limit: number): Promise<SystemEventRow[]> {
+  const rows = await db
+    .select({
+      id: systemEvents.id,
+      kind: systemEvents.kind,
+      severity: systemEvents.severity,
+      message: systemEvents.message,
+      cycleId: systemEvents.cycleId,
+      occurredAt: systemEvents.occurredAt,
+    })
+    .from(systemEvents)
+    .orderBy(desc(systemEvents.occurredAt))
+    .limit(limit);
+  return rows;
+}
+
+// =============================================================================
+// 入金 / 出金履歴
+// =============================================================================
+
+export interface CapitalEventRow {
+  id: string;
+  kind: "deposit" | "withdrawal";
+  amountJpy: number;
+  note: string | null;
+  occurredAt: Date;
+}
+
+const _cachedCapitalEvents = unstable_cache(
+  (limit = 20) => getCapitalEventsImpl(limit),
+  ["dashboard.capital-events"],
+  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+);
+
+export async function getCapitalEvents(limit = 20): Promise<CapitalEventRow[]> {
+  const rows = await _cachedCapitalEvents(limit);
+  return rows.map((r) => ({ ...r, occurredAt: reviveDate(r.occurredAt) ?? new Date(0) }));
+}
+
+async function getCapitalEventsImpl(limit: number): Promise<CapitalEventRow[]> {
+  const rows = await db
+    .select({
+      id: portfolioCapitalEvents.id,
+      kind: portfolioCapitalEvents.kind,
+      amountJpy: portfolioCapitalEvents.amountJpy,
+      note: portfolioCapitalEvents.note,
+      occurredAt: portfolioCapitalEvents.occurredAt,
+    })
+    .from(portfolioCapitalEvents)
+    .where(eq(portfolioCapitalEvents.strategyId, STRATEGY_ID))
+    .orderBy(desc(portfolioCapitalEvents.occurredAt))
+    .limit(limit);
+  return rows.map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    amountJpy: Number(r.amountJpy),
+    note: r.note,
+    occurredAt: r.occurredAt,
+  }));
+}
+
+// =============================================================================
+// ポジション詳細 (peak / trough / entry 情報 / 配置中の SL)
+// =============================================================================
+
+export interface PositionDetail {
+  positionId: string;
+  symbol: string;
+  peakPrice: number;
+  troughPrice: number;
+  entryReason: string | null;
+  entryExpectedHoldingDaysMin: number | null;
+  entryExpectedHoldingDaysMax: number | null;
+  entryTargetPriceJpy: number | null;
+  entryExitCondition: string | null;
+  realizedPnlJpy: number;
+  /** 配置中の逆指値 (active=true のみ) */
+  pendingOrders: Array<{
+    id: string;
+    kind: string;
+    triggerPrice: number;
+    limitPrice: number | null;
+  }>;
+}
+
+const _cachedPositionDetails = unstable_cache(
+  () => getPositionDetailsImpl(),
+  ["dashboard.position-details"],
+  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+);
+
+export async function getPositionDetails(): Promise<PositionDetail[]> {
+  return _cachedPositionDetails();
+}
+
+async function getPositionDetailsImpl(): Promise<PositionDetail[]> {
+  const rows = await db
+    .select({ position: positions, coin: coins })
+    .from(positions)
+    .innerJoin(coins, eq(positions.coinId, coins.id))
+    .where(and(eq(positions.strategyId, STRATEGY_ID), eq(positions.status, "open")));
+
+  if (rows.length === 0) return [];
+
+  // open positions の配置中 SL を bulk fetch
+  const positionIds = rows.map((r) => r.position.id);
+  const slRows = await db
+    .select()
+    .from(pendingOrders)
+    .where(and(inArray(pendingOrders.positionId, positionIds), eq(pendingOrders.active, true)));
+
+  const slByPos = new Map<string, typeof slRows>();
+  for (const s of slRows) {
+    const arr = slByPos.get(s.positionId) ?? [];
+    arr.push(s);
+    slByPos.set(s.positionId, arr);
+  }
+
+  return rows.map((r) => ({
+    positionId: r.position.id,
+    symbol: r.coin.symbol,
+    peakPrice: Number(r.position.peakPrice),
+    troughPrice: Number(r.position.troughPrice),
+    entryReason: r.position.entryReason,
+    entryExpectedHoldingDaysMin: r.position.entryExpectedHoldingDaysMin
+      ? Number(r.position.entryExpectedHoldingDaysMin)
+      : null,
+    entryExpectedHoldingDaysMax: r.position.entryExpectedHoldingDaysMax
+      ? Number(r.position.entryExpectedHoldingDaysMax)
+      : null,
+    entryTargetPriceJpy: r.position.entryTargetPriceJpy
+      ? Number(r.position.entryTargetPriceJpy)
+      : null,
+    entryExitCondition: r.position.entryExitCondition,
+    realizedPnlJpy: Number(r.position.realizedPnlJpy ?? 0),
+    pendingOrders: (slByPos.get(r.position.id) ?? []).map((s) => ({
+      id: s.id,
+      kind: s.kind,
+      triggerPrice: Number(s.triggerPrice),
+      limitPrice: s.limitPrice ? Number(s.limitPrice) : null,
+    })),
+  }));
 }
