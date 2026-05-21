@@ -67,5 +67,4 @@ Vercel CLI logs は "now から先" しか出ないので、過去のエラー�
 ## 関連 ドキュメント
 
 - `docs/requirements.md` — 設計要件
-- `docs/known-issues.md` — 既知の不整合・優先順表
 - `docs/todo.md` — 開発タスク
