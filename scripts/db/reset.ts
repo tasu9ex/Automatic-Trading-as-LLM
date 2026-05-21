@@ -4,7 +4,7 @@
  *
  * 使用例:
  *   pnpm tsx --env-file=.env.local scripts/db/reset.ts            # local
- *   pnpm tsx --env-file=.env.production.local scripts/db/reset.ts # prod
+ *   pnpm tsx --env-file=.env.prod scripts/db/reset.ts # prod
  *
  * 実行後は db:migrate (or db:migrate:prod) → seed を別途実行する。
  *

@@ -5,7 +5,7 @@
  *      GitHub identity が自動リンクされるので、自分だけがログイン可能になる。
  *
  * Usage:
- *   pnpm tsx --env-file=.env.production.local scripts/dev/seed-auth-user.ts
+ *   pnpm tsx --env-file=.env.prod scripts/dev/seed-auth-user.ts
  *
  * 必要 env:
  *   NEXT_PUBLIC_SUPABASE_URL

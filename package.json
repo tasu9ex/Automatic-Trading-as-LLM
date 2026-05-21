@@ -20,9 +20,9 @@
     "db:local:seed": "tsx --env-file=.env.local scripts/dev/seed.ts",
     "db:local:sync-coins": "tsx --env-file=.env.local scripts/dev/sync-coins.ts",
     "db:local:reset": "tsx --env-file=.env.local scripts/dev/reset-db.ts && pnpm db:local:migrate && pnpm db:local:seed",
-    "db:prod:migrate": "dotenv -e .env.production.local -- drizzle-kit migrate",
-    "db:prod:seed": "tsx --env-file=.env.production.local scripts/dev/seed.ts",
-    "db:prod:reset": "tsx --env-file=.env.production.local scripts/dev/reset-db-prod.ts && pnpm db:prod:migrate && pnpm db:prod:seed",
+    "db:prod:migrate": "dotenv -e .env.prod -- drizzle-kit migrate",
+    "db:prod:seed": "tsx --env-file=.env.prod scripts/dev/seed.ts",
+    "db:prod:reset": "tsx --env-file=.env.prod scripts/dev/reset-db-prod.ts && pnpm db:prod:migrate && pnpm db:prod:seed",
     "langfuse:register": "tsx --env-file=.env.local scripts/langfuse/register-prompt.ts",
     "langfuse:register-models": "tsx --env-file=.env.local scripts/langfuse/register-models.ts",
     "langfuse:verify": "tsx --env-file=.env.local scripts/langfuse/verify-prompts.ts",
@@ -36,9 +36,9 @@
     "smoke:local:anthropic": "tsx --env-file=.env.local scripts/smoke/anthropic.ts",
     "smoke:local:perplexity": "tsx --env-file=.env.local scripts/smoke/perplexity.ts",
     "status:local": "tsx --env-file=.env.local scripts/dev/status.ts",
-    "status:prod": "tsx --env-file=.env.production.local scripts/dev/status.ts",
+    "status:prod": "tsx --env-file=.env.prod scripts/dev/status.ts",
     "capital:local": "tsx --env-file=.env.local scripts/dev/capital.ts",
-    "capital:prod": "tsx --env-file=.env.production.local scripts/dev/capital.ts"
+    "capital:prod": "tsx --env-file=.env.prod scripts/dev/capital.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",

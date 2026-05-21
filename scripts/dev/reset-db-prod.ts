@@ -1,17 +1,20 @@
 /**
  * 本番 DB を fresh state に戻す。
  *
- *   pnpm db:prod:reset                        # 対話モード
- *   pnpm db:prod:reset -- --confirm RESET_PRODUCTION  # 非対話 (CI / Claude Code)
+ *   pnpm db:prod:reset
+ *
+ * 必須: .env.prod に `DB_PROD_RESET_PERMISSION=true` が無いと abort する。
+ * 運用フロー:
+ *   1. .env.prod に `DB_PROD_RESET_PERMISSION=true` を一行追加
+ *   2. `pnpm db:prod:reset` を実行
+ *   3. 完了後、安全のため `DB_PROD_RESET_PERMISSION` を削除 (or `=false`) してロック
  *
  * 破壊的: cycles / positions / trades / market_snapshots など **全データ消失**。
  *
  * 安全ガード:
- *   1. DATABASE_URL が localhost 系だと逆に拒否 (これは本番用)
- *   2. 確認:
- *      - 対話 TTY: "RESET PRODUCTION" の手打ち入力を要求
- *      - 非対話: --confirm RESET_PRODUCTION フラグが必須 (なければ abort)
- *   3. drop 前に現在の cycles / positions / portfolios 件数を表示
+ *   - DATABASE_URL が localhost 系だと逆に拒否 (これは本番用)
+ *   - DB_PROD_RESET_PERMISSION=true でなければ abort
+ *   - drop 前に現在の cycles / positions / portfolios 件数を表示
  *
  * リセット内容:
  *   - public + drizzle schema を CASCADE で DROP
@@ -20,28 +23,10 @@
  */
 
 import "dotenv/config";
-import { stdin, stdout } from "node:process";
-import readline from "node:readline/promises";
 import { db } from "@/db/client";
 import { sql } from "drizzle-orm";
 
-const REQUIRED_CONFIRM = "RESET_PRODUCTION";
-
-function parseConfirmFlag(argv: string[]): string | null {
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--confirm") return argv[i + 1] ?? null;
-  }
-  return null;
-}
-
-async function readConfirmInteractive(): Promise<string> {
-  console.log("⚠️ 上記データは全て消えます。続行するには 'RESET PRODUCTION' と入力:");
-  const rl = readline.createInterface({ input: stdin, output: stdout });
-  const answer = await rl.question("> ");
-  rl.close();
-  // 対話モードは "RESET PRODUCTION" (スペース区切り) を許容、コードでは underscore に正規化
-  return answer.trim().replace(/\s+/g, "_");
-}
+const PERMISSION_ENV = "DB_PROD_RESET_PERMISSION";
 
 async function main() {
   const url = process.env.DATABASE_URL ?? "";
@@ -77,26 +62,21 @@ async function main() {
   }
   console.log("");
 
-  // 確認: --confirm フラグ優先 / なければ対話 TTY / それも無理なら abort
-  const flagToken = parseConfirmFlag(process.argv.slice(2));
-  let token: string;
-  if (flagToken !== null) {
-    token = flagToken;
-    console.log(`(--confirm フラグ受信: ${flagToken})`);
-  } else if (stdin.isTTY) {
-    token = await readConfirmInteractive();
-  } else {
+  // 許可フラグ: env var が "true" のときだけ進む
+  const permission = process.env[PERMISSION_ENV];
+  if (permission !== "true") {
     console.error(
-      "非対話モードで --confirm フラグが指定されていません。abort します。\n" +
-        "  pnpm db:prod:reset -- --confirm RESET_PRODUCTION",
+      [
+        `${PERMISSION_ENV}=true が .env.prod に無いため abort します。`,
+        "  1. .env.prod に以下を追加:",
+        `       ${PERMISSION_ENV}=true`,
+        "  2. pnpm db:prod:reset を再実行",
+        `  3. 完了後、安全のため ${PERMISSION_ENV} 行は削除 (or =false) してロック`,
+      ].join("\n"),
     );
     process.exit(1);
   }
-
-  if (token !== REQUIRED_CONFIRM) {
-    console.error(`確認文字列が一致しません (期待: ${REQUIRED_CONFIRM})。中断します。`);
-    process.exit(1);
-  }
+  console.log(`(${PERMISSION_ENV}=true を確認、進行します)`);
 
   console.log("Dropping schemas (public + drizzle)...");
   await db.execute(sql`DROP SCHEMA IF EXISTS public CASCADE`);

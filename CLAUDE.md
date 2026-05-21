@@ -29,7 +29,7 @@ Vercel CLI logs は "now から先" しか出ないので、過去のエラー�
 - ローカル: `.env.local`
 - 本番: `vercel env add <NAME> production` → 再 deploy (空 commit でも push でも可)
 
-`.env.production.local` は `pnpm db:prod:migrate` 用で、本番 Vercel が読むのは Vercel Env のみ。
+`.env.prod` は `pnpm db:prod:migrate` 用で、本番 Vercel が読むのは Vercel Env のみ。
 
 ## サイクル稼働の前提
 
