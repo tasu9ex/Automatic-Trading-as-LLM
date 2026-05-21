@@ -116,6 +116,7 @@ export async function recordCycleFailure(args: {
     severity: "error",
     message: `Cycle ${args.cycleId.slice(0, 8)} aborted at ${args.phase} (${kind}): ${errMsg.slice(0, 300)}`,
     payload: { cycleId: args.cycleId, phase: args.phase, kind },
+    cycleId: args.cycleId,
   });
 
   // DD: 失敗 cycle も completedAt を埋めて "in_flight" 扱いを終わらせる

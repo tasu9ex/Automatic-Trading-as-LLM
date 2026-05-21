@@ -35,6 +35,7 @@ import {
 } from "@/db/schema";
 import { type SizingMethod, allocate } from "@/lib/allocator";
 import { getExchangeStatus } from "@/lib/clients/gmo";
+import { PositionStatusValue } from "@/lib/constants/enums";
 import { runCritic } from "@/lib/critic";
 import { assertNotEmergencyStop } from "@/lib/cycle/emergency-stop";
 import { withRetry } from "@/lib/cycle/retry";
@@ -353,7 +354,7 @@ export async function tier2Analyst(cycleId: string, strategyId: string): Promise
                   and(
                     eq(positions.strategyId, strategyId),
                     eq(positions.coinId, coin.id),
-                    eq(positions.status, "open"),
+                    eq(positions.status, PositionStatusValue.OPEN),
                   ),
                 )
                 .limit(1)
@@ -489,7 +490,7 @@ export async function tier3Decisions(cycleId: string, strategyId: string): Promi
                 and(
                   eq(positions.strategyId, strategyId),
                   eq(positions.coinId, coin.id),
-                  eq(positions.status, "open"),
+                  eq(positions.status, PositionStatusValue.OPEN),
                 ),
               )
               .limit(1)
@@ -648,7 +649,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
               and(
                 eq(positions.strategyId, strategyId),
                 eq(positions.coinId, coin.id),
-                eq(positions.status, "open"),
+                eq(positions.status, PositionStatusValue.OPEN),
               ),
             )
             .limit(1)
@@ -669,11 +670,17 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   const exitsToRun = ctxs.filter((c) => c.exit?.result === "close" && c.openPos);
   // §10: taker fee を控除した手取りで cash を予測する (calculateFill と一致)。
   // 過大評価していると Allocator が大きく配って Risk Clipper で削られるロスが出やすい。
+  //
+  // SS: ここは「全 Exit 成功前提」の楽観評価。Critic / Allocator は古い前提で判断するが、
+  //     Exit 実行後に再 fetch される cashAfterExits を Clipper に渡す (§19 で実装済) ので
+  //     最終的な配分は実態に合う。Critic の判断精度に若干影響するが、低優先で許容。
+  //     close_pct (部分決済) も考慮していない (todo SS で記載のとおり)。
   const expectedCloseCash = exitsToRun.reduce((sum, c) => {
     const price = Number(c.snap.ticker.last) || 0;
     const qty = Number(c.openPos?.quantity ?? 0);
+    const closePct = c.exit?.closePct ? Number(c.exit.closePct) / 100 : 1;
     const takerFee = Number(c.coin.takerFeeRate);
-    const grossCash = qty * price;
+    const grossCash = qty * closePct * price;
     const netCash = grossCash * (1 - takerFee);
     return sum + netCash;
   }, 0);
@@ -718,7 +725,9 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     .select({ position: positions, coin: coins })
     .from(positions)
     .innerJoin(coins, eq(positions.coinId, coins.id))
-    .where(and(eq(positions.strategyId, strategyId), eq(positions.status, "open")));
+    .where(
+      and(eq(positions.strategyId, strategyId), eq(positions.status, PositionStatusValue.OPEN)),
+    );
   const currentPositions = refreshedOpenPositions.map(({ position, coin }) => ({
     symbol: coin.symbol,
     qty: Number(position.quantity),
@@ -783,6 +792,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       severity: "warning",
       message: `Critic veto: ${critic.output.reasoning.slice(0, 200)}`,
       payload: { cycleId, proposal },
+      cycleId,
     });
     const vetoBuyList =
       Object.keys(proposal).length > 0
@@ -813,6 +823,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       severity: "info",
       message: `Critic modified: ${critic.output.reasoning.slice(0, 200)}`,
       payload: { cycleId, before: proposal, after: finalProposal, exitOverrides },
+      cycleId,
     });
     await notify({
       level: "info",
@@ -884,7 +895,9 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     const refreshedPositions = await db
       .select()
       .from(positions)
-      .where(and(eq(positions.strategyId, strategyId), eq(positions.status, "open")));
+      .where(
+        and(eq(positions.strategyId, strategyId), eq(positions.status, PositionStatusValue.OPEN)),
+      );
 
     // §11: 原価ベース (avgEntryPrice) ではなく mark-to-market (current price) で
     // 実エクスポージャを評価。lastPriceByCoinId は finalize の後段で構築するため
@@ -1032,7 +1045,9 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   const openPositions = await db
     .select()
     .from(positions)
-    .where(and(eq(positions.strategyId, strategyId), eq(positions.status, "open")));
+    .where(
+      and(eq(positions.strategyId, strategyId), eq(positions.status, PositionStatusValue.OPEN)),
+    );
 
   // coinId → 最終価格 (このサイクルの snapshot から)
   const lastPriceByCoinId = new Map<string, number>(

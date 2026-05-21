@@ -60,6 +60,7 @@ export async function recordEmergencyStop(args: {
     severity: "warning",
     message: `Cycle ${args.cycleId.slice(0, 8)} emergency-stopped at ${args.phase}`,
     payload: { cycleId: args.cycleId, phase: args.phase },
+    cycleId: args.cycleId,
   });
 
   // DD と同じく completedAt を埋めて "in_flight" 扱いを終わらせる

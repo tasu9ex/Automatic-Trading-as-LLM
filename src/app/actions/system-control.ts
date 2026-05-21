@@ -33,6 +33,10 @@ export type SystemControlActionResult = { ok: true } | { ok: false; error: strin
 function withResult(fn: () => Promise<unknown>): Promise<SystemControlActionResult> {
   return fn()
     .then(() => {
+      // R: `updateTag` は unstable_cache 内のエントリを無効化 (next の cache layer)。
+      // `revalidatePath` は path の RSC キャッシュを無効化 (router 側)。
+      // page.tsx は `force-dynamic` なので revalidatePath は実質 router.refresh() 後の
+      // 再 fetch を担保する意図。両方残すのが最も保守的で、本番でいずれか不要と判明すれば落とす。
       updateTag(DASHBOARD_CACHE_TAG);
       revalidatePath("/");
       return { ok: true as const };

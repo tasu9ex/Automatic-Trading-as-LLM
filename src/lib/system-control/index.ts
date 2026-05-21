@@ -56,7 +56,16 @@ export async function pauseSystem(): Promise<SystemState> {
   // UPDATE が 0 行: 既に paused / killed / stopped / row 不在 のどれか。冪等 / エラーを判別。
   const row = await getSystemStateRow();
   if (!row) throw new Error("system_state not found");
-  if (row.state === "paused") return row;
+  if (row.state === "paused") {
+    // W: 冪等パス。状態遷移は起きないが「ユーザーが操作した」という事実を残す。
+    await db.insert(systemEvents).values({
+      kind: "human_intervention",
+      severity: "info",
+      message: "Pause requested but already paused (no-op)",
+      payload: { source: "dashboard", action: "pause", noop: true },
+    });
+    return row;
+  }
   if (row.state === "killed") throw new Error("Kill Switch 発動中は停止できません");
   throw new Error("稼働中のみ一時停止できます");
 }
@@ -69,7 +78,16 @@ export async function startSystem(): Promise<SystemState> {
   if (beforeRow.state === "killed") {
     throw new Error("Kill Switch 発動中は起動できません");
   }
-  if (beforeRow.state === "running") return beforeRow;
+  if (beforeRow.state === "running") {
+    // W: 冪等パス。状態遷移は起きないが「ユーザーが操作した」事実を残す。
+    await db.insert(systemEvents).values({
+      kind: "human_intervention",
+      severity: "info",
+      message: "Start requested but already running (no-op)",
+      payload: { source: "dashboard", action: "start", noop: true },
+    });
+    return beforeRow;
+  }
 
   const interval = intervalFromRow(beforeRow);
   const nextScheduledAt = computeNextScheduledAt(new Date(), interval);

@@ -19,17 +19,25 @@ export interface CoinChecklistProps {
 
 export function CoinChecklist({ coins, cycleInFlight }: CoinChecklistProps) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [optimistic, setOptimistic] = useState<Record<string, boolean>>({});
+  // D + E: 銘柄ごとに pending 状態を持つ。全銘柄を disable せず、操作中の銘柄だけ spinner 表示。
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   const enabledCount = coins.reduce((acc, c) => acc + ((optimistic[c.id] ?? c.enabled) ? 1 : 0), 0);
 
   function onToggle(coinId: string, next: boolean) {
     setOptimistic((prev) => ({ ...prev, [coinId]: next }));
+    setPendingIds((prev) => new Set(prev).add(coinId));
     setError(null);
     startTransition(async () => {
       const res = await setCoinEnabledAction(coinId, next);
+      setPendingIds((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(coinId);
+        return nextSet;
+      });
       if (!res.ok) {
         setOptimistic((prev) => {
           const { [coinId]: _, ...rest } = prev;
@@ -69,6 +77,7 @@ export function CoinChecklist({ coins, cycleInFlight }: CoinChecklistProps) {
           <ul className="grid gap-1.5 sm:grid-cols-2 md:grid-cols-3">
             {coins.map((c) => {
               const checked = optimistic[c.id] ?? c.enabled;
+              const isPending = pendingIds.has(c.id);
               return (
                 <li key={c.id}>
                   <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40">
@@ -76,11 +85,17 @@ export function CoinChecklist({ coins, cycleInFlight }: CoinChecklistProps) {
                       type="checkbox"
                       className="size-4 accent-foreground"
                       checked={checked}
-                      disabled={pending}
+                      disabled={isPending}
                       onChange={(e) => onToggle(c.id, e.target.checked)}
                     />
                     <span className="font-medium">{c.symbol}</span>
                     <span className="truncate text-muted-foreground text-xs">{c.name}</span>
+                    {isPending && (
+                      <span
+                        className="ml-auto inline-block size-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-foreground"
+                        aria-label="保存中"
+                      />
+                    )}
                   </label>
                 </li>
               );

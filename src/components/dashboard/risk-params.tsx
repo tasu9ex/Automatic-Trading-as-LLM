@@ -26,10 +26,26 @@ export function RiskParams({
   const [threshold, setThreshold] = useState(String(autoPauseThreshold));
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  // Q: 入力バリデーション。空 / NaN / 範囲外で保存ボタンを disable + ヒント表示。
+  // サーバ側 (setRiskParamsAction) でも同じ範囲を再チェックする (defence in depth)。
+  function validateNumber(raw: string, min: number, max: number): string | null {
+    if (raw.trim() === "") return "値が空です";
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return "数値ではありません";
+    if (n < min) return `${min} 以上を指定してください`;
+    if (n > max) return `${max} 以下を指定してください`;
+    return null;
+  }
+  const perCoinError = validateNumber(perCoin, 1, 100);
+  const ddError = validateNumber(dd, 5, 99);
+  const thresholdError = validateNumber(threshold, 1, 10);
+  const hasInputError = !!(perCoinError || ddError || thresholdError);
+
   const dirty =
-    Math.abs(Number(perCoin) - perCoinMaxRatio * 100) > 0.05 ||
-    Math.abs(Number(dd) - portfolioDdTrigger * 100) > 0.05 ||
-    Number(threshold) !== autoPauseThreshold;
+    !hasInputError &&
+    (Math.abs(Number(perCoin) - perCoinMaxRatio * 100) > 0.05 ||
+      Math.abs(Number(dd) - portfolioDdTrigger * 100) > 0.05 ||
+      Number(threshold) !== autoPauseThreshold);
 
   // B: window.confirm を ConfirmDialog に置換。
   const confirmMessage = [
@@ -79,6 +95,7 @@ export function RiskParams({
             step={0.1}
             onChange={setPerCoin}
             disabled={pending}
+            error={perCoinError}
           />
           <Field
             label="Kill Switch DD (%)"
@@ -89,6 +106,7 @@ export function RiskParams({
             step={0.1}
             onChange={setDd}
             disabled={pending}
+            error={ddError}
           />
           <Field
             label="連続失敗 auto-pause"
@@ -99,6 +117,7 @@ export function RiskParams({
             step={1}
             onChange={setThreshold}
             disabled={pending}
+            error={thresholdError}
           />
         </div>
         <div className="flex items-center justify-between">
@@ -127,6 +146,8 @@ interface FieldProps {
   max: number;
   step: number;
   disabled?: boolean;
+  /** Q: validation エラー文 (null なら OK) */
+  error?: string | null;
   onChange: (next: string) => void;
 }
 
@@ -139,7 +160,9 @@ function Field(props: FieldProps) {
       <input
         id={`risk-${props.label}`}
         type="number"
-        className="h-8 rounded-lg border border-border bg-background px-2 font-mono text-sm disabled:opacity-50"
+        className={`h-8 rounded-lg border bg-background px-2 font-mono text-sm disabled:opacity-50 ${
+          props.error ? "border-destructive" : "border-border"
+        }`}
         value={props.value}
         min={props.min}
         max={props.max}
@@ -147,7 +170,11 @@ function Field(props: FieldProps) {
         disabled={props.disabled}
         onChange={(e) => props.onChange(e.target.value)}
       />
-      <span className="text-muted-foreground text-xs">{props.help}</span>
+      {props.error ? (
+        <span className="text-destructive text-xs">{props.error}</span>
+      ) : (
+        <span className="text-muted-foreground text-xs">{props.help}</span>
+      )}
     </div>
   );
 }

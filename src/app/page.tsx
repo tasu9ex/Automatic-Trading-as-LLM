@@ -23,14 +23,30 @@ function jpy(n: number) {
   return `¥${n.toLocaleString("ja-JP", { maximumFractionDigits: 0 })}`;
 }
 
-export default async function Home() {
+// H: recentCycles の表示件数。?cycles=N で増やせる。"もっと見る" は同じ page を高い limit で再 fetch。
+const DEFAULT_CYCLE_LIMIT = 20;
+const CYCLE_LIMIT_STEP = 20;
+const MAX_CYCLE_LIMIT = 200;
+
+export default async function Home({
+  searchParams,
+}: {
+  searchParams?: Promise<{ cycles?: string }>;
+}) {
+  const params = await searchParams;
+  const rawLimit = Number(params?.cycles);
+  const cyclesLimit =
+    Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(Math.floor(rawLimit), MAX_CYCLE_LIMIT)
+      : DEFAULT_CYCLE_LIMIT;
+
   // M: 認証は middleware (updateSession) が一手に担う。未ログインは middleware で /login へ
   //    redirect されるためここに到達しない。重複 getUser() の Supabase 往復を削減。
   const [stats, openPositions, recentCycles, coinChecklist, cycleInFlight, ticker] =
     await Promise.all([
       getDashboardStats(),
       getOpenPositions(),
-      getRecentCycles(20),
+      getRecentCycles(cyclesLimit),
       getCoinChecklist(),
       isCycleInFlight(),
       getTickerSnapshot(),
@@ -49,11 +65,17 @@ export default async function Home() {
       <AutoRefresh />
       <header className="flex items-center justify-between">
         <h1 className="font-bold text-2xl">LLM Trading</h1>
-        <form action={signOutAction}>
-          <Button type="submit" variant="ghost" size="sm">
-            ログアウト
-          </Button>
-        </form>
+        <div className="flex items-center gap-3">
+          {/* G: dashboard 全体の最終更新時刻を表示。auto-refresh (30s polling) で更新される */}
+          <span className="text-muted-foreground text-xs">
+            更新: {formatJstDateTime(new Date())}
+          </span>
+          <form action={signOutAction}>
+            <Button type="submit" variant="ghost" size="sm">
+              ログアウト
+            </Button>
+          </form>
+        </div>
       </header>
 
       {!ticker.ok && (
@@ -129,7 +151,12 @@ export default async function Home() {
         <CardHeader>
           <CardTitle>保有ポジション ({openPositions.length})</CardTitle>
           {stats.lastCycleAt && (
-            <CardDescription>直近サイクル: {formatJstDateTime(stats.lastCycleAt)}</CardDescription>
+            <CardDescription>
+              {/* T: 「直近サイクル」が start なのか complete なのかが曖昧だった。
+                  system_state.lastCycleAt は finalize 成功時 or 失敗 record 時に更新されるので
+                  「最終完了」が正確 */}
+              最終完了サイクル: {formatJstDateTime(stats.lastCycleAt)}
+            </CardDescription>
           )}
         </CardHeader>
         <CardContent>
@@ -198,7 +225,9 @@ export default async function Home() {
                         variant={
                           c.criticDecision === "approve"
                             ? "default"
-                            : c.criticDecision === "modify" || c.criticDecision === "in_flight"
+                            : c.criticDecision === "modify" ||
+                                c.criticDecision === "in_flight" ||
+                                c.criticDecision === "auto-skip"
                               ? "outline"
                               : "destructive"
                         }
@@ -213,13 +242,26 @@ export default async function Home() {
                                 ? "失敗"
                                 : c.criticDecision === "in_flight"
                                   ? "実行中"
-                                  : c.criticDecision}
+                                  : c.criticDecision === "auto-skip"
+                                    ? "審査スキップ"
+                                    : c.criticDecision}
                       </Badge>
                     </div>
                   </Link>
                 </li>
               ))}
             </ul>
+          )}
+          {/* H: もっと見る — 上限まで段階的に増やす。fetched 件数 == 現 limit なら次がある可能性 */}
+          {recentCycles.length >= cyclesLimit && cyclesLimit < MAX_CYCLE_LIMIT && (
+            <div className="mt-3 flex justify-center">
+              <Link
+                href={`/?cycles=${Math.min(cyclesLimit + CYCLE_LIMIT_STEP, MAX_CYCLE_LIMIT)}`}
+                className="rounded-md border border-border px-3 py-1 text-muted-foreground text-xs hover:bg-muted/40"
+              >
+                もっと見る (+{CYCLE_LIMIT_STEP})
+              </Link>
+            </div>
           )}
         </CardContent>
       </Card>

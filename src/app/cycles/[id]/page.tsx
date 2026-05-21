@@ -11,6 +11,14 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
+// AA: タブ / ブックマーク識別のため cycle id を title に反映
+export async function generateMetadata({ params }: PageProps) {
+  const { id } = await params;
+  return {
+    title: `サイクル ${id.slice(0, 8)} | LLM 自動売買`,
+  };
+}
+
 function decisionVariant(result: string): "default" | "destructive" | "outline" {
   if (result === "buy" || result === "close" || result === "approve") return "default";
   if (result === "no" || result === "hold") return "outline";
@@ -181,9 +189,12 @@ type CoinDetail = Awaited<ReturnType<typeof getCycleDetail>> extends { coins: in
   : never;
 
 function CoinCard({ c }: { c: CoinDetail }) {
+  // J: アクション (買い / 売り) があった銘柄は default 展開。それ以外は閉じたまま。
+  // 見たい情報の手前に手数を 1 つ減らす。
+  const hadAction = c.entryDecision?.result === "buy" || c.exitDecision?.result === "close";
   return (
     <Card className="overflow-hidden p-0">
-      <details className="group">
+      <details className="group" open={hadAction}>
         <summary className="flex cursor-pointer select-none items-center justify-between gap-3 px-6 py-4 hover:bg-muted/30">
           <div className="flex items-center gap-3">
             <span className="font-bold text-lg">{c.symbol}</span>

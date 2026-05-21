@@ -18,6 +18,9 @@ export const criticOutputs = pgTable(
   },
   (table) => ({
     cycleModelIdx: index("critic_outputs_cycle_model_idx").on(table.cycleId, table.llmModel),
+    // P-4: `cyclesToday` の COUNT(*) WHERE created_at >= jstTodayStart で範囲スキャンが発生する。
+    // 件数が増えると seq scan が支配的になるので index を貼っておく。
+    createdAtIdx: index("critic_outputs_created_at_idx").on(table.createdAt),
   }),
 );
 

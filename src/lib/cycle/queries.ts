@@ -264,6 +264,8 @@ export async function getRecentCyclesImpl(limit = 15): Promise<RecentCycleRow[]>
       coinIds: cycles.coinIds,
       criticDecision: criticOutputs.decision,
       criticReasoning: criticOutputs.reasoning,
+      // HH: auto-skip Critic を本物の approve と区別するため llmModel を読み出す
+      criticModel: criticOutputs.llmModel,
     })
     .from(cycles)
     .leftJoin(criticOutputs, eq(criticOutputs.cycleId, cycles.id))
@@ -271,7 +273,13 @@ export async function getRecentCyclesImpl(limit = 15): Promise<RecentCycleRow[]>
     .limit(limit);
 
   return rows.map((r) => {
-    const decision = r.criticDecision ?? (r.completedAt ? "failed" : "in_flight");
+    // HH: auto-skip (Critic 呼び出し節約) は approve と擬制されているが UI では別表示
+    let decision: string;
+    if (r.criticDecision) {
+      decision = r.criticModel === "auto-skip" ? "auto-skip" : r.criticDecision;
+    } else {
+      decision = r.completedAt ? "failed" : "in_flight";
+    }
     return {
       cycleId: r.id,
       criticDecision: decision,
@@ -380,7 +388,8 @@ async function getCycleDetailImpl(cycleId: string): Promise<CycleDetail | null> 
       .where(
         and(
           sql`${systemEvents.kind} IN ('cycle_aborted', 'data_fetch_failed', 'llm_failure')`,
-          sql`${systemEvents.payload}->>'cycleId' = ${cycleId}`,
+          // P-5: 直接カラム + index で seq scan を回避 (旧 JSONB 検索は backfill 済み)
+          eq(systemEvents.cycleId, cycleId),
         ),
       )
       .orderBy(desc(systemEvents.occurredAt))

@@ -58,10 +58,16 @@ export function SystemControls({
     setIntervalHours(cycleIntervalHours);
   }, [cycleIntervalHours]);
 
-  const isKilled = state === "killed";
-  const isRunning = state === "running";
-  const isStopped = state === "stopped";
-  const isPaused = state === "paused";
+  // I: 楽観更新。click 直後に表示状態を切り替えて、router.refresh() を待たずに反応する。
+  // server の state が optimistic と一致したら勝手に解消する (state を優先)。
+  // 失敗時は runAction の catch で null に戻して prop の state に戻る。
+  const [optimisticState, setOptimisticState] = useState<string | null>(null);
+  const effectiveState = optimisticState && optimisticState !== state ? optimisticState : state;
+
+  const isKilled = effectiveState === "killed";
+  const isRunning = effectiveState === "running";
+  const isStopped = effectiveState === "stopped";
+  const isPaused = effectiveState === "paused";
 
   // B: window.confirm を ConfirmDialog に置換。dialog state は 1 つ持つ。
   const [confirm, setConfirm] = useState<{
@@ -75,7 +81,7 @@ export function SystemControls({
   function runAction(
     title: string,
     action: () => Promise<SystemControlActionResult>,
-    opts?: { message?: string; destructive?: boolean },
+    opts?: { message?: string; destructive?: boolean; optimisticTarget?: string },
   ) {
     setConfirm({
       title,
@@ -84,9 +90,11 @@ export function SystemControls({
       onConfirm: () => {
         setConfirm(null);
         setError(null);
+        if (opts?.optimisticTarget) setOptimisticState(opts.optimisticTarget);
         startTransition(async () => {
           const res = await action();
           if (!res.ok) {
+            setOptimisticState(null); // 失敗 → 旧表示に戻す
             setError(res.error);
             return;
           }
@@ -131,7 +139,9 @@ export function SystemControls({
             <CardTitle className="text-base">システム制御</CardTitle>
             <CardDescription>LLM 判定の停止・再開と実行間隔</CardDescription>
           </div>
-          <Badge variant={stateBadgeVariant(state)}>{STATE_LABELS[state] ?? state}</Badge>
+          <Badge variant={stateBadgeVariant(effectiveState)}>
+            {STATE_LABELS[effectiveState] ?? effectiveState}
+          </Badge>
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -175,6 +185,7 @@ export function SystemControls({
               onClick={() =>
                 runAction("システムを起動しますか?", startSystemAction, {
                   message: "次のスケジュール枠から判定サイクルが開始します。",
+                  optimisticTarget: "running",
                 })
               }
             >
@@ -187,6 +198,7 @@ export function SystemControls({
               onClick={() =>
                 runAction("判定を再開しますか?", resumeSystemAction, {
                   message: "緊急停止フラグが立っていれば同時に解除されます。",
+                  optimisticTarget: "running",
                 })
               }
             >
@@ -202,6 +214,7 @@ export function SystemControls({
                   // BB-1: 通常 pause の挙動を明示
                   message:
                     "現在実行中のサイクルは最後まで完走し、停止は次サイクルから反映されます。\n進行中のサイクルも即座に止めたい場合は「緊急停止」を使ってください。",
+                  optimisticTarget: "paused",
                 })
               }
             >
@@ -217,6 +230,7 @@ export function SystemControls({
                   message:
                     "進行中のサイクルを次の phase 境界で即座に中断します。\n次サイクルも停止します (再開ボタンで両方解除)。",
                   destructive: true,
+                  optimisticTarget: "paused",
                 })
               }
             >

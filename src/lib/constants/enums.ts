@@ -54,6 +54,21 @@ export type PendingOrderActor = (typeof PENDING_ORDER_ACTORS)[number];
 export const POSITION_STATUSES = ["open", "closed"] as const;
 export type PositionStatus = (typeof POSITION_STATUSES)[number];
 
+/** QQ: magic string を集約。`PositionStatus.OPEN` の形で呼び出し側で使う。 */
+export const PositionStatusValue = {
+  OPEN: "open",
+  CLOSED: "closed",
+} as const satisfies Record<string, PositionStatus>;
+
+export const OrderStatusValue = {
+  PLACED: "placed",
+  FILLED: "filled",
+  EXPIRED: "expired",
+  CANCELLED: "cancelled",
+  REJECTED: "rejected",
+  CLIPPED: "clipped",
+} as const satisfies Record<string, OrderStatus>;
+
 export const SYSTEM_EVENT_KINDS = [
   "system_started",
   "system_paused",
