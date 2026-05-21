@@ -4,6 +4,7 @@ import { getCycleDetail } from "@/lib/cycle/queries";
 import { formatJstDateTime } from "@/lib/format/datetime";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CriticPlanView } from "./critic-plan-view";
 
 export const dynamic = "force-dynamic";
 
@@ -36,43 +37,6 @@ const DECISION_JP: Record<string, string> = {
 };
 function jpDecision(v: string): string {
   return DECISION_JP[v] ?? v;
-}
-
-function isAllocationMap(v: unknown): v is Record<string, number> {
-  return (
-    v !== null &&
-    typeof v === "object" &&
-    !Array.isArray(v) &&
-    Object.values(v).every((x) => typeof x === "number")
-  );
-}
-
-function AllocationView({ data, emptyLabel }: { data: unknown; emptyLabel: string }) {
-  if (data === null || data === undefined) {
-    return <p className="text-muted-foreground">{emptyLabel}</p>;
-  }
-  if (isAllocationMap(data)) {
-    const entries = Object.entries(data);
-    if (entries.length === 0) {
-      return <p className="text-muted-foreground">配分なし</p>;
-    }
-    return (
-      <ul className="space-y-1">
-        {entries.map(([symbol, amount]) => (
-          <li key={symbol} className="flex justify-between font-mono">
-            <span>{symbol}</span>
-            <span>¥{Math.round(amount).toLocaleString("ja-JP")}</span>
-          </li>
-        ))}
-      </ul>
-    );
-  }
-  // 想定外の形なら fallback で JSON
-  return (
-    <pre className="overflow-x-auto whitespace-pre-wrap font-mono">
-      {JSON.stringify(data, null, 2)}
-    </pre>
-  );
 }
 
 const STATUS_JP: Record<string, string> = {
@@ -133,7 +97,9 @@ export default async function CycleDetailPage({ params }: PageProps) {
           <CardHeader className="flex flex-row items-start justify-between">
             <div>
               <CardTitle>Critic レビュー</CardTitle>
-              <CardDescription>配分案を承認・拒否・修正する最終チェック層</CardDescription>
+              <CardDescription>
+                実行計画 (Exit + Entry、Clipper 適用済) を承認・拒否・修正する最終ゲート
+              </CardDescription>
             </div>
             <Badge
               variant={
@@ -147,30 +113,18 @@ export default async function CycleDetailPage({ params }: PageProps) {
               {jpDecision(detail.critic.decision)}
             </Badge>
           </CardHeader>
-          <CardContent className="space-y-3 text-sm">
+          <CardContent className="space-y-4 text-sm">
             {detail.critic.reasoning && (
               <div>
                 <div className="mb-1 text-muted-foreground text-xs">判断理由</div>
                 <p className="whitespace-pre-wrap">{detail.critic.reasoning}</p>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-3 pt-2 text-xs">
-              <div>
-                <div className="mb-1 text-muted-foreground">配分案</div>
-                <div className="rounded bg-muted p-2">
-                  <AllocationView data={detail.critic.allocationProposal} emptyLabel="配分なし" />
-                </div>
-              </div>
-              <div>
-                <div className="mb-1 text-muted-foreground">修正内容</div>
-                <div className="rounded bg-muted p-2">
-                  <AllocationView
-                    data={detail.critic.adjustments}
-                    emptyLabel="修正なし (そのまま承認)"
-                  />
-                </div>
-              </div>
-            </div>
+            <CriticPlanView
+              decision={detail.critic.decision}
+              executionPlan={detail.critic.executionPlan}
+              modifiedPositions={detail.critic.modifiedPositions}
+            />
           </CardContent>
         </Card>
       )}

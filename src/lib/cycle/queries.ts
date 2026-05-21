@@ -321,7 +321,8 @@ export interface CycleDetail {
   critic: {
     decision: string;
     reasoning: string | null;
-    allocationProposal: unknown;
+    executionPlan: unknown;
+    modifiedPositions: unknown;
     adjustments: unknown;
     createdAt: Date;
   } | null;
@@ -524,7 +525,8 @@ async function getCycleDetailImpl(cycleId: string): Promise<CycleDetail | null> 
       ? {
           decision: critic.decision,
           reasoning: critic.reasoning,
-          allocationProposal: critic.allocationProposal,
+          executionPlan: critic.executionPlan,
+          modifiedPositions: critic.modifiedPositions,
           adjustments: critic.adjustments,
           createdAt: critic.createdAt,
         }

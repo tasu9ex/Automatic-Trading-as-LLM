@@ -33,11 +33,21 @@ import {
   systemState,
   trades,
 } from "@/db/schema";
-import { type SizingMethod, allocate } from "@/lib/allocator";
+import type { SizingMethod } from "@/lib/allocator";
 import { getExchangeStatus } from "@/lib/clients/gmo";
 import { PositionStatusValue } from "@/lib/constants/enums";
 import { runCritic } from "@/lib/critic";
+import {
+  applyModify,
+  computeModifiedPositions,
+  validateCriticModify,
+} from "@/lib/cycle/critic-modify-validation";
 import { assertNotEmergencyStop } from "@/lib/cycle/emergency-stop";
+import {
+  type ExecutionPlan,
+  type ExecutionPlanSignal,
+  buildExecutionPlan,
+} from "@/lib/cycle/execution-plan";
 import { withRetry } from "@/lib/cycle/retry";
 import { buildSystemHealth } from "@/lib/cycle/system-health";
 import { runEntryDecision } from "@/lib/decision/entry";
@@ -47,7 +57,6 @@ import { checkAndTriggerKillSwitch } from "@/lib/kill-switch";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { runPriceMonitor } from "@/lib/price-monitor";
-import { applyRiskClipper } from "@/lib/risk/clipper";
 import { PER_COIN_MIN_JPY, TOTAL_MAX_RATIO, getRiskParams } from "@/lib/risk/params";
 import { type Snapshot, fetchSnapshot } from "@/lib/tier0/fetch-snapshot";
 import { runPreAnalyst } from "@/lib/tier1/pre-analyst";
@@ -651,43 +660,55 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     }),
   );
 
-  // Exit 約定
-  // === Critic 前段: Exit は **未実行**。Critic に Exit + Entry 両方の判断を委ねる ===
-  // Exit が走った想定で cash が増える見込み額 (Allocator がそれ込みで配分計算)
+  // === 新フロー: dry-run 計画 → Critic ゲート → 実行 ===
+  // 旧 (Allocator → Critic → Exit → Clipper → Entry) は Critic が raw proposal を見て
+  // 形式承認になりがちだった。新フローは Exit dry-run + Allocator + Clipper を Critic 前に
+  // 完了させ、Critic は実発注計画そのものを判断する。
   const currentPortfolio = (
     await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
   )[0];
   const currentCashJpy = Number(currentPortfolio?.cashJpy ?? 0);
 
-  const exitsToRun = ctxs.filter((c) => c.exit?.result === "close" && c.openPos);
-  // §10: taker fee を控除した手取りで cash を予測する (calculateFill と一致)。
-  // 過大評価していると Allocator が大きく配って Risk Clipper で削られるロスが出やすい。
-  //
-  // SS: ここは「全 Exit 成功前提」の楽観評価。Critic / Allocator は古い前提で判断するが、
-  //     Exit 実行後に再 fetch される cashAfterExits を Clipper に渡す (§19 で実装済) ので
-  //     最終的な配分は実態に合う。Critic の判断精度に若干影響するが、低優先で許容。
-  //     close_pct (部分決済) も考慮していない (todo SS で記載のとおり)。
-  const expectedCloseCash = exitsToRun.reduce((sum, c) => {
-    const price = Number(c.snap.ticker.last) || 0;
-    const qty = Number(c.openPos?.quantity ?? 0);
-    const closePct = c.exit?.closePct ? Number(c.exit.closePct) / 100 : 1;
-    const takerFee = Number(c.coin.takerFeeRate);
-    const grossCash = qty * closePct * price;
-    const netCash = grossCash * (1 - takerFee);
-    return sum + netCash;
-  }, 0);
-  const projectedCashJpy = currentCashJpy + expectedCloseCash;
+  const signals: ExecutionPlanSignal[] = ctxs.map((c) => ({
+    symbol: c.coin.symbol,
+    lastPriceJpy: Number(c.snap.ticker.last) || 0,
+    takerFeeRate: Number(c.coin.takerFeeRate),
+    entry:
+      c.entry?.result === "buy"
+        ? { decision: "buy", confidence: Number(c.entry.confidence) }
+        : c.entry?.result === "no"
+          ? { decision: "no", confidence: Number(c.entry.confidence) }
+          : null,
+    exit:
+      c.exit?.result === "close"
+        ? {
+            decision: "close",
+            confidence: Number(c.exit.confidence),
+            closePct: c.exit.closePct ? Number(c.exit.closePct) : 100,
+          }
+        : c.exit?.result === "hold"
+          ? {
+              decision: "hold",
+              confidence: Number(c.exit.confidence),
+              closePct: c.exit.closePct ? Number(c.exit.closePct) : 100,
+            }
+          : null,
+    openPosition: c.openPos
+      ? {
+          quantity: Number(c.openPos.quantity),
+          avgEntryPrice: Number(c.openPos.avgEntryPrice),
+        }
+      : null,
+  }));
 
-  const buySignals = ctxs
-    .filter((c) => c.entry?.result === "buy")
-    .map((c) => ({ symbol: c.coin.symbol, confidence: Number(c.entry?.confidence ?? 0) }));
-
-  // §24: Allocator は配分計算のみ。per-coin cap / min / portfolio cap は Clipper が一括適用
-  const proposal = allocate({
-    buySignals,
-    availableCashJpy: projectedCashJpy,
-    maxAllocationRatio: TOTAL_MAX_RATIO,
+  const plan = buildExecutionPlan({
+    signals,
+    currentCashJpy,
     method,
+    riskParams: {
+      perCoinMaxRatio: riskParams.perCoinMaxRatio,
+      perCoinTotalMaxRatio: riskParams.perCoinTotalMaxRatio,
+    },
   });
 
   const analystSummariesBySymbol = Object.fromEntries(
@@ -710,39 +731,23 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       },
     ]),
   );
-  // LL: Critic に渡す保有状況は DB から直接再 fetch する。ctxs は finalize 冒頭 (preflight の
-  // runPriceMonitor 後) でビルド済なので暗黙には fresh だが、不変条件を明示的にローカル化して
-  // 「Critic 直前に再 fetch されている」契約をコードで保証する。
-  const refreshedOpenPositions = await db
-    .select({ position: positions, coin: coins })
-    .from(positions)
-    .innerJoin(coins, eq(positions.coinId, coins.id))
-    .where(
-      and(eq(positions.strategyId, strategyId), eq(positions.status, PositionStatusValue.OPEN)),
-    );
-  // Critic に渡す positions に mtm 評価額も含める (段 2 cap 判定に必要な情報)
-  const tickerByCoinId = new Map(ctxs.map((c) => [c.coin.id, Number(c.snap.ticker.last) || 0]));
-  const currentPositions = refreshedOpenPositions.map(({ position, coin }) => {
-    const qty = Number(position.quantity);
-    const avgPrice = Number(position.avgEntryPrice);
-    const mtm = tickerByCoinId.get(coin.id);
-    const mtmPrice = mtm && mtm > 0 ? mtm : avgPrice;
-    return {
-      symbol: coin.symbol,
-      qty,
-      avgPrice,
-      mtmValueJpy: qty * mtmPrice,
-    };
-  });
-  const equityForCritic =
-    projectedCashJpy + currentPositions.reduce((s, p) => s + (p.mtmValueJpy ?? 0), 0);
   const symbolToName = Object.fromEntries(ctxs.map((c) => [c.coin.symbol, c.coin.name]));
+  const equityForCritic =
+    currentCashJpy + Object.values(plan.currentPositions).reduce((s, v) => s + v, 0);
 
   // §33: システム健全性スナップを Critic に渡す (データ不全銘柄を modify で弾けるように)
   const systemHealth = await buildSystemHealth({ strategyId, ctxs });
 
-  // Critic skip: 買い 0 + Exit 0 なら審査するものが無い → Opus 呼び出しを節約
-  const hasNothingToDo = buySignals.length === 0 && exitsToRun.length === 0;
+  // Allocator 候補 = Analyst が buy を出した銘柄 (Critic modify の whitelist)
+  const buyCandidates = new Set(
+    signals.filter((s) => s.entry?.decision === "buy").map((s) => s.symbol),
+  );
+
+  // Critic skip: 計画に何も無ければ Opus 呼び出しを節約
+  const hasNothingToDo =
+    Object.keys(plan.entries).length === 0 &&
+    Object.keys(plan.exits).length === 0 &&
+    buyCandidates.size === 0;
   let critic: Awaited<ReturnType<typeof runCritic>>;
   if (hasNothingToDo) {
     critic = {
@@ -759,14 +764,12 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   } else {
     // 0.1: Critic 必須化 (ALL-or-NOTHING 原則)。Critic 失敗は通常の failure path に流して
     // recordCycleFailure 経由で llm_failure event + Discord 通知 + consecutiveFailures++ する。
-    // 上位 runPhase の catch がこの throw を拾う。
     critic = await runCritic({
-      proposal,
+      plan,
       analystSummariesBySymbol,
       decisionsBySymbol,
-      currentPositions,
       symbolToName,
-      cashJpy: projectedCashJpy,
+      currentCashJpy,
       equityJpy: equityForCritic,
       riskParams: {
         perCoinMaxRatio: riskParams.perCoinMaxRatio,
@@ -777,18 +780,46 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     });
   }
 
+  // Critic modify の機械検算 (ALL-or-NOTHING)。cap 違反 / 銘柄ホワイトリスト違反は throw。
+  // approve / veto は検算スキップ。modify でも adjustments null なら null 同義で approve 扱い。
+  if (critic.output.decision === "modify" && critic.output.adjustments) {
+    const violation = validateCriticModify({
+      plan,
+      adjustments: critic.output.adjustments,
+      buyCandidates,
+      cashJpy: currentCashJpy,
+      equityJpy: equityForCritic,
+      perCoinMaxRatio: riskParams.perCoinMaxRatio,
+      perCoinTotalMaxRatio: riskParams.perCoinTotalMaxRatio,
+    });
+    if (violation) {
+      logger.error({ violation, adjustments: critic.output.adjustments }, "Critic modify 違反");
+      throw new Error(`critic_modify_invalid: ${violation}`);
+    }
+  }
+
+  // 計画 → 修正後の最終形を組み立て (veto 時は空)
+  const final =
+    critic.output.decision === "veto"
+      ? { entries: {} as Record<string, number>, exits: {} as ExecutionPlan["exits"] }
+      : critic.output.decision === "modify" && critic.output.adjustments
+        ? applyModify(plan, critic.output.adjustments)
+        : { entries: plan.entries, exits: plan.exits };
+
+  const modifiedPositions =
+    critic.output.decision === "modify" ? computeModifiedPositions(plan, final) : null;
+
   await db.insert(criticOutputs).values({
     cycleId,
     llmModel: critic.llmModel,
     decision: critic.output.decision,
-    allocationProposal: proposal,
+    executionPlan: plan,
+    modifiedPositions,
     adjustments: critic.output.adjustments,
     reasoning: critic.output.reasoning,
     promptVersion: critic.promptVersion,
   });
 
-  let finalProposal = proposal;
-  const exitOverrides: Record<string, number> = {}; // symbol → close_pct (Critic 上書き値)
   if (critic.output.decision === "veto") {
     logger.warn({ reason: critic.output.reasoning }, "Critic vetoed this cycle");
     await db.insert(systemEvents).values({
@@ -796,17 +827,17 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       kind: "critic_veto",
       severity: "warning",
       message: `Critic veto: ${critic.output.reasoning.slice(0, 200)}`,
-      payload: { cycleId, proposal },
+      payload: { cycleId, plan },
       cycleId,
     });
     const vetoBuyList =
-      Object.keys(proposal).length > 0
-        ? Object.entries(proposal)
+      Object.keys(plan.entries).length > 0
+        ? Object.entries(plan.entries)
             .map(([sym, jpy]) => `${sym}: ¥${Math.round(jpy).toLocaleString()}`)
             .join(", ")
         : "なし";
     const vetoExitList =
-      exitsToRun.length > 0 ? exitsToRun.map((c) => c.coin.symbol).join(", ") : "なし";
+      Object.keys(plan.exits).length > 0 ? Object.keys(plan.exits).join(", ") : "なし";
     await notify({
       level: "warning",
       title: "🛑 Critic 拒否 (VETO)",
@@ -816,18 +847,19 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
         拒否売り: vetoExitList.slice(0, 200),
       },
     });
-    finalProposal = {};
   } else if (critic.output.decision === "modify" && critic.output.adjustments) {
     const buys = critic.output.adjustments.buys ?? {};
     const exits = critic.output.adjustments.exits ?? {};
-    finalProposal = { ...proposal, ...buys };
-    Object.assign(exitOverrides, exits);
     await db.insert(systemEvents).values({
       strategyId,
       kind: "critic_modify",
       severity: "info",
       message: `Critic modified: ${critic.output.reasoning.slice(0, 200)}`,
-      payload: { cycleId, before: proposal, after: finalProposal, exitOverrides },
+      payload: {
+        cycleId,
+        before: { entries: plan.entries, exits: plan.exits },
+        after: { entries: final.entries, exits: final.exits },
+      },
       cycleId,
     });
     await notify({
@@ -841,48 +873,46 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     });
   }
 
-  // === Critic 後段 ===
-  // veto: Exit / Entry 両方とも実行しない (Critic がポートフォリオ操作全体を拒否)
-  // approve / modify: Exit 実行 → cash refresh → Risk Clipper + Entry 実行
+  // === 実行フェーズ ===
+  // approve / modify: Exit 実行 → cash safety check → Entry 実行
+  // veto: 何もしない
   let exitsExecuted = 0;
   let entriesExecutedFinal = 0;
   const executedEntries: Array<{ symbol: string; budget: number }> = [];
   const skippedEntries: Array<{ symbol: string; budget: number; reason: string }> = [];
-  let clipped: ReturnType<typeof applyRiskClipper> = {
-    proposal: {},
-    changes: [],
-  };
+  const ctxBySymbol = new Map(ctxs.map((c) => [c.coin.symbol, c]));
+  let finalEntries: Record<string, number> = { ...final.entries };
 
   if (critic.output.decision !== "veto") {
-    // Exit 実行 (close_pct: Critic 上書き > Tier 3 出力 > default 100)
-    for (const c of exitsToRun) {
+    // Exit 実行
+    for (const [symbol, exitPlan] of Object.entries(final.exits)) {
+      const c = ctxBySymbol.get(symbol);
+      if (!c || !c.openPos) continue;
       const lastPrice = Number(c.snap.ticker.last) || 0;
       if (lastPrice <= 0) continue;
-      const tier3Pct = c.exit?.closePct ? Number(c.exit.closePct) : 100;
-      const overridePct = exitOverrides[c.coin.symbol];
-      const effectivePct = overridePct ?? tier3Pct;
       try {
         await executeExit({
           strategyId,
-          symbol: c.coin.symbol,
+          symbol,
           decisionId: c.exit?.id ?? null,
           marketPrice: lastPrice,
           takerFeeRate: Number(c.coin.takerFeeRate),
-          quantityRatio: effectivePct / 100,
+          quantityRatio: exitPlan.closePct / 100,
           reason:
-            overridePct !== undefined
-              ? `llm decision (critic modified ${tier3Pct}%→${overridePct}%)`
+            critic.output.decision === "modify" &&
+            critic.output.adjustments?.exits?.[symbol] !== undefined
+              ? `llm decision (critic modified → ${exitPlan.closePct}%)`
               : "llm decision",
         });
         exitsExecuted++;
       } catch (err) {
-        logger.error({ err, symbol: c.coin.symbol }, "executeExit failed");
+        logger.error({ err, symbol }, "executeExit failed");
         await notify({
           level: "error",
-          title: `🚨 Exit 失敗 ${c.coin.symbol}`,
+          title: `🚨 Exit 失敗 ${symbol}`,
           body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
           fields: {
-            意図: `${effectivePct}% 決済`,
+            意図: `${exitPlan.closePct}% 決済`,
             参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
             影響: "ポジション保有継続、price-monitor SL に依存",
           },
@@ -890,75 +920,44 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       }
     }
 
-    // Exit 後の cash + positions refresh (§19)
+    // Exit 後の cash 再 fetch + safety re-check
+    // 計画は projectedCashJpy ベース。Exit 部分失敗で実 cash が下回ったら
+    // Entry 合計を比例縮小する (前段 Clipper を完全に再走させるより軽量)。
     const refreshedPortfolio = (
       await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
     )[0];
     const cashAfterExits = Number(refreshedPortfolio?.cashJpy ?? 0);
-
-    // §19: in-memory ctxs ではなく DB から再取得 (Exit 約定が反映済の状態)
-    const refreshedPositions = await db
-      .select()
-      .from(positions)
-      .where(
-        and(eq(positions.strategyId, strategyId), eq(positions.status, PositionStatusValue.OPEN)),
+    const cashRoom = cashAfterExits * TOTAL_MAX_RATIO;
+    const plannedSum = Object.values(finalEntries).reduce((s, v) => s + v, 0);
+    if (plannedSum > cashRoom && plannedSum > 0) {
+      const scale = cashRoom / plannedSum;
+      logger.warn(
+        { plannedSum, cashRoom, scale },
+        "Exit 部分失敗で実 cash 不足 — Entry を比例縮小",
       );
-
-    // §11: 原価ベース (avgEntryPrice) ではなく mark-to-market (current price) で
-    // 実エクスポージャを評価。lastPriceByCoinId は finalize の後段で構築するため
-    // ここで先に作る (ctxs.snap.ticker.last ベース、fallback は建値)。
-    const priceByCoinId = new Map<string, number>(
-      ctxs.map((c) => [c.coin.id, Number(c.snap.ticker.last) || 0]),
-    );
-    // symbol 別の existing exposure (per-coin total cap 用)
-    const coinIdToSymbol = new Map(ctxs.map((c) => [c.coin.id, c.coin.symbol]));
-    const existingExposureBySymbol: Record<string, number> = {};
-    let currentInvested = 0;
-    for (const p of refreshedPositions) {
-      const qty = Number(p.quantity);
-      const mtmPrice = priceByCoinId.get(p.coinId);
-      const price = mtmPrice && mtmPrice > 0 ? mtmPrice : Number(p.avgEntryPrice);
-      const exposure = qty * price;
-      currentInvested += exposure;
-      const sym = coinIdToSymbol.get(p.coinId);
-      if (sym) existingExposureBySymbol[sym] = (existingExposureBySymbol[sym] ?? 0) + exposure;
-    }
-    const equity = cashAfterExits + currentInvested;
-    clipped = applyRiskClipper({
-      proposal: finalProposal,
-      availableCashJpy: cashAfterExits,
-      currentInvestedJpy: currentInvested,
-      existingExposureBySymbol,
-      equityJpy: equity,
-      perCoinMaxRatio: riskParams.perCoinMaxRatio,
-      perCoinMinJpy: PER_COIN_MIN_JPY,
-      totalMaxRatio: TOTAL_MAX_RATIO,
-      perCoinTotalMaxRatio: riskParams.perCoinTotalMaxRatio,
-    });
-    if (clipped.changes.length > 0) {
-      logger.info({ changes: clipped.changes }, "Risk Clipper applied");
+      const scaled: Record<string, number> = {};
+      for (const [sym, jpy] of Object.entries(finalEntries)) {
+        const v = Math.floor(jpy * scale);
+        if (v >= PER_COIN_MIN_JPY) scaled[sym] = v;
+      }
+      finalEntries = scaled;
     }
 
-    // Entry 実行 (executedSymbols / skippedSymbols を集計して通知に反映)
-    for (const c of ctxs) {
-      const budget = clipped.proposal[c.coin.symbol];
-      if (!budget) continue;
+    // Entry 実行
+    for (const [symbol, budget] of Object.entries(finalEntries)) {
+      const c = ctxBySymbol.get(symbol);
+      if (!c) continue;
       const lastPrice = Number(c.snap.ticker.last) || 0;
       if (lastPrice <= 0) {
         skippedEntries.push({
-          symbol: c.coin.symbol,
+          symbol,
           budget,
           reason: "1m bar 空で参考価格 0 円 (Tier 0 データ取得問題)",
         });
-        logger.warn(
-          { symbol: c.coin.symbol, budget },
-          "executeEntry skipped: lastPrice <= 0 (1m bar empty)",
-        );
+        logger.warn({ symbol, budget }, "executeEntry skipped: lastPrice <= 0 (1m bar empty)");
         continue;
       }
       try {
-        // §1: Entry 仮説を decisions row から拾って executor に渡す。positions.entry_*
-        // に書き込まれ、Exit プロンプトの reference として活用される。
         const minDays = c.entry?.entryExpectedHoldingDaysMin
           ? Number(c.entry.entryExpectedHoldingDaysMin)
           : null;
@@ -967,7 +966,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
           : null;
         await executeEntry({
           strategyId,
-          symbol: c.coin.symbol,
+          symbol,
           decisionId: c.entry?.id ?? null,
           marketPrice: lastPrice,
           budgetJpy: budget,
@@ -978,18 +977,18 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
           targetPriceJpy: c.entry?.entryTargetPriceJpy ? Number(c.entry.entryTargetPriceJpy) : null,
           exitCondition: c.entry?.entryExitCondition ?? null,
         });
-        executedEntries.push({ symbol: c.coin.symbol, budget });
+        executedEntries.push({ symbol, budget });
         entriesExecutedFinal++;
       } catch (err) {
-        logger.error({ err, symbol: c.coin.symbol }, "executeEntry failed");
+        logger.error({ err, symbol }, "executeEntry failed");
         skippedEntries.push({
-          symbol: c.coin.symbol,
+          symbol,
           budget,
           reason: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
         });
         await notify({
           level: "error",
-          title: `🚨 Entry 失敗 ${c.coin.symbol}`,
+          title: `🚨 Entry 失敗 ${symbol}`,
           body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
           fields: {
             配分: `¥${budget.toLocaleString()}`,
@@ -1034,10 +1033,10 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       elapsedMs,
       symbolsProcessed,
       symbolsSkipped,
-      buySignals: buySignals.length,
+      buySignals: buyCandidates.size,
       exitsTriggered,
       entriesExecuted,
-      proposal: clipped.proposal,
+      finalEntries,
       criticDecision: critic.output.decision,
     },
     "Cycle done",
@@ -1051,7 +1050,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   );
   // veto された場合 closes/buys は空 (Exit 実行スキップ済み)
   const closes =
-    critic.output.decision === "veto" ? [] : exitsToRun.map((c) => `• ${c.coin.symbol}`);
+    critic.output.decision === "veto" ? [] : Object.keys(final.exits).map((sym) => `• ${sym}`);
 
   const refreshedAfterEntries = (
     await db.select().from(portfolios).where(eq(portfolios.strategyId, strategyId)).limit(1)
@@ -1147,7 +1146,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     symbolsProcessed,
     symbolsSkipped,
     symbolsFailed: 0,
-    buySignals: buySignals.length,
+    buySignals: buyCandidates.size,
     exitsTriggered,
     entriesExecuted,
     criticDecision: critic.output.decision,

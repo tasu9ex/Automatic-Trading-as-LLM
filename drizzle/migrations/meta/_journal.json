@@ -120,6 +120,13 @@
       "when": 1779600000000,
       "tag": "0016_cycle_minutes_and_single_kline",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1779700000000,
+      "tag": "0017_critic_execution_plan",
+      "breakpoints": true
     }
   ]
 }

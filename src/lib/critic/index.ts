@@ -1,28 +1,20 @@
 import { generateJson } from "@/lib/clients/generate-json";
+import type { ExecutionPlan } from "@/lib/cycle/execution-plan";
 import { getPrompt } from "@/lib/prompts";
-import {
-  type AllocationProposal,
-  type CriticOutput,
-  CriticOutputSchema,
-} from "@/lib/schemas/llm-outputs";
+import { type CriticOutput, CriticOutputSchema } from "@/lib/schemas/llm-outputs";
 import type { SystemHealth } from "@/lib/schemas/system-health";
 
 export interface CriticInput {
-  proposal: AllocationProposal;
+  /** Exit dry-run + Allocator + Clipper 適用済の実行計画 */
+  plan: ExecutionPlan;
   analystSummariesBySymbol: Record<string, unknown>;
   decisionsBySymbol: Record<string, unknown>;
-  /** 既存ポジション (mtmValueJpy: 時価評価、未指定なら qty × avgPrice で代用) */
-  currentPositions: Array<{
-    symbol: string;
-    qty: number;
-    avgPrice: number;
-    mtmValueJpy?: number;
-  }>;
   /** symbol → プロジェクト正式名称マップ (LLM 文脈用) */
   symbolToName: Record<string, string>;
-  cashJpy: number;
-  /** equity = cashJpy + Σ positions の mtm。per-coin total cap の base */
-  equityJpy?: number;
+  /** Exit 前 cash (実値) */
+  currentCashJpy: number;
+  /** equity = cash + Σ positions の mtm。per-coin total cap の base */
+  equityJpy: number;
   riskParams: {
     /** 段 1: per-cycle 新規 buy 上限比率 (cash base) */
     perCoinMaxRatio: number;
@@ -41,18 +33,28 @@ export interface CriticResult {
 }
 
 /**
- * Critic LLM: 配分案を承認/拒否/修正。
+ * Critic LLM: 実行計画 (Exit + Entry) を承認/拒否/修正。
  * 失敗時は throw して finalize step を fail させる (ALL-or-NOTHING、サイクル全体中断)。
  */
 export async function runCritic(input: CriticInput): Promise<CriticResult> {
   const resolved = await getPrompt("tier4/critic", {
-    allocation_proposal: JSON.stringify(input.proposal, null, 2),
+    execution_plan: JSON.stringify(
+      {
+        entries: input.plan.entries,
+        exits: input.plan.exits,
+        currentPositions: input.plan.currentPositions,
+        plannedPositions: input.plan.plannedPositions,
+        projectedCashJpy: input.plan.projectedCashJpy,
+        clipperChanges: input.plan.clipperChanges,
+      },
+      null,
+      2,
+    ),
     analyst_summaries: JSON.stringify(input.analystSummariesBySymbol, null, 2),
     decisions: JSON.stringify(input.decisionsBySymbol, null, 2),
-    current_positions: JSON.stringify(input.currentPositions, null, 2),
     symbol_to_name: JSON.stringify(input.symbolToName, null, 2),
-    cash_jpy: input.cashJpy,
-    equity_jpy: input.equityJpy ?? input.cashJpy,
+    cash_jpy: input.currentCashJpy,
+    equity_jpy: input.equityJpy,
     risk_params: JSON.stringify(input.riskParams, null, 2),
     system_health: JSON.stringify(input.systemHealth, null, 2),
   });

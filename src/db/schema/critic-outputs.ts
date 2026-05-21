@@ -9,7 +9,18 @@ export const criticOutputs = pgTable(
     cycleId: uuid("cycle_id").notNull(),
     llmModel: text("llm_model").notNull(),
     decision: criticDecisionEnum("decision").notNull(),
-    allocationProposal: jsonb("allocation_proposal").notNull(),
+    /**
+     * Critic に渡した実行計画 (Exit dry-run + Allocator + Clipper 適用済)。
+     * 構造: ExecutionPlan ({ exits, entries, projectedCashJpy, currentPositions,
+     *                       plannedPositions, clipperChanges })
+     */
+    executionPlan: jsonb("execution_plan").notNull(),
+    /**
+     * Critic 適用後のポジション見込み (modify のみ)。symbol → jpy。
+     * approve のときは null (executionPlan.plannedPositions と同値なので冗長保存しない)。
+     * veto のときも null (全銘柄キャンセル = currentPositions と同値)。
+     */
+    modifiedPositions: jsonb("modified_positions"),
     adjustments: jsonb("adjustments"),
     reasoning: text("reasoning"),
     promptVersion: text("prompt_version"),
