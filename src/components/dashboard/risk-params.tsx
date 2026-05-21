@@ -184,6 +184,7 @@ export function RiskParams({
         open={confirmOpen}
         title="リスクパラメータを更新しますか?"
         message={confirmMessage}
+        confirmLabel="保存"
         onConfirm={doSave}
         onCancel={() => setConfirmOpen(false)}
       />

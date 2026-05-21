@@ -76,6 +76,8 @@ export function SystemControls({
     title: string;
     message?: string;
     destructive?: boolean;
+    /** confirm ボタンのラベル (= ユーザーがこの dialog で「何をする」のか明示) */
+    confirmLabel?: string;
     onConfirm: () => void;
     onCancel?: () => void;
   } | null>(null);
@@ -83,12 +85,18 @@ export function SystemControls({
   function runAction(
     title: string,
     action: () => Promise<SystemControlActionResult>,
-    opts?: { message?: string; destructive?: boolean; optimisticTarget?: string },
+    opts?: {
+      message?: string;
+      destructive?: boolean;
+      optimisticTarget?: string;
+      confirmLabel?: string;
+    },
   ) {
     setConfirm({
       title,
       message: opts?.message,
       destructive: opts?.destructive,
+      confirmLabel: opts?.confirmLabel,
       onConfirm: () => {
         setConfirm(null);
         setError(null);
@@ -113,6 +121,7 @@ export function SystemControls({
     setConfirm({
       title: `実行レートを「${label}」に変更`,
       message: isRunning ? "次のスケジュール枠から反映されます。" : "再開後に反映されます。",
+      confirmLabel: "変更を保存",
       onConfirm: () => {
         setConfirm(null);
         setError(null);
@@ -208,6 +217,7 @@ export function SystemControls({
                   runAction("システムを起動しますか?", startSystemAction, {
                     message: "次のスケジュール枠から判定サイクルが開始します。",
                     optimisticTarget: "running",
+                    confirmLabel: "起動する",
                   })
                 }
               >
@@ -221,6 +231,7 @@ export function SystemControls({
                   runAction("判定を再開しますか?", resumeSystemAction, {
                     message: "緊急停止フラグが立っていれば同時に解除されます。",
                     optimisticTarget: "running",
+                    confirmLabel: "再開する",
                   })
                 }
               >
@@ -237,6 +248,7 @@ export function SystemControls({
                     message:
                       "現在実行中のサイクルは最後まで完走し、停止は次サイクルから反映されます。\n進行中のサイクルも即座に止めたい場合は「緊急停止」を使ってください。",
                     optimisticTarget: "paused",
+                    confirmLabel: "一時停止する",
                   })
                 }
               >
@@ -253,6 +265,7 @@ export function SystemControls({
                       "進行中のサイクルを次の phase 境界で即座に中断します。\n次サイクルも停止します (再開ボタンで両方解除)。",
                     destructive: true,
                     optimisticTarget: "paused",
+                    confirmLabel: "緊急停止する",
                   })
                 }
               >
@@ -279,6 +292,7 @@ export function SystemControls({
         title={confirm?.title ?? ""}
         message={confirm?.message}
         destructive={confirm?.destructive}
+        confirmLabel={confirm?.confirmLabel}
         onConfirm={() => confirm?.onConfirm()}
         onCancel={() => (confirm?.onCancel ? confirm.onCancel() : setConfirm(null))}
       />
