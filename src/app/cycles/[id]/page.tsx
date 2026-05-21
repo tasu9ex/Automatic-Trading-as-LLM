@@ -175,7 +175,10 @@ export default async function CycleDetailPage({ params }: PageProps) {
             {c.snapshot && (
               <details className="rounded border border-border">
                 <summary className="cursor-pointer select-none px-3 py-2 text-muted-foreground text-xs uppercase tracking-wide hover:bg-muted/30">
-                  Tier 0 情報源 (Perplexity ニュース + Grok センチメント)
+                  <span className="inline-flex items-center gap-2">
+                    Tier 0 (情報収集)
+                    <Badge variant="default">実行</Badge>
+                  </span>
                 </summary>
                 <div className="space-y-3 border-border border-t p-3 text-xs">
                   <div>
@@ -235,12 +238,12 @@ export default async function CycleDetailPage({ params }: PageProps) {
                   <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
                     Pre-Analyst (スクリーニング)
                   </h3>
-                  <Badge variant={c.preAnalyst.skipFlag ? "outline" : "default"}>
-                    {c.preAnalyst.skipFlag ? "スキップ" : "通過"}
-                  </Badge>
-                  <span className="text-muted-foreground text-xs">
-                    関連度 {c.preAnalyst.relevanceScore.toFixed(2)}
-                  </span>
+                  <Badge variant="default">実行</Badge>
+                  {c.preAnalyst.skipFlag && (
+                    <span className="text-muted-foreground text-xs">
+                      (skip_flag=true → 未保有銘柄は Tier 2 スキップ)
+                    </span>
+                  )}
                 </div>
                 <p>{c.preAnalyst.summary}</p>
                 {c.preAnalyst.reasoning && (
@@ -251,30 +254,21 @@ export default async function CycleDetailPage({ params }: PageProps) {
               </section>
             )}
 
-            {c.analyst && (
+            {c.analyst ? (
               <section className="space-y-2">
-                <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
-                  Analyst (市場見解)
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
+                    Analyst (市場見解)
+                  </h3>
+                  <Badge variant="default">実行</Badge>
+                </div>
                 <div className="rounded border border-foreground/40 bg-muted/40 p-3 text-xs">
-                  <div className="mb-1 flex items-center gap-2">
-                    <span className="font-semibold">統合見解 (Synthesis)</span>
-                    <Badge>{c.analyst.synthesis.direction}</Badge>
-                    <span className="text-muted-foreground">
-                      確信度 {c.analyst.synthesis.confidence.toFixed(2)}
-                    </span>
-                  </div>
+                  <div className="mb-1 font-semibold">統合見解</div>
                   <p className="whitespace-pre-wrap">{c.analyst.synthesis.reasoning}</p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
                   <div className="rounded border border-border p-3 text-xs">
-                    <div className="mb-1 flex items-center gap-2">
-                      <span className="font-semibold">ファンダメンタル</span>
-                      <Badge variant="outline">{c.analyst.fundamental.impact}</Badge>
-                      <span className="text-muted-foreground">
-                        確信度 {c.analyst.fundamental.confidence.toFixed(2)}
-                      </span>
-                    </div>
+                    <div className="mb-1 font-semibold">ファンダメンタル</div>
                     <p className="whitespace-pre-wrap">{c.analyst.fundamental.notes}</p>
                     {c.analyst.fundamental.key_events.length > 0 && (
                       <ul className="mt-1 ml-4 list-disc text-muted-foreground">
@@ -285,25 +279,11 @@ export default async function CycleDetailPage({ params }: PageProps) {
                     )}
                   </div>
                   <div className="rounded border border-border p-3 text-xs">
-                    <div className="mb-1 flex items-center gap-2">
-                      <span className="font-semibold">センチメント</span>
-                      <Badge variant="outline">{c.analyst.sentiment.tone}</Badge>
-                      <Badge variant="outline">{c.analyst.sentiment.trend}</Badge>
-                      <span className="text-muted-foreground">
-                        確信度 {c.analyst.sentiment.confidence.toFixed(2)}
-                      </span>
-                    </div>
+                    <div className="mb-1 font-semibold">センチメント</div>
                     <p className="whitespace-pre-wrap">{c.analyst.sentiment.notes}</p>
                   </div>
                   <div className="rounded border border-border p-3 text-xs">
-                    <div className="mb-1 flex items-center gap-2">
-                      <span className="font-semibold">テクニカル</span>
-                      <Badge variant="outline">{c.analyst.technical.trend}</Badge>
-                      <Badge variant="outline">ボラ {c.analyst.technical.volatility}</Badge>
-                      <span className="text-muted-foreground">
-                        確信度 {c.analyst.technical.confidence.toFixed(2)}
-                      </span>
-                    </div>
+                    <div className="mb-1 font-semibold">テクニカル</div>
                     <div className="text-muted-foreground">
                       サポート: {c.analyst.technical.support} ・ レジスタンス:{" "}
                       {c.analyst.technical.resistance}
@@ -312,7 +292,19 @@ export default async function CycleDetailPage({ params }: PageProps) {
                   </div>
                 </div>
               </section>
-            )}
+            ) : c.preAnalyst ? (
+              <section className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
+                    Analyst (市場見解)
+                  </h3>
+                  <Badge variant="outline">スキップ</Badge>
+                </div>
+                <p className="text-muted-foreground text-xs">
+                  Pre-Analyst の skip_flag により省略 (保有なし + 関連度低)
+                </p>
+              </section>
+            ) : null}
 
             <section className="space-y-2">
               <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
@@ -338,9 +330,13 @@ export default async function CycleDetailPage({ params }: PageProps) {
                   <div className="rounded border border-border border-dashed p-3">
                     <div className="mb-1 flex items-center gap-2">
                       <h4 className="font-semibold text-muted-foreground text-xs">Entry (新規)</h4>
-                      <Badge variant="outline">未実行</Badge>
+                      <Badge variant="outline">スキップ</Badge>
                     </div>
-                    <p className="text-muted-foreground text-xs">判定が記録されていません</p>
+                    <p className="text-muted-foreground text-xs">
+                      {c.preAnalyst?.skipFlag
+                        ? "Pre-Analyst が skip_flag → Tier 2/3 省略"
+                        : "判定なし (Tier 2 失敗 or 未到達)"}
+                    </p>
                   </div>
                 )}
                 {c.exitDecision ? (
