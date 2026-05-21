@@ -117,7 +117,7 @@ LLM の構造的優位を最大限活かす設計:
 │   入力: 配分案 + Analyst 見解 + 現ポジ + 現金              │
 │   出力: approve / veto / modify(adjustments)              │
 │   shadow trading: モデルごとに Critic を持つ              │
-│   失敗時: フェイルオープン (配分案そのまま採用)             │
+│   失敗時: サイクル中断 (ALL-or-NOTHING、§4.4.4 で詳述)      │
 └──────────────────────────────────────────────────────────┘
                               ↓
 ┌──────────────────────────────────────────────────────────┐
@@ -162,6 +162,8 @@ LLM の構造的優位を最大限活かす設計:
 - **Shadow Trading**: 複数モデルに同一スナップショットを投げ、モデルごとに仮想ポジション台帳を別管理
 - **Tier 分離**: 軽量モデルで事前要約・ノイズ除去、重量モデルで最終判断。Tier 2 のみ shadow trading で比較対象とする(Tier 1 は共通)
 - **チューニングは人手**: MVP では銘柄別プロンプト/閾値は人間が手動で調整。メタ LLM による自動チューニングは過剰適合リスクが高いためフェーズ後半
+- **ALL-or-NOTHING (失敗時のサイクル中断)**: 判断パイプライン (Tier 0-3 / Critic) はいずれの段でも、リトライ後の失敗があればサイクル全体を中断する。「一部の銘柄だけ進める」「Critic 不在でも売買する」といったフェイルオープンは採用しない。これにより「審査が抜けたまま売買が走る」事故を構造的に防ぐ。詳細は §4.4.4。
+  - 例外: Exit (ロット決済) における "all-or-nothing" は別概念で、「部分決済をせず全量売却する」というロット方針を指す (§4.3.4)。
 
 ## 4. 機能要件
 
@@ -193,10 +195,15 @@ LLM の構造的優位を最大限活かす設計:
 - 1 サイクル: 20+ 銘柄 × 2 ソース = 40+ req
 - 20+ 銘柄 で取得すると重複コストが目立つので、将来 Macro / PerCoin 分離を再検討する余地あり
 
-#### 4.1.4 取得失敗時
+#### 4.1.4 取得失敗時 (ALL-or-NOTHING)
 
-- 直前サイクルの結果を **1 回だけ** 再利用
-- それも無ければ「情報なし」マーカー付きで判定に進む(LLM は文脈不足を認識して慎重判断する想定)
+§3.2 の ALL-or-NOTHING 原則に従い、Tier 0 のいずれかの銘柄が retry 後も取得失敗した場合は **サイクル全体を中断する**。
+
+- transient エラー (5xx / 429 / timeout) → exp backoff で retry
+- それでも失敗 → phase throw → サイクル全体 abort + Discord 通知 + `consecutiveFailures++`
+- 「情報なしマーカーで判定に進む」「直前サイクルを再利用する」といったフェイルオープンは採用しない (旧方針から変更、実装と整合)
+
+理由: 不完全な情報での売買発生を構造的に防ぐ。Tier 0 が継続的に失敗するなら連続失敗カウンタが上がって auto-pause まで自然に至る (§4.4.4)。
 
 #### 4.1.5 保存
 
@@ -284,7 +291,11 @@ Allocator 出力 → Critic LLM
                           reasoning: 理由 }
                    ↓
         approve  → そのまま Risk Clipper へ
-        veto     → 該当モデルのサイクルのみスキップ(他モデルは継続)、system_events 記録、Discord 通知
+        veto     → このサイクルの Exit / Entry を **両方とも実行しない**
+                   (Critic は配分案 + Exit 判断全体を信用しないという判定)
+                   ※ price-monitor の SL は preflight 内で実行済みなので、緊急 close は別経路で確保される
+                   ※ shadow trading (Phase 5c 以降) で複数モデル並走時は「該当モデルのみスキップ、他モデルは継続」
+                   system_events 記録、Discord 通知
         modify   → Risk Clipper のハードガード範囲内で adjustments を適用
 ```
 
@@ -293,9 +304,9 @@ Allocator 出力 → Critic LLM
 
 **安全策**:
 - 拒否率モニタリング(週次レポート、50% 超で警告)
-- 人間オーバーライド (UI から「次サイクル Critic 無効」)
-- Critic 自体の API エラー → フェイルオープン(配分案そのまま採用)
+- Critic 自体の API エラー → **サイクル中断** (ALL-or-NOTHING、§3.2 / §4.4.4)。Allocator 提案そのまま採用するフェイルオープンは採用しない (「審査抜きで売買発生」を構造的に防ぐため)。transient エラーなら次サイクルで自動リトライされる。
 - 拒否理由は全件 `system_events` 保存、Langfuse トレース
+- 人間が Critic を一時的に止めたい場合は `system_state.state = paused` で全停止する運用 (Critic 単独を無効化する手段は提供しない)。
 
 #### 4.3.4 ピラミッディング(追加購入)
 
@@ -391,18 +402,35 @@ LUNA / FTX 級フラッシュクラッシュでも最終防衛線 (-35%, -50%) �
 | **LLM** (SL/TP 値の更新提案) | ✗ | ◯ |
 | **人間** (UI から任意の pending order 編集/取消) | ◯ | ◯ |
 
-#### 4.4.4 LLM 判定失敗時のフォールバック
+#### 4.4.4 LLM 判定失敗時のフォールバック (ALL-or-NOTHING)
+
+§3.2 で定めた ALL-or-NOTHING 原則に従う:
+**判断パイプラインのいずれかの段が、リトライ後も失敗したらサイクル全体を中断する**。
+「一部銘柄だけ実行」「Critic 抜きで Allocator 採用」といったフェイルオープンは一切行わない。
 
 ```
 試行 1 → エラー
-       ├─ 一時的エラー(429/503/タイムアウト) → exponential backoff で最大 3 回
-       ├─ パース失敗(JSON 不正等)            → プロンプト再送 1 回
-       └─ 永続エラー(401/403/設定)           → リトライせず即 Discord 通知
+       ├─ 一時的エラー(429/503/タイムアウト/overloaded) → exponential backoff で retry
+       ├─ パース失敗(JSON 不正等)                      → プロンプト再送 1 回
+       └─ 永続エラー(401/403/400/設定)                 → リトライせず即 throw
        ↓
-全て失敗 → サイクル skip + Discord 通知 + 連続失敗カウンタ++
+全て失敗 → サイクル全体 abort + Discord 通知 + 連続失敗カウンタ++
+       (個別銘柄 / Critic / その他いずれの段でも同じ扱い)
 
-連続 N=3 サイクル失敗 → Kill Switch 発動
+連続 N サイクル失敗 (デフォルト 3、`system_state.auto_pause_threshold` で可変)
+       → 自動 pause (ポジション維持、LLM のみ停止)
+
+ポートフォリオ DD <= -P (デフォルト -50%、`system_state.portfolio_dd_trigger` で可変)
+       → Kill Switch 発動 (全 close + killed)
+
+クォータ / billing エラー (insufficient_quota / credit balance / 402)
+       → 連続失敗カウンタを通さず即 paused (`auto_pause_threshold` の対象外)
 ```
+
+**カウンタ仕様**:
+- `consecutiveFailures` は **同じ `lastFailureKind` (transient / permanent) が続く間だけ加算**。異種が来たらリセット。
+- サイクル成功時に `consecutiveFailures: 0, lastFailureKind: null` にリセット。
+- auto-pause / kill-switch 発動時もカウンタはリセットされる (再開後にゼロから再カウント)。
 
 通知手段: Discord Webhook (MVP は 1 チャンネル垂れ流し、Embed で色分け: 緊急=赤/通常=青/レポート=緑)
 
@@ -503,7 +531,7 @@ UI メイン、CLI も用意(UI 不調時のバックアップ)。
 ### 5.1 信頼性
 
 - スケジューラ遅延に強い設計 (GitHub Actions cron は使わない)
-- LLM 呼び出し失敗時はリトライ + 当該サイクルをスキップしてログ
+- LLM 呼び出し失敗時はリトライ → それでも失敗ならサイクル全体 abort (ALL-or-NOTHING、§3.2 / §4.4.4)
 - 「判断なし」も明示的に記録
 
 ### 5.2 セキュリティ
@@ -652,7 +680,7 @@ UI メイン、CLI も用意(UI 不調時のバックアップ)。
 - **判定頻度**: **1 日 1 回、JST 朝 9:00**
 - **仮想ポートフォリオ初期残高**: **¥250,000**
 - **shadow trading**: インターフェースは shadow 対応、**Phase 5a/5b は 1 モデル (Opus) × 1 サイジング (Confidence Weighted)** から開始、Phase 5c で複数モデル比較
-- **Critic veto 時の挙動整合性**: 該当モデルのみスキップ(修正済み)
+- **Critic veto 時の挙動整合性**: shadow trading (Phase 5c 以降) では「該当モデルのみスキップ、他モデルは継続」。単一モデル運用 (Phase 5a/5b) では結果的にサイクル全体スキップと等価 (修正済み)
 
 ### 10.2 MVP 開始前に必要 (未決)
 
