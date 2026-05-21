@@ -647,3 +647,4 @@ refactor: finalize 分割 + 残り複雑度警告解消
 - 本番 push 前にローカル + steady cycle で 1-2 サイクル動作確認 (paper mode)
 - migration 順序確認 (Phase 2 BB-2 + Phase 4 P-5)
 - 本番 push → `pnpm db:prod:migrate` → 動作確認
+- Langfuse にセットされてる API コスト単価が正確か確認
