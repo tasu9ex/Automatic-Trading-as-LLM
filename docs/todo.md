@@ -1,9 +1,9 @@
 # TODO — ダッシュボード + ビジネスロジック監査
 
-ダッシュボード + サイクル / ビジネスロジックの監査結果を **4 phase に分割**。
+ダッシュボード + サイクル / ビジネスロジックの監査結果を **5 phase に分割**。
 各 phase 完了で 1 commit (= 1 Tier 単位)。**本番 push は全 phase 完了後に一括**。
 
-タスク数: 49 (取り下げ 3 除く)
+タスク数: 53 (Tier S/A/B/C = 49 + Phase 5 リファクタ 4、取り下げ 3 除く)
 
 ---
 
@@ -560,6 +560,83 @@ chore/refactor: Tier C 整理・細部
 - P-4/P-5: critic_outputs / system_events の index / カラム整備 (migration あり)
 - G/D/E/I/H/J/T/Q/AA: UX 細部の改善
 - R/W/QQ/SS/HH: 整理 + データ整合性 + auto-skip UI 区別
+```
+
+---
+
+## Phase 5: 複雑度警告の解消 / リファクタ (4 タスク)
+
+**目的**: biome `noExcessiveCognitiveComplexity` の警告 4 件を解消。**Phase 4 完了 + paper mode サイクル動作確認の後**に実施 (売買中核を触るため、差分が観測可能な状態でやる)。
+
+**前提**:
+- Phase 1-4 の動作が paper mode で 1-2 サイクル正常完了していること
+- biome の閾値 (25) は据え置き
+
+### Phase 5 タスク
+
+| # | 対象 | 現複雑度 | 工数 |
+|---|---|---|---|
+| 50 | `cycle/phases.ts` finalize | 86 | 大 |
+| 51 | `cycle/phases.ts` tier3Decisions 内ループ | 33 | 中 |
+| 52 | `tier0/fetch-snapshot.ts` fetchSnapshot | 28 | 小 |
+| 53 | `app/page.tsx` recentCycles map (Badge 入れ子三項) | 33 | 小 |
+
+### Phase 5 詳細
+
+#### 50. finalize 分割 (複雑度 86 → ≤ 25)
+
+[phases.ts:586](../src/lib/cycle/phases.ts#L586)
+
+600 行超 / 売買判定の中核。以下 5 ブロックに切り出す:
+
+1. **`buildFinalizeContext(cycleId, strategyId)`** — ctxs / portfolio / exitsToRun / projectedCashJpy / allocator proposal を組み立て
+2. **`runCriticDecision(ctx)`** — Critic 呼び出し + criticOutputs 書き込み (skip 判定込み)
+3. **`executeExits(ctx, critic)`** — Exit ループ
+4. **`executeEntries(ctx, critic, refreshed)`** — Risk Clipper + Entry ループ
+5. **`buildCycleNotification(ctx, results)`** — Discord 通知整形 + summary 返却
+
+`finalize` 本体はこの 5 つを順に呼ぶオーケストレータに痩せる。
+
+**注意**:
+- exitOverrides / executedEntries / skippedEntries の受け渡しを引数 or 戻り値で明示
+- 0.1 の Critic 必須化 (try/catch なし) を維持
+- EE の `system_state.state` 非上書きを維持
+- DD の `cycles.completedAt` 更新位置を維持
+- ALL-or-NOTHING (Critic 失敗 = サイクル中断) を破らない
+
+#### 51. tier3Decisions 内ループ分割 (複雑度 33 → ≤ 25)
+
+[phases.ts:417](../src/lib/cycle/phases.ts#L417)
+
+Entry decision と Exit decision の 2 ブロックを `runEntryForCoin(ctx)` / `runExitForCoin(ctx, openPos)` に切り出す。
+
+#### 52. fetchSnapshot 分割 (複雑度 28 → ≤ 25)
+
+[fetch-snapshot.ts:147](../src/lib/tier0/fetch-snapshot.ts#L147)
+
+並列 fetch 後の required/optional 仕分けと degraded フォールバックを `partitionFetchResults` ヘルパーに抽出。
+
+#### 53. recentCycles map (複雑度 33 → ≤ 25)
+
+[page.tsx:149](../src/app/page.tsx#L149)
+
+`criticDecision` の 5 段ネスト三項を `criticDecisionLabel(c)` / `criticDecisionVariant(c)` ヘルパーに抽出。
+
+### Phase 5 完了条件
+
+- [ ] biome lint 警告が 0 件 (もしくは新規導入される警告を許容しない)
+- [ ] paper mode で 1 サイクル流して finalize 分割後も regression なし
+- [ ] 既存テスト全通過 (`critic-mandatory.test.ts` の fail-open 検出がそのまま動くこと)
+
+### Phase 5 Commit message 案
+
+```
+refactor: finalize 分割 + 残り複雑度警告解消
+
+- finalize を 5 ブロックに分割 (buildContext / Critic / Exit / Entry / notify)
+- tier3Decisions の Entry/Exit を抽出
+- fetchSnapshot の required/optional 仕分けを抽出
+- recentCycles map の Badge 入れ子三項をヘルパー化
 ```
 
 ---
