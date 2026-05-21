@@ -13,6 +13,7 @@ import {
   portfolios,
   positions,
   preAnalystOutputs,
+  systemEvents,
   systemState,
 } from "@/db/schema";
 import { getTicker } from "@/lib/clients/gmo";
@@ -238,6 +239,11 @@ async function getRecentCyclesImpl(limit = 15): Promise<RecentCycleRow[]> {
 
 export interface CycleDetail {
   cycleId: string;
+  startedAt: Date;
+  completedAt: Date | null;
+  /** "approve" / "veto" / "modify" / "failed" / "in_flight" */
+  status: string;
+  abortReason: { phase: string; kind: string; message: string } | null;
   critic: {
     decision: string;
     reasoning: string | null;
@@ -275,17 +281,51 @@ export interface CycleDetail {
 }
 
 export async function getCycleDetail(cycleId: string): Promise<CycleDetail | null> {
-  const critic = (
-    await db.select().from(criticOutputs).where(eq(criticOutputs.cycleId, cycleId)).limit(1)
-  )[0];
+  // cycles テーブル起点 (失敗 cycle も含めて全部出る)
+  const cycle = (await db.select().from(cycles).where(eq(cycles.id, cycleId)).limit(1))[0];
+  if (!cycle) return null; // 不正な id のみ 404
 
-  const snapshots = await db
-    .select({ snap: marketSnapshots, coin: coins })
-    .from(marketSnapshots)
-    .innerJoin(coins, eq(marketSnapshots.coinId, coins.id))
-    .where(eq(marketSnapshots.cycleId, cycleId));
+  const [critic, snapshots, abortEvent] = await Promise.all([
+    db
+      .select()
+      .from(criticOutputs)
+      .where(eq(criticOutputs.cycleId, cycleId))
+      .limit(1)
+      .then((r) => r[0]),
+    db
+      .select({ snap: marketSnapshots, coin: coins })
+      .from(marketSnapshots)
+      .innerJoin(coins, eq(marketSnapshots.coinId, coins.id))
+      .where(eq(marketSnapshots.cycleId, cycleId)),
+    // 失敗 cycle の理由 (cycle_aborted system_event)
+    db
+      .select()
+      .from(systemEvents)
+      .where(
+        and(
+          eq(systemEvents.kind, "cycle_aborted"),
+          sql`${systemEvents.payload}->>'cycleId' = ${cycleId}`,
+        ),
+      )
+      .orderBy(desc(systemEvents.occurredAt))
+      .limit(1)
+      .then((r) => r[0]),
+  ]);
 
-  if (!critic && snapshots.length === 0) return null;
+  const status = critic ? critic.decision : cycle.completedAt ? "failed" : "in_flight";
+  const abortReason = abortEvent
+    ? {
+        phase:
+          typeof (abortEvent.payload as Record<string, unknown>)?.phase === "string"
+            ? String((abortEvent.payload as Record<string, unknown>).phase)
+            : "unknown",
+        kind:
+          typeof (abortEvent.payload as Record<string, unknown>)?.kind === "string"
+            ? String((abortEvent.payload as Record<string, unknown>).kind)
+            : "unknown",
+        message: abortEvent.message,
+      }
+    : null;
 
   const coinSections = await Promise.all(
     snapshots.map(async ({ snap, coin }) => {
@@ -355,6 +395,10 @@ export async function getCycleDetail(cycleId: string): Promise<CycleDetail | nul
 
   return {
     cycleId,
+    startedAt: cycle.startedAt,
+    completedAt: cycle.completedAt,
+    status,
+    abortReason,
     critic: critic
       ? {
           decision: critic.decision,
@@ -402,7 +446,8 @@ export const isCycleInFlight = unstable_cache(
 
 /** completed_at が未セットで、開始から 30 分以内の cycle 行があれば実行中とみなす */
 async function isCycleInFlightImpl(): Promise<boolean> {
-  const since = new Date(Date.now() - 30 * 60_000);
+  // §23: 実 cycle は per-Tier 60s × 5 step ≒ 5 分以内なので 10 分窓に縮める
+  const since = new Date(Date.now() - 10 * 60_000);
   const row = (
     await db
       .select({ id: cycles.id })

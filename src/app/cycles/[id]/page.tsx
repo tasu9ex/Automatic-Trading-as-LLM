@@ -66,6 +66,19 @@ function AllocationView({ data, emptyLabel }: { data: unknown; emptyLabel: strin
   );
 }
 
+const STATUS_JP: Record<string, string> = {
+  approve: "承認",
+  modify: "修正",
+  veto: "拒否",
+  failed: "失敗",
+  in_flight: "実行中",
+};
+function statusVariant(status: string): "default" | "destructive" | "outline" {
+  if (status === "approve") return "default";
+  if (status === "modify" || status === "in_flight") return "outline";
+  return "destructive";
+}
+
 export default async function CycleDetailPage({ params }: PageProps) {
   const { id } = await params;
   const detail = await getCycleDetail(id);
@@ -77,13 +90,34 @@ export default async function CycleDetailPage({ params }: PageProps) {
         <Link href="/" className="text-muted-foreground text-xs hover:underline">
           ← 戻る
         </Link>
-        <h1 className="font-mono text-xl">サイクル {detail.cycleId.slice(0, 12)}</h1>
-        {detail.critic && (
-          <span className="text-muted-foreground text-xs">
-            {new Date(detail.critic.createdAt).toLocaleString("ja-JP")}
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          <h1 className="font-mono text-xl">サイクル {detail.cycleId.slice(0, 12)}</h1>
+          <Badge variant={statusVariant(detail.status)}>
+            {STATUS_JP[detail.status] ?? detail.status}
+          </Badge>
+        </div>
+        <span className="text-muted-foreground text-xs">
+          開始 {new Date(detail.startedAt).toLocaleString("ja-JP")}
+          {detail.completedAt && ` ・ 完了 ${new Date(detail.completedAt).toLocaleString("ja-JP")}`}
+        </span>
       </header>
+
+      {detail.abortReason && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base text-destructive">サイクル中断</CardTitle>
+            <CardDescription>
+              Phase: <code className="font-mono">{detail.abortReason.phase}</code> ・ 種別:{" "}
+              <code className="font-mono">{detail.abortReason.kind}</code>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs">
+              {detail.abortReason.message}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
 
       {detail.critic && (
         <Card>
