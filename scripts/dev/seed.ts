@@ -48,6 +48,10 @@ async function main() {
       id: "singleton",
       state: "stopped",
       cycleIntervalHours: 24,
+      // §17: リスクパラメータ初期値 (UI から変更可)
+      perCoinMaxRatio: "0.250",
+      portfolioDdTrigger: "0.500",
+      autoPauseThreshold: 3,
     })
     .onConflictDoNothing({ target: systemState.id });
   console.log("✓ system_state");

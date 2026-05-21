@@ -50,6 +50,10 @@ export interface DashboardStats {
   realizedPnlJpy: number;
   cyclesToday: number;
   cyclesTotal: number;
+  /** §17: UI で表示・調整するリスクパラメータ (system_state から) */
+  perCoinMaxRatio: number;
+  portfolioDdTrigger: number;
+  autoPauseThreshold: number;
 }
 
 const _cachedDashboardStats = unstable_cache(() => getDashboardStatsImpl(), ["dashboard.stats"], {
@@ -123,6 +127,9 @@ async function getDashboardStatsImpl(): Promise<DashboardStats> {
     realizedPnlJpy: realizedAgg,
     cyclesToday: cyclesTodayAgg,
     cyclesTotal: cyclesTotalAgg,
+    perCoinMaxRatio: Number(state?.perCoinMaxRatio ?? 0.25),
+    portfolioDdTrigger: Number(state?.portfolioDdTrigger ?? 0.5),
+    autoPauseThreshold: Number(state?.autoPauseThreshold ?? 3),
   };
 }
 

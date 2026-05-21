@@ -1,4 +1,5 @@
 import { CoinChecklist } from "@/components/dashboard/coin-checklist";
+import { RiskParams } from "@/components/dashboard/risk-params";
 import { SystemControls } from "@/components/dashboard/system-controls";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -56,6 +57,12 @@ export default async function Home() {
       />
 
       <CoinChecklist coins={coinChecklist} cycleInFlight={cycleInFlight} />
+
+      <RiskParams
+        perCoinMaxRatio={stats.perCoinMaxRatio}
+        portfolioDdTrigger={stats.portfolioDdTrigger}
+        autoPauseThreshold={stats.autoPauseThreshold}
+      />
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Card>

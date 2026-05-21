@@ -11,11 +11,11 @@
 
 import { db } from "@/db/client";
 import { systemEvents, systemState } from "@/db/schema";
-import { AUTO_PAUSE_THRESHOLD } from "@/lib/constants/risk";
 import { type ErrorKind, classifyError } from "@/lib/cycle/retry";
 import { checkAndTriggerKillSwitch } from "@/lib/kill-switch";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
+import { getRiskParams } from "@/lib/risk/params";
 import { eq } from "drizzle-orm";
 
 const logger = createLogger("cycle.failure");
@@ -55,9 +55,15 @@ export async function recordCycleFailure(args: {
   const kind = classifyError(args.err);
   logger.error({ cycleId: args.cycleId, phase: args.phase, kind, err: args.err }, "Cycle aborted");
 
-  const state = (
-    await db.select().from(systemState).where(eq(systemState.id, "singleton")).limit(1)
-  )[0];
+  const [state, riskParams] = await Promise.all([
+    db
+      .select()
+      .from(systemState)
+      .where(eq(systemState.id, "singleton"))
+      .limit(1)
+      .then((r) => r[0]),
+    getRiskParams(),
+  ]);
 
   // quota: 即 system pause (連続失敗カウンタを通さず特別扱い)
   // それ以外: 連続失敗カウンタは "同じ kind が続く間だけ" カウント (異種が来たらリセット)
@@ -139,6 +145,7 @@ export async function recordCycleFailure(args: {
     newCount,
     nextScheduledAt: state?.nextScheduledAt ?? null,
     autoPausedNow,
+    autoPauseThreshold: riskParams.autoPauseThreshold,
   });
 }
 
@@ -151,6 +158,8 @@ async function sendFailureNotification(args: {
   nextScheduledAt: Date | null;
   /** 本コール時点で auto-pause が既に発動済 (checkAndTriggerKillSwitch が paused を返した) */
   autoPausedNow: boolean;
+  /** §17: 動的閾値 (DB 駆動) */
+  autoPauseThreshold: number;
 }): Promise<void> {
   const cycleShort = args.cycleId.slice(0, 8);
   const nextScheduledAt = args.nextScheduledAt
@@ -186,7 +195,7 @@ async function sendFailureNotification(args: {
       ].join("\n"),
       fields: {
         サイクル: cycleShort,
-        連続失敗: formatFailureCounter(args.newCount, args.autoPausedNow),
+        連続失敗: formatFailureCounter(args.newCount, args.autoPausedNow, args.autoPauseThreshold),
       },
     });
     return;
@@ -212,7 +221,7 @@ async function sendFailureNotification(args: {
     ].join("\n"),
     fields: {
       サイクル: cycleShort,
-      連続失敗: formatFailureCounter(args.newCount, args.autoPausedNow),
+      連続失敗: formatFailureCounter(args.newCount, args.autoPausedNow, args.autoPauseThreshold),
       次サイクル: nextScheduledAt,
     },
   });
@@ -225,12 +234,12 @@ async function sendFailureNotification(args: {
  *   - それ以前 → "1/3 (あと 2)"
  * AUTO_PAUSE_THRESHOLD でクランプして 4/3 のような不整合は出さない。
  */
-function formatFailureCounter(newCount: number, autoPausedNow: boolean): string {
-  const displayCount = Math.min(newCount, AUTO_PAUSE_THRESHOLD);
-  const remaining = Math.max(0, AUTO_PAUSE_THRESHOLD - displayCount);
-  if (autoPausedNow) return `${displayCount}/${AUTO_PAUSE_THRESHOLD} (auto-pause 発動)`;
-  if (remaining === 0) return `${displayCount}/${AUTO_PAUSE_THRESHOLD} (次サイクルで auto-pause)`;
-  return `${displayCount}/${AUTO_PAUSE_THRESHOLD} (あと ${remaining})`;
+function formatFailureCounter(newCount: number, autoPausedNow: boolean, threshold: number): string {
+  const displayCount = Math.min(newCount, threshold);
+  const remaining = Math.max(0, threshold - displayCount);
+  if (autoPausedNow) return `${displayCount}/${threshold} (auto-pause 発動)`;
+  if (remaining === 0) return `${displayCount}/${threshold} (次サイクルで auto-pause)`;
+  return `${displayCount}/${threshold} (あと ${remaining})`;
 }
 
 /**

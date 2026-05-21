@@ -8,10 +8,10 @@ import {
   systemState,
 } from "@/db/schema";
 import { getTicker } from "@/lib/clients/gmo";
-import { AUTO_PAUSE_THRESHOLD, PORTFOLIO_DD_TRIGGER } from "@/lib/constants/risk";
 import { executeExit } from "@/lib/executor";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
+import { getRiskParams } from "@/lib/risk/params";
 import { and, desc, eq } from "drizzle-orm";
 
 const logger = createLogger("kill-switch");
@@ -36,9 +36,15 @@ export async function checkAndTriggerKillSwitch(
   )[0];
   if (!portfolio) return false;
 
-  const state = (
-    await db.select().from(systemState).where(eq(systemState.id, "singleton")).limit(1)
-  )[0];
+  const [state, riskParams] = await Promise.all([
+    db
+      .select()
+      .from(systemState)
+      .where(eq(systemState.id, "singleton"))
+      .limit(1)
+      .then((r) => r[0]),
+    getRiskParams(),
+  ]);
 
   const open = await db
     .select({ position: positions, coin: coins })
@@ -104,8 +110,8 @@ export async function checkAndTriggerKillSwitch(
   const initial = Number(portfolio.initialCashJpy);
   const ddRatio = (initial - totalValue) / initial;
 
-  const failureTriggered = state && state.consecutiveFailures >= AUTO_PAUSE_THRESHOLD;
-  const ddTriggered = ddRatio >= PORTFOLIO_DD_TRIGGER;
+  const failureTriggered = state && state.consecutiveFailures >= riskParams.autoPauseThreshold;
+  const ddTriggered = ddRatio >= riskParams.portfolioDdTrigger;
 
   if (ddTriggered) {
     const reason = `portfolio DD ${(ddRatio * 100).toFixed(1)}%`;

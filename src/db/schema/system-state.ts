@@ -32,6 +32,20 @@ export const systemState = pgTable("system_state", {
   cumulativeCostUsd: numeric("cumulative_cost_usd", { precision: 12, scale: 6 })
     .notNull()
     .default("0"),
+  /**
+   * §17: UI から調整可能なリスクパラメータ。
+   * 旧来は src/lib/constants/risk.ts のハードコード定数。DB を唯一のソースに。
+   */
+  /** 1 銘柄あたりの最大配分比率 (0-1)。Risk Clipper が cap に使用 */
+  perCoinMaxRatio: numeric("per_coin_max_ratio", { precision: 4, scale: 3 })
+    .notNull()
+    .default("0.250"),
+  /** ポートフォリオ DD がこの比率以上で Kill Switch 発動 (0-1) */
+  portfolioDdTrigger: numeric("portfolio_dd_trigger", { precision: 4, scale: 3 })
+    .notNull()
+    .default("0.500"),
+  /** 連続失敗カウンタがこの値に達したら auto-pause */
+  autoPauseThreshold: integer("auto_pause_threshold").notNull().default(3),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
 });
 

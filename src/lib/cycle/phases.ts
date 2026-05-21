@@ -35,12 +35,6 @@ import {
 } from "@/db/schema";
 import { type SizingMethod, allocate } from "@/lib/allocator";
 import { getExchangeStatus } from "@/lib/clients/gmo";
-import {
-  PER_COIN_MAX_RATIO,
-  PER_COIN_MIN_JPY,
-  PORTFOLIO_DD_TRIGGER,
-  TOTAL_MAX_RATIO,
-} from "@/lib/constants/risk";
 import { runCritic } from "@/lib/critic";
 import { withRetry } from "@/lib/cycle/retry";
 import { buildSystemHealth } from "@/lib/cycle/system-health";
@@ -52,6 +46,7 @@ import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { runPriceMonitor } from "@/lib/price-monitor";
 import { applyRiskClipper } from "@/lib/risk/clipper";
+import { PER_COIN_MIN_JPY, TOTAL_MAX_RATIO, getRiskParams } from "@/lib/risk/params";
 import { type Snapshot, fetchSnapshot } from "@/lib/tier0/fetch-snapshot";
 import { runPreAnalyst } from "@/lib/tier1/pre-analyst";
 import { runAnalyst } from "@/lib/tier2/analyst";
@@ -591,6 +586,8 @@ interface FinalizeInput {
 export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   const { cycleId, strategyId, method, startedAt } = input;
   const enabledCoins = await getCycleCoins(cycleId);
+  // §17: リスクパラメータを DB から取得 (UI から動的に変更される)
+  const riskParams = await getRiskParams();
 
   // 全コインのコンテキストを DB から組み立て
   type CoinCtx = {
@@ -755,8 +752,8 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
         symbolToName,
         cashJpy: projectedCashJpy,
         riskParams: {
-          perCoinMaxRatio: PER_COIN_MAX_RATIO,
-          killSwitchDdRatio: PORTFOLIO_DD_TRIGGER,
+          perCoinMaxRatio: riskParams.perCoinMaxRatio,
+          killSwitchDdRatio: riskParams.portfolioDdTrigger,
         },
         systemHealth,
       });
@@ -941,7 +938,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       proposal: finalProposal,
       availableCashJpy: cashAfterExits,
       currentInvestedJpy: currentInvested,
-      perCoinMaxRatio: PER_COIN_MAX_RATIO,
+      perCoinMaxRatio: riskParams.perCoinMaxRatio,
       perCoinMinJpy: PER_COIN_MIN_JPY,
       totalMaxRatio: TOTAL_MAX_RATIO,
     });
