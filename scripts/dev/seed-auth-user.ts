@@ -10,16 +10,19 @@
  * 必要 env:
  *   NEXT_PUBLIC_SUPABASE_URL
  *   SUPABASE_SERVICE_ROLE_KEY
+ *   ALLOWED_EMAIL
  */
 import { createClient } from "@supabase/supabase-js";
-
-const ALLOWED_EMAIL = "REDACTED_EMAIL";
 
 async function main() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const ALLOWED_EMAIL = process.env.ALLOWED_EMAIL;
   if (!url || !key) {
     throw new Error("NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing");
+  }
+  if (!ALLOWED_EMAIL) {
+    throw new Error("ALLOWED_EMAIL missing");
   }
 
   const admin = createClient(url, key, {
