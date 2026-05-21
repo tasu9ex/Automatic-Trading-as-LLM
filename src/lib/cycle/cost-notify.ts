@@ -47,17 +47,11 @@ export async function notifyCycleCost(cycleId: string): Promise<void> {
     .set({ cumulativeCostUsd: newCum.toFixed(6), updatedAt: new Date() })
     .where(eq(systemState.id, "singleton"));
 
-  const modelLines = Object.entries(cost.observationsByModel)
-    .sort(([, a], [, b]) => b.costUsd - a.costUsd)
-    .map(([model, stat]) => `• ${model}: ${stat.count} 回 / $${stat.costUsd.toFixed(4)}`);
-
+  // 累計のみ通知 (今回値 / モデル別内訳は Langfuse UI で見れば十分なので省く)
   await notify({
     level: "info",
     title: "💰 サイクルコスト集計",
-    body: modelLines.length > 0 ? `**モデル別内訳**\n${modelLines.join("\n")}` : undefined,
     fields: {
-      "今回 (USD)": `$${cost.totalCostUsd.toFixed(4)}`,
-      "今回 (JPY)": `¥${Math.round(cost.totalCostUsd * USD_TO_JPY).toLocaleString()}`,
       "累計 (USD)": `$${newCum.toFixed(4)}`,
       "累計 (JPY)": `¥${Math.round(newCum * USD_TO_JPY).toLocaleString()}`,
     },
