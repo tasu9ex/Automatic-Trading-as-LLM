@@ -32,31 +32,35 @@ pnpm dev
 
 ```
 src/
-  app/          Next.js App Router
-  components/   UI コンポーネント
+  app/          Next.js App Router (page / cycles / actions / api/inngest)
+  components/   UI コンポーネント (dashboard / ui)
   db/           Drizzle スキーマ・クライアント
   lib/
-    tier0/      情報収集 (Perplexity, Grok)
+    tier0/      情報収集 (Perplexity, Grok, GMO public)
     tier1/      Pre-Analyst (Haiku 要約)
     tier2/      Analyst (Opus 分析)
-    decision/   Entry/Exit 判定
+    decision/   Entry/Exit 判定 (Sonnet)
     allocator/  Portfolio Allocator
     critic/     Critic LLM
     risk/       Risk Clipper
-    executor/   仮想約定
-    price-monitor/ 逆指値タッチ判定
+    executor/   約定 (paper / real)
+    price-monitor/ 逆指値タッチ判定 (paper-trade のみ、§14 で実取引切替時に移行)
     kill-switch/   システム停止
-    shared/     共通ロジック (Next.js + Deno 両用)
+    cycle/      パイプライン (phases / failure / system-health / queries / retry)
+    constants/  リスク閾値の単一ソース (risk.ts)
+    schemas/    LLM 出力 / SystemHealth zod スキーマ
+    prompts/    Langfuse + fallback プロンプト
+    clients/    各 API クライアント
 scripts/
   smoke/        各 API 単発呼び出し確認
-  cycle/        判定・価格監視・週次レポートの CLI
-  dev/          シードなど開発用
-tests/          Vitest テスト
+  langfuse/     プロンプト登録・検証
+  dev/          シード・各種開発用
+src/lib/cycle/retry.test.ts などのインライン Vitest テスト
 ```
 
 ## 技術スタック
 
-Next.js 15 (App Router) / TypeScript / Tailwind + shadcn/ui / Supabase /
+Next.js 16 (App Router, Turbopack) / TypeScript / Tailwind + shadcn/ui / Supabase /
 Drizzle / Inngest / Langfuse / Sentry / Biome / Knip / Vitest
 
 ## 通知設計

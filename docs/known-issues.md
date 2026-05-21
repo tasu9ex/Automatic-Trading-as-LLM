@@ -1,12 +1,52 @@
 # 既知の問題・不整合一覧
 
-最終更新: 2026-05-20（2 回目レビュー追記）
+最終更新: 2026-05-21（一括修正完了）
 
 コードベース全体レビューに基づく。**意図的に除外したもの**は末尾の「意図的な設計」に記載。
 
 修正優先度の目安: **P0** = 研究・運用の正しさに直結 / **P1** = 障害・観測の穴 / **P2** = ドキュメント・将来機能
 
 §18 以降は 2 回目レビューで追加された項目。
+
+## ステータス一覧 (2026-05-21)
+
+| § | 件名 | ステータス | コミット |
+|---|---|---|---|
+| §1 | Entry 仮説の永続化 | ✅ 完了 | 377f33a |
+| §2 | skip_flag policy 統一 | ✅ 完了 | e8607ae |
+| §3 | Critic フェイルオープン | ✅ 完了 | 74557e9 |
+| §4 | Inngest finalize の recordCycleFailure | ✅ 完了 | f755e8e |
+| §5 | モデル構成 (意図的) | ─ 対象外 | — |
+| §6 | Shadow trading 未実装 | 🚧 スコープ外 | — |
+| §7 | price-monitor 失敗時の挙動 | ─ paper 期間のみ存在、real-mode 移行 (§14) 時に削除予定 | — |
+| §8 | Kill Switch ticker fallback | ✅ 完了 | c8af9bd |
+| §9 | 部分決済後の SL rearm | ✅ 完了 | 8070043 |
+| §10 | 配分計算 (手数料控除) | ✅ 完了 | 9628cf7 |
+| §11 | Risk Clipper mark-to-market | ✅ 完了 | 9628cf7 |
+| §12 | README と実装の不一致 | ✅ 完了 (本コミット) | — |
+| §13 | .env.example に PAPER_TRADE | ✅ 完了 (本コミット) | — |
+| §14 | PAPER_TRADE=false 未実装 | 🚧 スコープ外 (実取引移行時に着手) | — |
+| §15 | phases.ts split | ✅ 部分完了 (failure handling を分離) | ed1146c |
+| §16 | テスト追加 | ✅ 部分完了 (system-health / classifyError) | 916b769 |
+| §17 | UI リスクパラメータ調整 | 🚧 スコープ外 | — |
+| §18 | auto-pause unreachable | ✅ 完了 | f755e8e |
+| §19 | Risk Clipper 後 refresh | ✅ 完了 | 9628cf7 |
+| §20 | 重複定数集約 | ✅ 完了 | 713fcae |
+| §21 | ohlcv_1h レガシー | ⚠️ 部分対応 (列残置、§32 と合流して将来 drop 予定) | 6fb25a5 |
+| §22 | 死コード enum | ✅ 完了 | 73360e0 |
+| §23 | isCycleInFlight 30 分 → 10 分 | ✅ 完了 | dfa8856 |
+| §24 | Allocator/Clipper 重複 cap | 🚧 保留 (defensive redundancy として許容、将来 §17 と同時整理) | — |
+| §25 | Pyramid troughPrice 対称更新 | ✅ 完了 | 8070043 |
+| §26 | recordCycleFailure に kill-switch | ✅ 完了 | 89d77c3 / f755e8e |
+| §27 | 1m kline 404 fallback | ✅ 完了 | 89d77c3 / 6fb25a5 |
+| §28 | Discord 推定原因動的化 | ✅ 完了 | 89d77c3 |
+| §29 | counter 表示クランプ | ✅ 完了 | 89d77c3 / f755e8e |
+| §30 | ダッシュボード失敗 cycle 表示 | ✅ 完了 | 89d77c3 / dfa8856 |
+| §31 | Entry executor silent skip | ✅ 完了 (§32 と合わせて根治) | 683c670 / 6fb25a5 |
+| §32 | 動的 TF (Phase 1+2) | ✅ 完了 | 6fb25a5 |
+| §33 | Critic systemHealth | ✅ 完了 | 916b769 |
+
+残課題は **§6 / §14 / §17** (機能拡張系) + **§24** (defensive redundancy として許容) のみ。
 
 ---
 
