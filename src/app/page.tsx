@@ -1,4 +1,5 @@
 import { signOutAction } from "@/app/actions/auth";
+import { AutoRefresh } from "@/components/dashboard/auto-refresh";
 import { CoinChecklist } from "@/components/dashboard/coin-checklist";
 import { RiskParams } from "@/components/dashboard/risk-params";
 import { SystemControls } from "@/components/dashboard/system-controls";
@@ -14,7 +15,6 @@ import {
   isCycleInFlight,
 } from "@/lib/cycle/queries";
 import { formatJstDate, formatJstDateTime } from "@/lib/format/datetime";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -24,12 +24,8 @@ function jpy(n: number) {
 }
 
 export default async function Home() {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
-
+  // M: 認証は middleware (updateSession) が一手に担う。未ログインは middleware で /login へ
+  //    redirect されるためここに到達しない。重複 getUser() の Supabase 往復を削減。
   const [stats, openPositions, recentCycles, coinChecklist, cycleInFlight, ticker] =
     await Promise.all([
       getDashboardStats(),
@@ -50,6 +46,7 @@ export default async function Home() {
 
   return (
     <main className="container mx-auto flex min-h-screen max-w-5xl flex-col gap-6 p-6">
+      <AutoRefresh />
       <header className="flex items-center justify-between">
         <h1 className="font-bold text-2xl">LLM Trading</h1>
         <form action={signOutAction}>
@@ -140,14 +137,34 @@ export default async function Home() {
             <p className="text-muted-foreground text-sm">なし</p>
           ) : (
             <ul className="space-y-2 text-sm">
-              {openPositions.map((p) => (
-                <li key={p.positionId} className="flex items-center justify-between">
-                  <span className="font-medium">{p.symbol}</span>
-                  <span className="font-mono text-muted-foreground text-xs">
-                    {p.quantity} @ {jpy(p.avgEntryPrice)}・建玉日 {formatJstDate(p.openedAt)}
-                  </span>
-                </li>
-              ))}
+              {openPositions.map((p) => {
+                // S: 銘柄ごとの含み損益を表示。ticker 失敗時 (バナー表示中) は 0 / 0% になるため
+                // current === avg なら含み P/L 行を出さない。
+                const hasMtm = p.currentPrice !== p.avgEntryPrice;
+                const pnlPct =
+                  p.avgEntryPrice > 0
+                    ? (p.unrealizedPnlJpy / (p.avgEntryPrice * p.quantity)) * 100
+                    : 0;
+                const pnlColor = p.unrealizedPnlJpy >= 0 ? "text-emerald-500" : "text-red-500";
+                const sign = p.unrealizedPnlJpy >= 0 ? "+" : "";
+                return (
+                  <li key={p.positionId} className="flex items-center justify-between gap-3">
+                    <span className="font-medium">{p.symbol}</span>
+                    <div className="flex flex-col items-end text-xs">
+                      <span className="font-mono text-muted-foreground">
+                        {p.quantity} @ {jpy(p.avgEntryPrice)}・建玉日 {formatJstDate(p.openedAt)}
+                      </span>
+                      {hasMtm && (
+                        <span className={`font-mono ${pnlColor}`}>
+                          {sign}
+                          {jpy(p.unrealizedPnlJpy)} ({sign}
+                          {pnlPct.toFixed(2)}%)
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </CardContent>

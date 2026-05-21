@@ -49,8 +49,9 @@ export function applyRiskClipper(input: RiskClipperInput): ClippedProposal {
   const total = Object.values(clipped).reduce((s, v) => s + v, 0);
   if (total > totalCapRoom && total > 0) {
     const scale = totalCapRoom / total;
+    const preScale = { ...clipped };
     for (const symbol of Object.keys(clipped)) {
-      const prev = clipped[symbol] ?? 0;
+      const prev = preScale[symbol] ?? 0;
       const scaled = Math.floor(prev * scale);
       if (scaled < input.perCoinMinJpy) {
         changes.push({ symbol, reason: "total cap (below min after scale)", from: prev, to: 0 });
@@ -58,6 +59,26 @@ export function applyRiskClipper(input: RiskClipperInput): ClippedProposal {
       } else if (scaled !== prev) {
         changes.push({ symbol, reason: "total cap proportional scale", from: prev, to: scaled });
         clipped[symbol] = scaled;
+      }
+    }
+
+    // NN: floor 連鎖で発生した端数 (= totalCapRoom - sum(clipped)) を最大配分銘柄に寄せる。
+    //     毎回 floor で切り捨てると 数 % 程度現金が遊ぶため。per-coin cap を超えないかチェック。
+    const remaining = totalCapRoom - Object.values(clipped).reduce((s, v) => s + v, 0);
+    if (remaining > 0 && Object.keys(clipped).length > 0) {
+      const symbols = Object.keys(clipped).sort((a, b) => (clipped[b] ?? 0) - (clipped[a] ?? 0));
+      const top = symbols[0];
+      const topValue = clipped[top] ?? 0;
+      const headroom = perCoinCap - topValue;
+      const inject = Math.floor(Math.max(0, Math.min(remaining, headroom)));
+      if (inject > 0) {
+        clipped[top] = topValue + inject;
+        changes.push({
+          symbol: top,
+          reason: "floor remainder injected",
+          from: topValue,
+          to: topValue + inject,
+        });
       }
     }
   }

@@ -118,16 +118,33 @@ export async function executeEntry(input: ExecuteEntryInput): Promise<void> {
       quoteAmountJpy: input.budgetJpy,
       takerFeeRate: input.takerFeeRate,
     });
-    await fillEntryOrder({
-      orderId,
-      strategyId: input.strategyId,
-      symbol: input.symbol,
-      fill,
-      entryReason: input.entryReason,
-      expectedHoldingDays: input.expectedHoldingDays ?? null,
-      targetPriceJpy: input.targetPriceJpy ?? null,
-      exitCondition: input.exitCondition ?? null,
-    });
+    // PP: paper mode の place+fill atomicity。placeEntryOrder で orders 行が status=placed で
+    // 作られた後、fillEntryOrder が落ちると "placed" のまま orphan order が残る。
+    // 真のトランザクション化は placeEntryOrder の構造改修が必要なので、ここでは
+    // catch して order を canceled にロールバックする補償処理で同等のクリーンアップを担保。
+    try {
+      await fillEntryOrder({
+        orderId,
+        strategyId: input.strategyId,
+        symbol: input.symbol,
+        fill,
+        entryReason: input.entryReason,
+        expectedHoldingDays: input.expectedHoldingDays ?? null,
+        targetPriceJpy: input.targetPriceJpy ?? null,
+        exitCondition: input.exitCondition ?? null,
+      });
+    } catch (fillErr) {
+      try {
+        await db
+          .update(orders)
+          .set({ status: "cancelled", completedAt: new Date() })
+          .where(eq(orders.id, orderId));
+        logger.warn({ orderId, symbol: input.symbol }, "Paper fill failed — order canceled");
+      } catch (cleanupErr) {
+        logger.error({ orderId, cleanupErr }, "Paper fill cleanup failed (orphan placed order)");
+      }
+      throw fillErr;
+    }
   }
   // REAL mode: place のみ。fill は webhook handler から fillEntryOrder() 呼出
 }
@@ -383,17 +400,38 @@ export async function executeExit(input: ExecuteExitInput): Promise<void> {
       takerFeeRate: input.takerFeeRate,
       slippageRate: input.forced ? 0.003 : 0,
     });
-    await fillExitOrder({
-      orderId: placed.orderId,
-      positionId: placed.positionId,
-      strategyId: input.strategyId,
-      symbol: input.symbol,
-      fill,
-      sellQty,
-      ratio,
-      forced: input.forced,
-      reason: input.reason,
-    });
+    // PP: paper mode の place+fill atomicity (Exit 側)。fill 失敗時に order を canceled に
+    // ロールバックして orphan を残さない。
+    try {
+      await fillExitOrder({
+        orderId: placed.orderId,
+        positionId: placed.positionId,
+        strategyId: input.strategyId,
+        symbol: input.symbol,
+        fill,
+        sellQty,
+        ratio,
+        forced: input.forced,
+        reason: input.reason,
+      });
+    } catch (fillErr) {
+      try {
+        await db
+          .update(orders)
+          .set({ status: "cancelled", completedAt: new Date() })
+          .where(eq(orders.id, placed.orderId));
+        logger.warn(
+          { orderId: placed.orderId, symbol: input.symbol },
+          "Paper exit fill failed — order canceled",
+        );
+      } catch (cleanupErr) {
+        logger.error(
+          { orderId: placed.orderId, cleanupErr },
+          "Paper exit cleanup failed (orphan placed order)",
+        );
+      }
+      throw fillErr;
+    }
   }
   // REAL mode: place のみ。fill は webhook handler から fillExitOrder() 呼出
 }

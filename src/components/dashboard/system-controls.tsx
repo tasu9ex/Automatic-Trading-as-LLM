@@ -11,6 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   CYCLE_INTERVAL_HOURS,
   type CycleIntervalHours,
@@ -62,16 +63,36 @@ export function SystemControls({
   const isStopped = state === "stopped";
   const isPaused = state === "paused";
 
-  function runAction(label: string, action: () => Promise<SystemControlActionResult>) {
-    if (!window.confirm(`${label}しますか？`)) return;
-    setError(null);
-    startTransition(async () => {
-      const res = await action();
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
-      router.refresh();
+  // B: window.confirm を ConfirmDialog に置換。dialog state は 1 つ持つ。
+  const [confirm, setConfirm] = useState<{
+    title: string;
+    message?: string;
+    destructive?: boolean;
+    onConfirm: () => void;
+    onCancel?: () => void;
+  } | null>(null);
+
+  function runAction(
+    title: string,
+    action: () => Promise<SystemControlActionResult>,
+    opts?: { message?: string; destructive?: boolean },
+  ) {
+    setConfirm({
+      title,
+      message: opts?.message,
+      destructive: opts?.destructive,
+      onConfirm: () => {
+        setConfirm(null);
+        setError(null);
+        startTransition(async () => {
+          const res = await action();
+          if (!res.ok) {
+            setError(res.error);
+            return;
+          }
+          router.refresh();
+        });
+      },
     });
   }
 
@@ -79,23 +100,26 @@ export function SystemControls({
     setIntervalHours(hours);
     if (hours === cycleIntervalHours) return;
     const label = formatIntervalLabel(hours);
-    if (
-      !window.confirm(
-        `実行レートを「${label}」に変更します。${isRunning ? "次のスケジュール枠から" : "再開後"}反映されます。`,
-      )
-    ) {
-      setIntervalHours(cycleIntervalHours);
-      return;
-    }
-    setError(null);
-    startTransition(async () => {
-      const res = await setCycleIntervalAction(hours);
-      if (!res.ok) {
-        setError(res.error);
+    setConfirm({
+      title: `実行レートを「${label}」に変更`,
+      message: isRunning ? "次のスケジュール枠から反映されます。" : "再開後に反映されます。",
+      onConfirm: () => {
+        setConfirm(null);
+        setError(null);
+        startTransition(async () => {
+          const res = await setCycleIntervalAction(hours);
+          if (!res.ok) {
+            setError(res.error);
+            setIntervalHours(cycleIntervalHours);
+            return;
+          }
+          router.refresh();
+        });
+      },
+      onCancel: () => {
+        setConfirm(null);
         setIntervalHours(cycleIntervalHours);
-        return;
-      }
-      router.refresh();
+      },
     });
   }
 
@@ -148,7 +172,11 @@ export function SystemControls({
           {isStopped && (
             <Button
               disabled={pending || isKilled}
-              onClick={() => runAction("システムを起動", startSystemAction)}
+              onClick={() =>
+                runAction("システムを起動しますか?", startSystemAction, {
+                  message: "次のスケジュール枠から判定サイクルが開始します。",
+                })
+              }
             >
               システム起動
             </Button>
@@ -156,7 +184,11 @@ export function SystemControls({
           {isPaused && (
             <Button
               disabled={pending || isKilled}
-              onClick={() => runAction("判定を再開", resumeSystemAction)}
+              onClick={() =>
+                runAction("判定を再開しますか?", resumeSystemAction, {
+                  message: "緊急停止フラグが立っていれば同時に解除されます。",
+                })
+              }
             >
               再開
             </Button>
@@ -165,7 +197,13 @@ export function SystemControls({
             <Button
               variant="outline"
               disabled={pending}
-              onClick={() => runAction("LLM 判定を一時停止", pauseSystemAction)}
+              onClick={() =>
+                runAction("LLM 判定を一時停止しますか?", pauseSystemAction, {
+                  // BB-1: 通常 pause の挙動を明示
+                  message:
+                    "現在実行中のサイクルは最後まで完走し、停止は次サイクルから反映されます。\n進行中のサイクルも即座に止めたい場合は「緊急停止」を使ってください。",
+                })
+              }
             >
               一時停止
             </Button>
@@ -175,10 +213,11 @@ export function SystemControls({
               variant="destructive"
               disabled={pending || isKilled}
               onClick={() =>
-                runAction(
-                  "🛑 緊急停止 (進行中のサイクルを即座に中断、次サイクルも停止) を実行",
-                  emergencyStopAction,
-                )
+                runAction("🛑 緊急停止を実行しますか?", emergencyStopAction, {
+                  message:
+                    "進行中のサイクルを次の phase 境界で即座に中断します。\n次サイクルも停止します (再開ボタンで両方解除)。",
+                  destructive: true,
+                })
               }
             >
               緊急停止
@@ -198,6 +237,14 @@ export function SystemControls({
 
         {error && <p className="text-destructive text-sm">{error}</p>}
       </CardContent>
+      <ConfirmDialog
+        open={confirm !== null}
+        title={confirm?.title ?? ""}
+        message={confirm?.message}
+        destructive={confirm?.destructive}
+        onConfirm={() => confirm?.onConfirm()}
+        onCancel={() => (confirm?.onCancel ? confirm.onCancel() : setConfirm(null))}
+      />
     </Card>
   );
 }

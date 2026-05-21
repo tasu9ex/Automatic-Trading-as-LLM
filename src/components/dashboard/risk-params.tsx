@@ -3,6 +3,7 @@
 import { setRiskParamsAction } from "@/app/actions/system-control";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -23,24 +24,27 @@ export function RiskParams({
   const [perCoin, setPerCoin] = useState((perCoinMaxRatio * 100).toFixed(1));
   const [dd, setDd] = useState((portfolioDdTrigger * 100).toFixed(1));
   const [threshold, setThreshold] = useState(String(autoPauseThreshold));
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const dirty =
     Math.abs(Number(perCoin) - perCoinMaxRatio * 100) > 0.05 ||
     Math.abs(Number(dd) - portfolioDdTrigger * 100) > 0.05 ||
     Number(threshold) !== autoPauseThreshold;
 
-  function onSave() {
+  // B: window.confirm を ConfirmDialog に置換。
+  const confirmMessage = [
+    `  1 銘柄上限          ${(perCoinMaxRatio * 100).toFixed(1)}% → ${perCoin}%`,
+    `  Kill Switch DD     ${(portfolioDdTrigger * 100).toFixed(1)}% → ${dd}%`,
+    `  連続失敗 auto-pause  ${autoPauseThreshold} → ${threshold}`,
+    "",
+    "次サイクルから反映されます。",
+  ].join("\n");
+
+  function doSave() {
     const perCoinRatio = Number(perCoin) / 100;
     const ddRatio = Number(dd) / 100;
     const thr = Number(threshold);
-    const msg = [
-      "リスクパラメータを更新します:",
-      `  PER_COIN_MAX_RATIO  ${(perCoinMaxRatio * 100).toFixed(1)}% → ${perCoin}%`,
-      `  PORTFOLIO_DD_TRIGGER ${(portfolioDdTrigger * 100).toFixed(1)}% → ${dd}%`,
-      `  AUTO_PAUSE_THRESHOLD ${autoPauseThreshold} → ${thr}`,
-      "次サイクルから反映されます。よろしいですか?",
-    ].join("\n");
-    if (!window.confirm(msg)) return;
+    setConfirmOpen(false);
     setError(null);
     startTransition(async () => {
       const res = await setRiskParamsAction({
@@ -98,12 +102,19 @@ export function RiskParams({
           />
         </div>
         <div className="flex items-center justify-between">
-          <Button onClick={onSave} disabled={!dirty || pending}>
+          <Button onClick={() => setConfirmOpen(true)} disabled={!dirty || pending}>
             保存
           </Button>
           {error && <p className="text-destructive text-sm">{error}</p>}
         </div>
       </CardContent>
+      <ConfirmDialog
+        open={confirmOpen}
+        title="リスクパラメータを更新しますか?"
+        message={confirmMessage}
+        onConfirm={doSave}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </Card>
   );
 }

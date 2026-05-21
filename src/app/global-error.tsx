@@ -10,6 +10,9 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // Z: production では stack 非表示 (digest だけ案内し、詳細は Sentry / Vercel logs 側で追う)
+  const isProduction = process.env.NODE_ENV === "production";
+
   useEffect(() => {
     Sentry.captureException(error);
     // 個人用ツールなのでブラウザコンソールにも全文出す
@@ -66,7 +69,7 @@ export default function GlobalError({
               </p>
             </section>
           )}
-          {error.stack && (
+          {!isProduction && error.stack && (
             <section>
               <h3 style={{ marginBottom: "0.25rem" }}>Stack</h3>
               <pre

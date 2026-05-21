@@ -4,9 +4,23 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 
+// Y: ?error= の素通し表示は phishing 文言注入の余地があるため enum で受ける。
+// 未知の code はまとめて汎用メッセージにマップ。
+const LOGIN_ERROR_MESSAGES: Record<string, string> = {
+  oauth_failed: "GitHub 認証に失敗しました。もう一度お試しください。",
+  callback_failed: "認証コールバックでエラーが発生しました。",
+  session_expired: "セッションの有効期限が切れました。再ログインしてください。",
+  unauthorized: "このアカウントではアクセスできません。",
+};
+
+function loginErrorMessage(code: string | null): string | null {
+  if (!code) return null;
+  return LOGIN_ERROR_MESSAGES[code] ?? "ログインでエラーが発生しました。";
+}
+
 function LoginInner() {
   const params = useSearchParams();
-  const error = params.get("error");
+  const errorMessage = loginErrorMessage(params.get("error"));
 
   async function signIn() {
     const supabase = createSupabaseBrowserClient();
@@ -32,7 +46,7 @@ function LoginInner() {
           GitHub でサインイン
         </button>
 
-        {error && <p className="text-center text-red-500 text-xs">ログイン失敗: {error}</p>}
+        {errorMessage && <p className="text-center text-red-500 text-xs">{errorMessage}</p>}
       </div>
     </main>
   );

@@ -27,7 +27,19 @@ export async function setCoinEnabledAction(
 ): Promise<CoinToggleResult> {
   try {
     await requireUser();
-    await db.update(coins).set({ enabled, updatedAt: new Date() }).where(eq(coins.id, coinId));
+    // O: 不正な coinId / 存在しない coinId を silent ignore にしない。
+    // UUID v4 ライクな簡易検証 + UPDATE 行数チェック (存在しなければ rowCount 0)。
+    if (typeof coinId !== "string" || !/^[0-9a-f-]{36}$/i.test(coinId)) {
+      throw new Error("不正な coinId 形式です");
+    }
+    const updated = await db
+      .update(coins)
+      .set({ enabled, updatedAt: new Date() })
+      .where(eq(coins.id, coinId))
+      .returning({ id: coins.id });
+    if (updated.length === 0) {
+      throw new Error(`coinId が見つかりません: ${coinId}`);
+    }
     updateTag(DASHBOARD_CACHE_TAG);
     revalidatePath("/");
     return { ok: true };

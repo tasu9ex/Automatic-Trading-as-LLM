@@ -10,6 +10,9 @@ export default function PageError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // Z: production では stack 非表示 (digest だけ案内し、詳細は Sentry / Vercel logs 側で追う)
+  const isProduction = process.env.NODE_ENV === "production";
+
   useEffect(() => {
     Sentry.captureException(error);
     console.error("[PageError]", error);
@@ -61,7 +64,7 @@ export default function PageError({
           </pre>
         </section>
       )}
-      {error.stack && (
+      {!isProduction && error.stack && (
         <section>
           <h3 style={{ marginBottom: "0.25rem" }}>Stack</h3>
           <pre
@@ -76,6 +79,11 @@ export default function PageError({
             {error.stack}
           </pre>
         </section>
+      )}
+      {isProduction && (
+        <p style={{ color: "#6b7280", fontSize: 13 }}>
+          詳細は Sentry / Vercel logs で digest を検索してください。
+        </p>
       )}
     </main>
   );

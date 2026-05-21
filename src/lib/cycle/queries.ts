@@ -24,7 +24,7 @@ import {
   DEFAULT_CYCLE_INTERVAL_HOURS,
   isCycleIntervalHours,
 } from "@/lib/system-control/constants";
-import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
 
 /**
@@ -403,71 +403,86 @@ async function getCycleDetailImpl(cycleId: string): Promise<CycleDetail | null> 
       }
     : null;
 
-  const coinSections = await Promise.all(
-    snapshots.map(async ({ snap, coin }) => {
-      const [preAnalyst, analyst] = await Promise.all([
-        db
+  // P-3: per-coin で 3 クエリ叩いていた N+1 を 3 つの bulk クエリに統合。
+  // snapshots N 件 → preAnalyst / analyst / decisions それぞれ 1 クエリで全件取得 + Map で結合。
+  const snapshotIds = snapshots.map((s) => s.snap.id);
+  const preAnalysts =
+    snapshotIds.length > 0
+      ? await db
           .select()
           .from(preAnalystOutputs)
-          .where(eq(preAnalystOutputs.snapshotId, snap.id))
-          .limit(1)
-          .then((r) => r[0]),
-        db
+          .where(inArray(preAnalystOutputs.snapshotId, snapshotIds))
+      : [];
+  const analysts =
+    snapshotIds.length > 0
+      ? await db
           .select()
           .from(analystOutputs)
-          .where(eq(analystOutputs.snapshotId, snap.id))
-          .limit(1)
-          .then((r) => r[0]),
-      ]);
+          .where(inArray(analystOutputs.snapshotId, snapshotIds))
+      : [];
+  const analystIds = analysts.map((a) => a.id);
+  const decisionRows =
+    analystIds.length > 0
+      ? await db.select().from(decisions).where(inArray(decisions.analystId, analystIds))
+      : [];
 
-      const decisionsForCoin = analyst
-        ? await db.select().from(decisions).where(eq(decisions.analystId, analyst.id))
-        : [];
-      const entryDecision = decisionsForCoin.find((d) => d.kind === "entry");
-      const exitDecision = decisionsForCoin.find((d) => d.kind === "exit");
+  const preAnalystBySnap = new Map(preAnalysts.map((p) => [p.snapshotId, p]));
+  const analystBySnap = new Map(analysts.map((a) => [a.snapshotId, a]));
+  const decisionsByAnalyst = new Map<string, typeof decisionRows>();
+  for (const d of decisionRows) {
+    const arr = decisionsByAnalyst.get(d.analystId) ?? [];
+    arr.push(d);
+    decisionsByAnalyst.set(d.analystId, arr);
+  }
 
-      return {
-        symbol: coin.symbol,
-        snapshot: {
-          perplexitySummary: snap.perplexitySummary,
-          perplexityCitations: (snap.perplexityCitations ?? []) as string[],
-          grokSummary: snap.grokSummary,
-          grokCitations: (snap.grokCitations ?? []) as string[],
-          fetchedAt: snap.fetchedAt,
-        },
-        preAnalyst: preAnalyst
-          ? {
-              summary: preAnalyst.summary,
-              relevanceScore: Number(preAnalyst.relevanceScore),
-              skipFlag: preAnalyst.skipFlag,
-              reasoning: preAnalyst.reasoning,
-            }
-          : null,
-        analyst: analyst
-          ? ({
-              fundamental: analyst.fundamental,
-              sentiment: analyst.sentiment,
-              technical: analyst.technical,
-              synthesis: analyst.synthesis,
-            } as AnalystOutput)
-          : null,
-        entryDecision: entryDecision
-          ? {
-              result: entryDecision.result,
-              confidence: Number(entryDecision.confidence),
-              reasoning: entryDecision.reasoning,
-            }
-          : null,
-        exitDecision: exitDecision
-          ? {
-              result: exitDecision.result,
-              confidence: Number(exitDecision.confidence),
-              reasoning: exitDecision.reasoning,
-            }
-          : null,
-      };
-    }),
-  );
+  const coinSections = snapshots.map(({ snap, coin }) => {
+    const preAnalyst = preAnalystBySnap.get(snap.id);
+    const analyst = analystBySnap.get(snap.id);
+    const decisionsForCoin = analyst ? (decisionsByAnalyst.get(analyst.id) ?? []) : [];
+    const entryDecision = decisionsForCoin.find((d) => d.kind === "entry");
+    const exitDecision = decisionsForCoin.find((d) => d.kind === "exit");
+
+    return {
+      symbol: coin.symbol,
+      snapshot: {
+        perplexitySummary: snap.perplexitySummary,
+        perplexityCitations: (snap.perplexityCitations ?? []) as string[],
+        grokSummary: snap.grokSummary,
+        grokCitations: (snap.grokCitations ?? []) as string[],
+        fetchedAt: snap.fetchedAt,
+      },
+      preAnalyst: preAnalyst
+        ? {
+            summary: preAnalyst.summary,
+            relevanceScore: Number(preAnalyst.relevanceScore),
+            skipFlag: preAnalyst.skipFlag,
+            reasoning: preAnalyst.reasoning,
+          }
+        : null,
+      analyst: analyst
+        ? ({
+            fundamental: analyst.fundamental,
+            sentiment: analyst.sentiment,
+            technical: analyst.technical,
+            synthesis: analyst.synthesis,
+          } as AnalystOutput)
+        : null,
+      entryDecision: entryDecision
+        ? {
+            result: entryDecision.result,
+            confidence: Number(entryDecision.confidence),
+            reasoning: entryDecision.reasoning,
+          }
+        : null,
+      exitDecision: exitDecision
+        ? {
+            result: exitDecision.result,
+            confidence: Number(exitDecision.confidence),
+            reasoning: exitDecision.reasoning,
+          }
+        : null,
+    };
+  });
 
   return {
     cycleId,
