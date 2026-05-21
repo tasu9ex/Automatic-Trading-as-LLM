@@ -19,6 +19,7 @@
     "db:push": "dotenv -e .env.local -- drizzle-kit push",
     "db:studio": "dotenv -e .env.local -- drizzle-kit studio",
     "db:seed": "tsx --env-file=.env.local scripts/dev/seed.ts",
+    "db:reset": "tsx --env-file=.env.local scripts/dev/reset-db.ts && pnpm db:migrate && pnpm db:seed",
     "db:sync-coins": "tsx --env-file=.env.local scripts/dev/sync-coins.ts",
     "db:check": "tsx scripts/db/check-migration-order.ts",
     "langfuse:register": "tsx --env-file=.env.local scripts/langfuse/register-prompt.ts",

@@ -4,8 +4,8 @@ import { coins, portfolios, systemState } from "@/db/schema";
 
 /**
  * 初期データ投入。
- * 銘柄リストは MVP の足がかり (BTC + ETH のみ)。
- * Phase A smoke test で GMO API から取引所形式 全銘柄をフェッチして上書きする想定。
+ * production と同じ 5 銘柄 (BTC / ETH / XRP / DOT / SOL) を enabled=true で投入。
+ * 他銘柄も触りたい場合は `pnpm db:sync-coins` で GMO 全銘柄を取り込める。
  */
 async function main() {
   console.log("Seeding...");
@@ -19,6 +19,7 @@ async function main() {
         minOrderSize: "0.0001",
         makerFeeRate: "-0.0001",
         takerFeeRate: "0.0005",
+        enabled: true,
       },
       {
         symbol: "ETH",
@@ -26,10 +27,35 @@ async function main() {
         minOrderSize: "0.01",
         makerFeeRate: "-0.0001",
         takerFeeRate: "0.0005",
+        enabled: true,
+      },
+      {
+        symbol: "XRP",
+        name: "XRP",
+        minOrderSize: "1",
+        makerFeeRate: "-0.0001",
+        takerFeeRate: "0.0005",
+        enabled: true,
+      },
+      {
+        symbol: "DOT",
+        name: "Polkadot",
+        minOrderSize: "0.1",
+        makerFeeRate: "-0.0001",
+        takerFeeRate: "0.0005",
+        enabled: true,
+      },
+      {
+        symbol: "SOL",
+        name: "Solana",
+        minOrderSize: "0.01",
+        makerFeeRate: "-0.0001",
+        takerFeeRate: "0.0005",
+        enabled: true,
       },
     ])
     .onConflictDoNothing({ target: coins.symbol });
-  console.log("✓ coins");
+  console.log("✓ coins (5 銘柄 enabled)");
 
   await db
     .insert(portfolios)
