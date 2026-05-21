@@ -44,6 +44,7 @@ import {
 } from "@/lib/constants/risk";
 import { runCritic } from "@/lib/critic";
 import { type ErrorKind, classifyError, withRetry } from "@/lib/cycle/retry";
+import { buildSystemHealth } from "@/lib/cycle/system-health";
 import { runEntryDecision } from "@/lib/decision/entry";
 import { runExitDecision } from "@/lib/decision/exit";
 import { executeEntry, executeExit } from "@/lib/executor";
@@ -735,6 +736,9 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     }));
   const symbolToName = Object.fromEntries(ctxs.map((c) => [c.coin.symbol, c.coin.name]));
 
+  // §33: システム健全性スナップを Critic に渡す (データ不全銘柄を modify で弾けるように)
+  const systemHealth = await buildSystemHealth({ strategyId, ctxs });
+
   // Critic skip: 買い 0 + Exit 0 なら審査するものが無い → Opus 呼び出しを節約
   const hasNothingToDo = buySignals.length === 0 && exitsToRun.length === 0;
   let critic: Awaited<ReturnType<typeof runCritic>>;
@@ -765,6 +769,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
           perCoinMaxRatio: PER_COIN_MAX_RATIO,
           killSwitchDdRatio: PORTFOLIO_DD_TRIGGER,
         },
+        systemHealth,
       });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);

@@ -54,6 +54,14 @@ export const CRITIC_SYSTEM_PROMPT = `# 役割
 - ハードガード (1 銘柄上限・Kill Switch 等) はコード側が別途強制する。詳細は risk_params 参照
 - 過剰な veto / modify は避ける (前段の判断を尊重し、合理的な懸念がある場合のみ介入)
 
+# システム健全性 (system_health) の使い方
+- **dataFreshness[銘柄] = "no_data"** の銘柄が proposal に含まれていれば、
+  その銘柄を modify の buys で 0 円に上書きすること (executor で silent skip されるため、Critic が事前に弾く)
+- **knownSkipRisks** に含まれる銘柄は同様に modify で 0 円に
+- **dataFreshness[銘柄] = "stale"** はデータが 1h 以上前 → 低 confidence にすぎないなら配分を縮小
+- **consecutiveFailures >= 2** のときは新規 Entry を全体的に保守的に (50% 縮小程度を推奨)
+- **lastFailureKind = "permanent"** のときはコード/設定問題の余波が残る可能性 → 慎重に
+
 # reasoning の書き方
 - どのポイントで判断したかを凝縮 (padding 禁止、必要な分だけ)
 - 一般論・憶測の埋め草は書かない
@@ -83,6 +91,9 @@ export const CRITIC_USER_PROMPT = `# サイズ配分案 (コード算出)
 
 # ハードガード閾値 (コード側で別途強制、参考)
 {{risk_params}}
+
+# システム健全性 (決定論集計)
+{{system_health}}
 
 # 出力 (JSON のみ)
 \`\`\`json

@@ -5,6 +5,7 @@ import {
   type CriticOutput,
   CriticOutputSchema,
 } from "@/lib/schemas/llm-outputs";
+import type { SystemHealth } from "@/lib/schemas/system-health";
 
 export interface CriticInput {
   proposal: AllocationProposal;
@@ -15,6 +16,8 @@ export interface CriticInput {
   symbolToName: Record<string, string>;
   cashJpy: number;
   riskParams: { perCoinMaxRatio: number; killSwitchDdRatio: number };
+  /** §33: システム健全性スナップ。データ不全銘柄の弾き等を Critic LLM に委ねる */
+  systemHealth: SystemHealth;
 }
 
 export interface CriticResult {
@@ -36,6 +39,7 @@ export async function runCritic(input: CriticInput): Promise<CriticResult> {
     symbol_to_name: JSON.stringify(input.symbolToName, null, 2),
     cash_jpy: input.cashJpy,
     risk_params: JSON.stringify(input.riskParams, null, 2),
+    system_health: JSON.stringify(input.systemHealth, null, 2),
   });
 
   const output = await generateJson<CriticOutput>({
