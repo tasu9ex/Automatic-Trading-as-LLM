@@ -5,7 +5,12 @@
  *   pnpm status                     # 本番 DB
  *   pnpm status:local              # ローカル DB
  */
-import { getDashboardStats, getOpenPositions, getRecentCycles } from "@/lib/cycle/queries";
+// CLI からは unstable_cache を経由しない (Next.js runtime 不在で invariant エラーになる)
+import {
+  getDashboardStatsImpl as getDashboardStats,
+  getOpenPositionsImpl as getOpenPositions,
+  getRecentCyclesImpl as getRecentCycles,
+} from "@/lib/cycle/queries";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";

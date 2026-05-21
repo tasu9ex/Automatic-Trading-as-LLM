@@ -76,7 +76,7 @@ function reviveDate(v: Date | string | null): Date | null {
   return v instanceof Date ? v : new Date(v);
 }
 
-async function getDashboardStatsImpl(): Promise<DashboardStats> {
+export async function getDashboardStatsImpl(): Promise<DashboardStats> {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
@@ -155,7 +155,7 @@ export async function getOpenPositions(): Promise<OpenPositionRow[]> {
   return rows.map((r) => ({ ...r, openedAt: reviveDate(r.openedAt) ?? new Date(0) }));
 }
 
-async function getOpenPositionsImpl(): Promise<OpenPositionRow[]> {
+export async function getOpenPositionsImpl(): Promise<OpenPositionRow[]> {
   const rows = await db
     .select({ position: positions, coin: coins })
     .from(positions)
@@ -217,7 +217,7 @@ export async function getRecentCycles(limit = 15): Promise<RecentCycleRow[]> {
  * cycles テーブル起点に LEFT JOIN critic_outputs。
  * 失敗 cycle (critic_outputs 行なし) は "failed" (completed_at あり) または "in_flight" (completed_at なし) として表示。
  */
-async function getRecentCyclesImpl(limit = 15): Promise<RecentCycleRow[]> {
+export async function getRecentCyclesImpl(limit = 15): Promise<RecentCycleRow[]> {
   const rows = await db
     .select({
       id: cycles.id,
