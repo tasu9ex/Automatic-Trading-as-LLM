@@ -1,44 +1,12 @@
-Entry (新規)
-未実行
-判定が記録されていません
+# 次にやりたい / 思いつきメモ
 
-ティア1がスキップした場合は
+## 完了済 (2026-05-21 反映)
 
-スキップの方がただしいかな？
+- **Tier 1 skip 時のバッジ**: 「未実行」→「スキップ」に統一 (T1 / commit fc8a9bf)
+- **Decision 以外の inline バッジ廃止**: long_bias / greed / improving / impact 等のドメイン語を削除し、各 Tier セクションは「実行 / スキップ / エラー」3 状態のみ表示 (T2 / commit fc8a9bf)
+- **cycle 詳細ページの折りたたみ化**: 銘柄ごと `<details>` で default 閉、summary に Entry/Exit バッジ、展開で Decision がすぐ見え、Tier 0/1/2 は nested details (T3+T4 / commit 8bca6ec)
+- **開発用シード**: `scripts/dev/seed.ts` に存在。§17 で system_state の新カラム初期値も追加済。`pnpm tsx scripts/dev/seed.ts` で再シード可
 
-Critic レビュー以外
+## メモ用バックログ
 
-実行かスキップの２つでバッチいいかも
-
-long_bias,greed,improving
-みたいなバッチ表示ありそうだけど
-
-その辺廃止してさ
-
-バッチはそれぞれ実行したかスキップしたからエラーかにしましょう
-
-サイクル毎のページですが
-
-https://automatic-trading-as-llm.vercel.app/cycles/1cf45929-8940-466f-8b82-195f59d8fee5
-
-とかね
-
-コイン毎に折りたたみできるUIがいいな
-
-最初から全部閉じてて
-
-DECISION (売買判断)
-
-だけでてる状態かな？
-
-展開すると
-
-もう一つティア0の展開ができるイメージか？
-
-
-
-
-
-
-
-開発ようシード今あるけ？
+(追加するときはここに)
