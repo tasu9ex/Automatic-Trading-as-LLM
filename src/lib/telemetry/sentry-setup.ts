@@ -1,8 +1,7 @@
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import * as Sentry from "@sentry/node";
-import { initOpenTelemetry } from "@sentry/node";
-import { langfuseProcessors } from "./otel-setup";
+import { setupOtelWithSentry } from "./otel-setup";
 
 const logger = createLogger("telemetry.sentry-setup");
 
@@ -73,7 +72,9 @@ export function initSentry(): void {
   });
 
   if (client) {
-    initOpenTelemetry(client, { spanProcessors: langfuseProcessors() });
+    setupOtelWithSentry(client);
+  } else {
+    logger.warn("Sentry.init returned no client; OTel setup skipped");
   }
 
   initialized = true;

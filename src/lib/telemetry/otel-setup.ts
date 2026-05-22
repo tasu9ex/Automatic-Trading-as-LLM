@@ -1,26 +1,17 @@
 import { createLogger } from "@/lib/logging";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
+import { context as otelContext, propagation, trace } from "@opentelemetry/api";
+import { AlwaysOnSampler, BasicTracerProvider } from "@opentelemetry/sdk-trace-base";
 import type { SpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { SentryContextManager } from "@sentry/node-core";
+import type { NodeClient } from "@sentry/node-core";
+import { SentryPropagator, SentrySpanProcessor, getSentryResource } from "@sentry/opentelemetry";
 
 const logger = createLogger("telemetry.otel-setup");
 
 /**
- * Sentry + Langfuse 共存設定。
- *
- * 経緯: 旧版は NodeSDK で独自に TracerProvider をグローバル登録していたが、
- *       Sentry が instrumentation.ts (Next.js) で先に TracerProvider を握ると
- *       Langfuse の processor が反映されず、本番から trace が届かない状態だった。
- *
- * 新版: Sentry.init の `openTelemetrySpanProcessors` オプション (v10+) で
- *       Sentry の TracerProvider に LangfuseSpanProcessor を co-processor として
- *       相乗りさせる。Sentry / Langfuse 両方が同じ span を受け取る。
- *
- * 必要 env:
- *   LANGFUSE_PUBLIC_KEY
- *   LANGFUSE_SECRET_KEY
- *   LANGFUSE_BASE_URL (optional, default https://cloud.langfuse.com)
- *
- * 未設定なら空配列を返し、Langfuse 側は no-op。
+ * Sentry の AdditionalOpenTelemetryOptions に渡せる SpanProcessor 群を返す。
+ * 主に setupOtelWithSentry 内部用だが、initOpenTelemetry 経由でも使えるようにエクスポート。
  */
 export function langfuseProcessors(): SpanProcessor[] {
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
@@ -41,15 +32,55 @@ export function langfuseProcessors(): SpanProcessor[] {
 }
 
 /**
- * @deprecated Sentry.init の openTelemetrySpanProcessors で代替。残置は後方互換のため。
- * Sentry が OTel TracerProvider のオーナーになったので、別途 NodeSDK を立てる必要なし。
+ * Sentry + Langfuse 共存 OTel セットアップ。
+ *
+ * 経緯: Sentry の `initOpenTelemetry` は `SentrySampler` を使うが、
+ *       SentrySampler は `tracesSampleRate: 0.0` のとき span を NOT_RECORD に落とすため
+ *       後段の LangfuseSpanProcessor の onEnd が呼ばれず、Langfuse に trace が届かない。
+ *       かといって tracesSampleRate を上げると Sentry billing が増える。
+ *
+ * 対処: 自前で BasicTracerProvider を組み、Sampler を AlwaysOnSampler に差し替え。
+ *       SentrySpanProcessor は LangfuseSpanProcessor と同じ provider に並列登録し、
+ *       Sentry 側の sampling は SentrySpanProcessor 内部で扱われる
+ *       (Sentry に送るかは tracesSampleRate ベースで判断、Langfuse には全 span 流れる)。
+ *
+ * 呼び出し側は Sentry.init({ skipOpenTelemetrySetup: true }) で Sentry 既定の OTel を抑止し、
+ * この関数を呼ぶ。
+ */
+export function setupOtelWithSentry(client: NodeClient): void {
+  const lfProcs = langfuseProcessors();
+
+  const provider = new BasicTracerProvider({
+    sampler: new AlwaysOnSampler(),
+    resource: getSentryResource("node"),
+    forceFlushTimeoutMillis: 500,
+    spanProcessors: [new SentrySpanProcessor(), ...lfProcs],
+  });
+
+  trace.setGlobalTracerProvider(provider);
+  propagation.setGlobalPropagator(new SentryPropagator());
+
+  const ctxManager = new SentryContextManager();
+  otelContext.setGlobalContextManager(ctxManager);
+
+  client.traceProvider = provider;
+  client.asyncLocalStorageLookup = ctxManager.getAsyncLocalStorageLookup();
+
+  logger.info(
+    { langfuseEnabled: lfProcs.length > 0 },
+    "OTel TracerProvider initialized (Sentry + Langfuse)",
+  );
+}
+
+/**
+ * @deprecated setupOtelWithSentry に統合済み。残置は後方互換のため。
  */
 export function initTelemetry(): void {
   // no-op
 }
 
 /**
- * @deprecated shutdownSentry が co-processor の flush も担う。
+ * @deprecated shutdownSentry が provider の flush も担う。
  */
 export async function shutdownTelemetry(): Promise<void> {
   // no-op
