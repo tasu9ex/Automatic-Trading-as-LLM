@@ -13,9 +13,9 @@ import PQueue from "p-queue";
  *
  * MVP 値:
  *   anthropic: 5 並列 / 600 req per minute (Tier 1 想定)
- *   perplexity: 3 並列
- *   grok: 3 並列
- *   gmo: 1 並列 / 1 req per 100ms (公式制限あり)
+ *   perplexity: 5 並列 / 50 req per minute
+ *   grok: 5 並列 / 60 req per minute
+ *   gmo: 1 並列 / 1 req per 100ms (公式制限あり、絶対に上げない)
  */
 
 const logger = createLogger("rate-limit");
@@ -31,8 +31,8 @@ interface QueueConfig {
 const CONFIGS: Record<ServiceName, QueueConfig> = {
   anthropic: { concurrency: 5, intervalCap: 600, interval: 60_000 },
   google: { concurrency: 5, intervalCap: 60, interval: 60_000 }, // Free tier 1500/day, 安全側で 60/min
-  perplexity: { concurrency: 3, intervalCap: 50, interval: 60_000 },
-  grok: { concurrency: 3, intervalCap: 60, interval: 60_000 },
+  perplexity: { concurrency: 5, intervalCap: 50, interval: 60_000 },
+  grok: { concurrency: 5, intervalCap: 60, interval: 60_000 },
   gmo: { concurrency: 1, intervalCap: 10, interval: 1_000 },
 };
 

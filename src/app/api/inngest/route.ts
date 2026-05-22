@@ -10,4 +10,10 @@ import { serve } from "inngest/next";
  *   INNGEST_EVENT_KEY
  *   INNGEST_SIGNING_KEY
  */
+
+// Inngest の各 step.run は単独 HTTP invocation として実行される。
+// tier0 (perplexity + grok 並列検索) が N 銘柄でバッチ複数になると 60s 近くまで伸びるため、
+// Vercel plan default に依存せず明示的に上限を確保する (Pro 上限 300s, Fluid なら更に上)。
+export const maxDuration = 180;
+
 export const { GET, POST, PUT } = serve({ client: inngest, functions });

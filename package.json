@@ -35,6 +35,7 @@
     "smoke:local:grok": "tsx --env-file=.env.local scripts/smoke/grok.ts",
     "smoke:local:anthropic": "tsx --env-file=.env.local scripts/smoke/anthropic.ts",
     "smoke:local:perplexity": "tsx --env-file=.env.local scripts/smoke/perplexity.ts",
+    "smoke:prod:inngest": "tsx --env-file=.env.prod scripts/smoke/inngest.ts",
     "status:local": "tsx --env-file=.env.local scripts/dev/status.ts",
     "status:prod": "tsx --env-file=.env.prod scripts/dev/status.ts",
     "capital:local": "tsx --env-file=.env.local scripts/dev/capital.ts",
