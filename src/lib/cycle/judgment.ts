@@ -104,11 +104,13 @@ async function runJudgmentCycleInner(
     await runPhase("tier0-snapshots", () =>
       tier0Snapshots(cycleId, periodHours, cycleIntervalMinutes),
     );
-    await runPhase("tier1-pre-analyst", () => tier1PreAnalyst(cycleId));
-    await runPhase("tier2-analyst", () => tier2Analyst(cycleId, strategyId));
-    await runPhase("tier3-decisions", () => tier3Decisions(cycleId, strategyId));
+    await runPhase("tier1-pre-analyst", () => tier1PreAnalyst(cycleId, cycleIntervalMinutes));
+    await runPhase("tier2-analyst", () => tier2Analyst(cycleId, strategyId, cycleIntervalMinutes));
+    await runPhase("tier3-decisions", () =>
+      tier3Decisions(cycleId, strategyId, cycleIntervalMinutes),
+    );
     const result: FinalizeResult = await runPhase("finalize", () =>
-      finalize({ cycleId, strategyId, method, startedAt }),
+      finalize({ cycleId, strategyId, method, startedAt, cycleIntervalMinutes }),
     );
     return result;
   } catch {

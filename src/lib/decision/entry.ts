@@ -1,4 +1,5 @@
 import { generateJson } from "@/lib/clients/generate-json";
+import { formatCycleInterval } from "@/lib/cycle/cycle-interval";
 import { getPrompt } from "@/lib/prompts";
 import { type EntryDecisionOutput, EntryDecisionOutputSchema } from "@/lib/schemas/llm-outputs";
 import type { AnalystResult } from "@/lib/tier2/analyst";
@@ -17,12 +18,14 @@ export async function runEntryDecision(
   symbol: string,
   name: string,
   analyst: AnalystResult,
+  cycleIntervalMinutes: number,
 ): Promise<EntryDecisionResult> {
   const resolved = await getPrompt("tier3/entry", {
     symbol,
     name,
     analyst_synthesis: JSON.stringify(analyst.output.synthesis, null, 2),
     analyst_full: JSON.stringify(analyst.output, null, 2),
+    cycle_interval: formatCycleInterval(cycleIntervalMinutes),
   });
 
   const output = await generateJson<EntryDecisionOutput>({

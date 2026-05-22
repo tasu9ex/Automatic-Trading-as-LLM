@@ -14,6 +14,7 @@
  *   {{bars_count}}         実際に取得できた本数 (上限 200)
  *   {{ohlcv_brief}}        OHLCV 簡易テキスト (直近 200 本)
  *   {{micro_market}}       板情報・直近約定からのマイクロ指標 (spread, depth bias, buy ratio)
+ *   {{cycle_interval}}     本システムの判定サイクル間隔 (例: "30 分", "12 時間", "1 日")
  *
  * 出力 (JSON):
  *   {
@@ -49,6 +50,11 @@ export const ANALYST_SYSTEM_PROMPT = `# 役割
 あなたは仮想通貨市場のシニアアナリストで、Fundamental / Sentiment / Technical を統合して
 市場見解を生成する職務です。**売買判断はあなたの担当ではなく**、後段のトレーダーに委ねます。
 あなたは「相場をどう見るか」だけを示してください。
+
+# 判定サイクル
+本システムは **{{cycle_interval}} ごと** に判定サイクルを回します。各セクションの分析および
+synthesis の direction / confidence は、**この頻度で売買する時間軸の視点** で組み立ててください。
+(短サイクルなら短期 microstructure / モメンタム重視、長サイクルならファンダ・トレンド重視)
 
 # タスク
 与えられた1銘柄について、以下4セクションを単一コール内で順に思考し、構造化 JSON を返してください。
@@ -94,6 +100,9 @@ export const ANALYST_USER_PROMPT = `# 銘柄
 
 # マイクロマーケット指標 (板情報 + 直近 100 約定)
 {{micro_market}}
+
+# 判定サイクル
+{{cycle_interval}} ごと
 
 # 出力 (JSON のみ)
 \`\`\`json

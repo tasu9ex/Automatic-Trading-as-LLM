@@ -1,4 +1,5 @@
 import { generateJson } from "@/lib/clients/generate-json";
+import { formatCycleInterval } from "@/lib/cycle/cycle-interval";
 import type { ExecutionPlan } from "@/lib/cycle/execution-plan";
 import { getPrompt } from "@/lib/prompts";
 import { type CriticOutput, CriticOutputSchema } from "@/lib/schemas/llm-outputs";
@@ -24,6 +25,8 @@ export interface CriticInput {
   };
   /** §33: システム健全性スナップ。データ不全銘柄の弾き等を Critic LLM に委ねる */
   systemHealth: SystemHealth;
+  /** サイクル間隔 (分)。per-cycle 上限の解釈を頻度依存にするため LLM に渡す */
+  cycleIntervalMinutes: number;
 }
 
 export interface CriticResult {
@@ -57,6 +60,7 @@ export async function runCritic(input: CriticInput): Promise<CriticResult> {
     equity_jpy: input.equityJpy,
     risk_params: JSON.stringify(input.riskParams, null, 2),
     system_health: JSON.stringify(input.systemHealth, null, 2),
+    cycle_interval: formatCycleInterval(input.cycleIntervalMinutes),
   });
 
   const output = await generateJson<CriticOutput>({

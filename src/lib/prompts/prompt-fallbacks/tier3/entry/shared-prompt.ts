@@ -12,6 +12,7 @@
  *   {{name}}              プロジェクト正式名称
  *   {{analyst_synthesis}} Analyst の synthesis セクション (direction, confidence, reasoning)
  *   {{analyst_full}}      Analyst の全 JSON (参照したい場合)
+ *   {{cycle_interval}}    本システムの判定サイクル間隔 (例: "30 分", "12 時間", "1 日")
  *
  * 出力 (JSON):
  *   {
@@ -27,6 +28,12 @@
 export const ENTRY_DECISION_SYSTEM_PROMPT = `# 役割
 あなたは仮想通貨トレーダーで、Analyst の市場見解を受け、未保有銘柄について
 Entry (買い) するかを直接判断します。サイズは決めません (後段がコードで計算)。
+
+# 判定サイクル
+本システムは **{{cycle_interval}} ごと** に判定サイクルを回します。
+- Buy 判断は「この頻度で再評価される前提」で行ってください
+- expected_holding_days は **このサイクル頻度で妥当な日数** で(短サイクルなら短く、長サイクルなら長く)
+- 短サイクルでは「数サイクル内に売却される可能性」を念頭にエントリー条件を厳しめに
 
 # タスク
 Analyst 見解を根拠に Buy / No の二択で判定してください。
@@ -66,6 +73,9 @@ export const ENTRY_DECISION_USER_PROMPT = `# 銘柄
 
 # Analyst 全体 (詳細)
 {{analyst_full}}
+
+# 判定サイクル
+{{cycle_interval}} ごと
 
 # 出力 (JSON のみ)
 \`\`\`json

@@ -136,11 +136,11 @@ export async function preflight(input: PreflightInput): Promise<PreflightResult>
     })
     .onConflictDoNothing({ target: cycles.id });
 
-  // Tier 0 の検索対象期間: 前回サイクルから経過時間 (下限 6h、上限 168h)
-  const hoursSinceLast = state.lastCycleAt
-    ? (Date.now() - state.lastCycleAt.getTime()) / 3_600_000
-    : 24;
-  const periodHours = Math.round(Math.max(6, Math.min(168, hoursSinceLast)));
+  // Tier 0 の検索対象期間: サイクル間隔の 2 倍 (下限 1h, 上限 168h)。
+  // 「直前サイクルが見落とした境界の取りこぼし防止」のため 2 倍のマージン。
+  // 高頻度サイクル (例: 30 分) では 1h 検索、低頻度 (例: 24h) では 48h 検索になる。
+  const cycleH = state.cycleIntervalMinutes / 60;
+  const periodHours = Math.min(168, Math.max(1, Math.round(cycleH * 2)));
 
   return {
     proceed: true,
@@ -269,7 +269,10 @@ async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: st
 }
 
 /** Phase 3: Tier 1 Pre-Analyst (ALL-or-NOTHING) */
-export async function tier1PreAnalyst(cycleId: string): Promise<void> {
+export async function tier1PreAnalyst(
+  cycleId: string,
+  cycleIntervalMinutes: number,
+): Promise<void> {
   await assertNotEmergencyStop("tier1-pre-analyst");
   const enabledCoins = await getCycleCoins(cycleId);
 
@@ -296,7 +299,7 @@ export async function tier1PreAnalyst(cycleId: string): Promise<void> {
           if (existing) return;
 
           const { snap } = await loadSnapshot(snapshot.id, coin);
-          const preRes = await runPreAnalyst(snap);
+          const preRes = await runPreAnalyst(snap, cycleIntervalMinutes);
           await db.insert(preAnalystOutputs).values({
             snapshotId: snapshot.id,
             llmModel: preRes.llmModel,
@@ -319,7 +322,11 @@ export async function tier1PreAnalyst(cycleId: string): Promise<void> {
  * - 未保有銘柄: skip_flag=true なら Analyst skip (コスト節約)
  * - 保有銘柄  : skip_flag に関わらず Analyst 実行 (Tier 3 Exit に渡すため必須)
  */
-export async function tier2Analyst(cycleId: string, strategyId: string): Promise<void> {
+export async function tier2Analyst(
+  cycleId: string,
+  strategyId: string,
+  cycleIntervalMinutes: number,
+): Promise<void> {
   await assertNotEmergencyStop("tier2-analyst");
   const enabledCoins = await getCycleCoins(cycleId);
 
@@ -387,7 +394,7 @@ export async function tier2Analyst(cycleId: string, strategyId: string): Promise
             promptVersion: pre.promptVersion,
             llmModel: pre.llmModel,
           };
-          const analystRes = await runAnalyst(snap, preResLike);
+          const analystRes = await runAnalyst(snap, preResLike, cycleIntervalMinutes);
           await db.insert(analystOutputs).values({
             snapshotId: snapshot.id,
             preAnalystId: pre.id,
@@ -425,6 +432,7 @@ async function runEntryForCoin(args: {
   coin: CycleCoin;
   analyst: AnalystRow;
   analystResLike: ReturnType<typeof asAnalystRunLike>;
+  cycleIntervalMinutes: number;
 }): Promise<void> {
   const existing = (
     await db
@@ -439,6 +447,7 @@ async function runEntryForCoin(args: {
     args.coin.symbol,
     args.coin.name,
     args.analystResLike as Parameters<typeof runEntryDecision>[2],
+    args.cycleIntervalMinutes,
   );
   await db.insert(decisions).values({
     analystId: args.analyst.id,
@@ -468,6 +477,7 @@ async function runExitForCoin(args: {
   analyst: AnalystRow;
   analystResLike: ReturnType<typeof asAnalystRunLike>;
   strategyId: string;
+  cycleIntervalMinutes: number;
 }): Promise<void> {
   const openPos = (
     await db
@@ -524,6 +534,7 @@ async function runExitForCoin(args: {
       },
     },
     args.analystResLike as Parameters<typeof runExitDecision>[1],
+    args.cycleIntervalMinutes,
   );
   await db.insert(decisions).values({
     analystId: args.analyst.id,
@@ -539,7 +550,11 @@ async function runExitForCoin(args: {
 }
 
 /** Phase 5: Tier 3 Entry/Exit Decision (ALL-or-NOTHING) */
-export async function tier3Decisions(cycleId: string, strategyId: string): Promise<void> {
+export async function tier3Decisions(
+  cycleId: string,
+  strategyId: string,
+  cycleIntervalMinutes: number,
+): Promise<void> {
   await assertNotEmergencyStop("tier3-decisions");
   const enabledCoins = await getCycleCoins(cycleId);
 
@@ -568,13 +583,14 @@ export async function tier3Decisions(cycleId: string, strategyId: string): Promi
           if (!analyst) return;
 
           const analystResLike = asAnalystRunLike(analyst);
-          await runEntryForCoin({ coin, analyst, analystResLike });
+          await runEntryForCoin({ coin, analyst, analystResLike, cycleIntervalMinutes });
           await runExitForCoin({
             coin,
             snapshotId: snapshot.id,
             analyst,
             analystResLike,
             strategyId,
+            cycleIntervalMinutes,
           });
         },
         { label: `tier3:${coin.symbol}` },
@@ -600,6 +616,7 @@ interface FinalizeInput {
   strategyId: string;
   method: SizingMethod;
   startedAt: number;
+  cycleIntervalMinutes: number;
 }
 
 type CoinCtx = {
@@ -725,6 +742,7 @@ async function processCriticDecision(args: {
   currentCashJpy: number;
   equityJpy: number;
   riskParams: Awaited<ReturnType<typeof getRiskParams>>;
+  cycleIntervalMinutes: number;
 }): Promise<CriticDecisionResult> {
   const { plan, ctxs, buyCandidates, currentCashJpy, equityJpy, riskParams } = args;
 
@@ -784,6 +802,7 @@ async function processCriticDecision(args: {
         killSwitchDdRatio: riskParams.portfolioDdTrigger,
       },
       systemHealth,
+      cycleIntervalMinutes: args.cycleIntervalMinutes,
     });
   }
 
@@ -1203,6 +1222,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     currentCashJpy,
     equityJpy: equityForCritic,
     riskParams,
+    cycleIntervalMinutes: input.cycleIntervalMinutes,
   });
 
   const ctxBySymbol = new Map(ctxs.map((c) => [c.coin.symbol, c]));

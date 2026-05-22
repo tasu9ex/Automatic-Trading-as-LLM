@@ -136,15 +136,19 @@ export const judgmentCron = inngest.createFunction(
       await runStep("tier0-snapshots", () =>
         tier0Snapshots(cycleId, periodHours, cycleIntervalMinutes),
       );
-      await runStep("tier1-pre-analyst", () => tier1PreAnalyst(cycleId));
-      await runStep("tier2-analyst", () => tier2Analyst(cycleId, strategyId));
-      await runStep("tier3-decisions", () => tier3Decisions(cycleId, strategyId));
+      await runStep("tier1-pre-analyst", () => tier1PreAnalyst(cycleId, cycleIntervalMinutes));
+      await runStep("tier2-analyst", () => tier2Analyst(cycleId, strategyId, cycleIntervalMinutes));
+      await runStep("tier3-decisions", () =>
+        tier3Decisions(cycleId, strategyId, cycleIntervalMinutes),
+      );
 
       // finalize は値を返すので runStep 経由にせず個別 try/catch (§4)
       let result: Awaited<ReturnType<typeof finalize>>;
       try {
         result = await step.run("finalize", () =>
-          withSession(cycleId, () => finalize({ cycleId, strategyId, method, startedAt })),
+          withSession(cycleId, () =>
+            finalize({ cycleId, strategyId, method, startedAt, cycleIntervalMinutes }),
+          ),
         );
       } catch (err) {
         if (isEmergencyStopError(err)) {

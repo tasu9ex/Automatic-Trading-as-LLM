@@ -1,4 +1,5 @@
 import { generateJson } from "@/lib/clients/generate-json";
+import { formatCycleInterval } from "@/lib/cycle/cycle-interval";
 import { getPrompt } from "@/lib/prompts";
 import { type PreAnalystOutput, PreAnalystOutputSchema } from "@/lib/schemas/llm-outputs";
 import type { Snapshot } from "@/lib/tier0/fetch-snapshot";
@@ -24,13 +25,17 @@ function buildPriceSnapshotText(s: Snapshot): string {
  * Tier 1 Pre-Analyst: Haiku で銘柄スクリーニング。
  * skip_flag=true なら Tier 2 以降スキップ (保有/未保有問わず)。
  */
-export async function runPreAnalyst(snapshot: Snapshot): Promise<PreAnalystResult> {
+export async function runPreAnalyst(
+  snapshot: Snapshot,
+  cycleIntervalMinutes: number,
+): Promise<PreAnalystResult> {
   const resolved = await getPrompt("tier1/pre-analyst", {
     symbol: snapshot.symbol,
     name: snapshot.name,
     perplexity_summary: snapshot.perplexitySummary,
     grok_summary: snapshot.grokSummary,
     price_snapshot: buildPriceSnapshotText(snapshot),
+    cycle_interval: formatCycleInterval(cycleIntervalMinutes),
   });
 
   const output = await generateJson<PreAnalystOutput>({

@@ -20,6 +20,7 @@
  *   {{equity_jpy}}          資産時価総額 (cash + Σ positions の mtm)
  *   {{risk_params}}         ハードガード閾値 (modify が違反すると ALL-or-NOTHING で全停止)
  *   {{system_health}}       システム健全性 (データ不全銘柄等)
+ *   {{cycle_interval}}      本システムの判定サイクル間隔 (例: "30 分", "12 時間", "1 日")
  *
  * 出力 (JSON):
  *   {
@@ -40,6 +41,13 @@ export const CRITIC_SYSTEM_PROMPT = `# 役割
 execution_plan.entries / exits の数字は **そのまま発注される値** です。
 旧版のように「Allocator 提案、後段で cap で削られる」ではなく、Clipper 適用済の
 最終形を見ています。あなたが approve すれば即その通り発注されます。
+
+# 判定サイクル
+本システムは **{{cycle_interval}} ごと** に判定サイクルを回します。risk_params の
+perCoinMaxRatio は「1 サイクルあたり」の上限なので、サイクル頻度が高いほど
+「同じ% 上限でも 1 日あたりの累積エクスポージャは大きくなる」点に留意してください。
+- 短サイクル: 1 サイクルの buy は控えめに評価 (累積で過剰露出になりやすい)
+- 長サイクル: 1 サイクルの buy は通常通り評価 (次の判定まで間隔がある)
 
 # タスク
 計画が現在の市場見解とポジション状態に対して妥当か評価し、
@@ -116,6 +124,9 @@ export const CRITIC_USER_PROMPT = `# 実行計画 (Exit + Entry、Clipper 適用
 
 # システム健全性 (決定論集計)
 {{system_health}}
+
+# 判定サイクル
+{{cycle_interval}} ごと
 
 # 出力 (JSON のみ)
 \`\`\`json

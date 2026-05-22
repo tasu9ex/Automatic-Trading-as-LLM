@@ -1,4 +1,5 @@
 import { generateJson } from "@/lib/clients/generate-json";
+import { formatCycleInterval } from "@/lib/cycle/cycle-interval";
 import { getPrompt } from "@/lib/prompts";
 import { type ExitDecisionOutput, ExitDecisionOutputSchema } from "@/lib/schemas/llm-outputs";
 import type { AnalystResult } from "@/lib/tier2/analyst";
@@ -36,6 +37,7 @@ export interface ExitDecisionResult {
 export async function runExitDecision(
   position: PositionState,
   analyst: AnalystResult,
+  cycleIntervalMinutes: number,
 ): Promise<ExitDecisionResult> {
   const exp = position.entryExpectation;
   const entryExpectationDesc = JSON.stringify(
@@ -70,6 +72,7 @@ export async function runExitDecision(
     entry_expectation: entryExpectationDesc,
     analyst_synthesis: JSON.stringify(analyst.output.synthesis, null, 2),
     analyst_full: JSON.stringify(analyst.output, null, 2),
+    cycle_interval: formatCycleInterval(cycleIntervalMinutes),
   });
 
   const output = await generateJson<ExitDecisionOutput>({

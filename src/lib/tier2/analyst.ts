@@ -1,4 +1,5 @@
 import { generateJson } from "@/lib/clients/generate-json";
+import { formatCycleInterval } from "@/lib/cycle/cycle-interval";
 import { getPrompt } from "@/lib/prompts";
 import { type AnalystOutput, AnalystOutputSchema } from "@/lib/schemas/llm-outputs";
 import type { Snapshot } from "@/lib/tier0/fetch-snapshot";
@@ -27,6 +28,7 @@ function formatBars(bars: Snapshot["ohlcv"], maxRows: number): string {
 export async function runAnalyst(
   snapshot: Snapshot,
   preAnalyst: PreAnalystResult,
+  cycleIntervalMinutes: number,
 ): Promise<AnalystResult> {
   const microMarket = snapshot.micro
     ? JSON.stringify(
@@ -54,6 +56,7 @@ export async function runAnalyst(
     bars_count: snapshot.ohlcv.length,
     ohlcv_brief: formatBars(snapshot.ohlcv, 200),
     micro_market: microMarket,
+    cycle_interval: formatCycleInterval(cycleIntervalMinutes),
   });
 
   const output = await generateJson<AnalystOutput>({
