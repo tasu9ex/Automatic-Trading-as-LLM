@@ -1,6 +1,7 @@
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import * as Sentry from "@sentry/node";
+import { initOpenTelemetry } from "@sentry/node";
 import { langfuseProcessors } from "./otel-setup";
 
 const logger = createLogger("telemetry.sentry-setup");
@@ -51,14 +52,15 @@ export function initSentry(): void {
     return;
   }
 
-  Sentry.init({
+  const client = Sentry.init({
     dsn,
     environment: process.env.NODE_ENV ?? "development",
     tracesSampleRate: 0.0, // OTel/Langfuse 側で trace するので、Sentry tracing は無効
     integrations: [],
     sendDefaultPii: false,
-    // Sentry の TracerProvider に LangfuseSpanProcessor を相乗り (CLI / Inngest worker 経路)
-    openTelemetrySpanProcessors: langfuseProcessors(),
+    // Sentry 既定の OTel auto-setup を抑止し、後段で initOpenTelemetry で
+    // LangfuseSpanProcessor を相乗りさせる (CLI / Inngest worker 経路)
+    skipOpenTelemetrySetup: true,
     beforeSend(event) {
       // Discord に非同期で転送(failure は無視)。Sentry には引き続き送る。
       const { title, body } = summarizeForDiscord(event);
@@ -69,6 +71,10 @@ export function initSentry(): void {
       return event;
     },
   });
+
+  if (client) {
+    initOpenTelemetry(client, { spanProcessors: langfuseProcessors() });
+  }
 
   initialized = true;
   logger.info("Sentry initialized");
