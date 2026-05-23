@@ -1,1 +1,0 @@
-- [ ] **Langfuse**: 各 LLM の API コスト単価が正確に反映されているか(usage × 単価 vs Langfuse 表示の突合)
