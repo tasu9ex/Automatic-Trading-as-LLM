@@ -12,11 +12,11 @@ export interface GrokRequest {
   systemPrompt?: string;
   userPrompt: string;
   maxTokens?: number;
-  /** true: Responses API + web_search + x_search ツール自動実行 (Tier 0 sentiment 向け) */
+  /** true: Responses API + web_search + x_search ツール (Tier 0 sentiment 向け) */
   useTools?: boolean;
   /**
-   * useTools=true 時に Live Search の検索期間を API レベルで絞る (時間)。
-   * `from_date = now - periodHours` を ISO datetime で渡す (分単位精度)。
+   * useTools=true 時に検索期間を tool 側で絞る (時間)。
+   * `from_date = now - periodHours` を YYYY-MM-DD (UTC) で渡す。
    */
   periodHours?: number;
 }
@@ -38,6 +38,8 @@ interface ResponsesApiOutputItem {
 interface ResponsesApiResponse {
   output?: ResponsesApiOutputItem[];
   usage?: { input_tokens?: number; output_tokens?: number };
+  /** Agent Tools API は top-level に citations URL 配列を返す */
+  citations?: string[];
 }
 
 interface ChatApiResponse {
@@ -50,8 +52,10 @@ interface ChatApiResponse {
  *
  * 2 モード:
  *   - useTools=false (デフォルト): /v1/chat/completions、純粋な chat 完了
- *   - useTools=true: /v1/responses、web_search + x_search ツールで agentic 検索
+ *   - useTools=true: /v1/responses + Agent Tools (web_search + x_search)
  *     → リアルタイム X 投稿 + Web 記事を Grok が自律的に取得・要約
+ *
+ * NOTE: 旧 search_parameters API は 410 で deprecated。tools 側に from_date を渡す。
  */
 export async function callGrok(req: GrokRequest): Promise<GrokResponse> {
   const apiKey = process.env.XAI_API_KEY;
@@ -104,16 +108,22 @@ async function callGrokWithTools(req: GrokRequest, apiKey: string): Promise<Grok
   if (req.systemPrompt) input.push({ role: "system", content: req.systemPrompt });
   input.push({ role: "user", content: req.userPrompt });
 
+  // 検索期間は tool config 側で渡す (旧 search_parameters は 410 deprecated)。
+  // web_search / x_search いずれも from_date (ISO YYYY-MM-DD) を受ける。
+  const webTool: Record<string, unknown> = { type: "web_search" };
+  const xTool: Record<string, unknown> = { type: "x_search" };
+  if (req.periodHours != null && req.periodHours > 0) {
+    const fromDate = fromDateForPeriod(req.periodHours);
+    webTool.from_date = fromDate;
+    xTool.from_date = fromDate;
+  }
+
   const body: Record<string, unknown> = {
     model: req.model ?? "grok-4.3",
     input,
-    tools: [{ type: "web_search" }, { type: "x_search" }],
+    tools: [webTool, xTool],
     max_output_tokens: req.maxTokens ?? 800,
   };
-  if (req.periodHours != null && req.periodHours > 0) {
-    const fromIso = new Date(Date.now() - req.periodHours * 3600_000).toISOString();
-    body.search_parameters = { mode: "on", from_date: fromIso };
-  }
 
   const res = await fetch(RESPONSES_URL, {
     method: "POST",
@@ -125,9 +135,9 @@ async function callGrokWithTools(req: GrokRequest, apiKey: string): Promise<Grok
   });
 
   if (!res.ok) {
-    const body = await res.text();
-    logger.error({ status: res.status, body }, "Grok responses API error");
-    throw new Error(`Grok ${res.status}: ${body.slice(0, 200)}`);
+    const text = await res.text();
+    logger.error({ status: res.status, body: text }, "Grok responses API error");
+    throw new Error(`Grok ${res.status}: ${text.slice(0, 200)}`);
   }
 
   const json = (await res.json()) as ResponsesApiResponse;
@@ -141,14 +151,16 @@ async function callGrokWithTools(req: GrokRequest, apiKey: string): Promise<Grok
     .map((c) => c.text as string);
   const content = textParts.join("\n").trim();
 
-  // citations: web_search_call の action.sources[] + 本文中の [[N]](url) インライン
+  // citations: 1) top-level の citations (Agent Tools API 標準) 2) web_search_call の sources
+  // 3) 本文中 [[N]](url) インライン
+  const fromTop = json.citations ?? [];
   const fromSearchCalls = (json.output ?? [])
     .filter((o) => o.type === "web_search_call")
     .flatMap((o) => o.action?.sources ?? [])
     .map((s) => s.url)
     .filter((u): u is string => typeof u === "string");
   const inline = [...content.matchAll(/\[\[\d+\]\]\(([^)]+)\)/g)].map((m) => m[1] as string);
-  const citations = [...new Set([...fromSearchCalls, ...inline])];
+  const citations = [...new Set([...fromTop, ...fromSearchCalls, ...inline])];
 
   return {
     content,
@@ -158,4 +170,12 @@ async function callGrokWithTools(req: GrokRequest, apiKey: string): Promise<Grok
       outputTokens: json.usage?.output_tokens ?? 0,
     },
   };
+}
+
+/** periodHours → from_date (YYYY-MM-DD, UTC)。日精度なので実窓は最大 +24h 緩くなる。 */
+function fromDateForPeriod(periodHours: number, nowMs: number = Date.now()): string {
+  const d = new Date(nowMs - periodHours * 3600_000);
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${mm}-${dd}`;
 }

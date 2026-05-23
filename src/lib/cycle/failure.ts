@@ -263,8 +263,9 @@ function formatFailureCounter(newCount: number, autoPausedNow: boolean, threshol
  * 抽出できないなら null (呼び元が PHASE_HINTS にフォールバック)
  */
 function extractFailureHint(errMsg: string): { cause: string; action: string } | null {
-  // "Tier 0 required sources failed for <SYMBOL>: <SOURCE1>, <SOURCE2>" を捕捉
-  const m = errMsg.match(/Tier 0 required sources failed for (\w+):\s*([^\n]+)/i);
+  // "Tier 0 required sources failed for <SYMBOL>: <SOURCE1>, <SOURCE2> (<reason details>...)" を捕捉
+  // 後ろの "(<reason ...>)" は cause 抽出には使わないので、最初の "(" 直前までを source 列として読む。
+  const m = errMsg.match(/Tier 0 required sources failed for (\w+):\s*([^(\n]+)/i);
   if (!m) return null;
   const symbol = m[1];
   const sources = (m[2] ?? "")

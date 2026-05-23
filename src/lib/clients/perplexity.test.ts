@@ -1,22 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { afterDateFilter, recencyFilterFor } from "./perplexity";
-
-describe("recencyFilterFor", () => {
-  it.each([
-    [0.5, "hour"],
-    [1, "hour"],
-    [2, "day"],
-    [16, "day"],
-    [24, "day"],
-    [25, "week"],
-    [168, "week"],
-    [169, "month"],
-    [720, "month"],
-    [721, "year"],
-  ] as const)("periodHours=%i → %s", (h, expected) => {
-    expect(recencyFilterFor(h)).toBe(expected);
-  });
-});
+import { afterDateFilter } from "./perplexity";
 
 describe("afterDateFilter", () => {
   it("now - periodHours を MM/DD/YYYY (UTC) で返す", () => {

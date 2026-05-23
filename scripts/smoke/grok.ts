@@ -19,6 +19,7 @@ async function main() {
       "BTC の過去 24 時間の X 投稿と暗号メディア記事から、センチメントとトピックを 200 字で要約してください。",
     maxTokens: 600,
     useTools: true,
+    periodHours: 24,
   });
   console.log(`  content:    ${tools.content.slice(0, 300)}`);
   console.log(`  citations:  ${tools.citations?.length ?? 0} 件`);

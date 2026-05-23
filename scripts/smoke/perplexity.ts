@@ -9,6 +9,8 @@ async function main() {
     userPrompt:
       "BTC (ビットコイン) の過去 24 時間のニュース・規制動向を 200 字以内で要約。引用元 URL を含めて。",
     maxTokens: 500,
+    // §a1272eb で本番に出した news 鮮度フィルタ。これが 400 を返すことを smoke で検証する。
+    periodHours: 24,
   });
 
   console.log(`[content]   ${res.content.slice(0, 400)}`);

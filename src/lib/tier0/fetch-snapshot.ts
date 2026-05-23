@@ -223,7 +223,22 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
       );
     }
     const labels = failures.map(([l]) => l).join(", ");
-    throw new Error(`Tier 0 required sources failed for ${symbol}: ${labels}`);
+    // 元エラーの message を throw に含めないと Sentry breadcrumb 推理になってしまう。
+    // 各 source の最初の rejection を `<label>: <msg>` 形式で連結し、`cause` にも生 reason を残す。
+    const reasons = failures.map(([label, res]) => {
+      if (res.status !== "rejected") return `${label}: <unknown>`;
+      const msg = res.reason instanceof Error ? res.reason.message : String(res.reason);
+      return `${label}: ${msg.slice(0, 200)}`;
+    });
+    const err = new Error(
+      `Tier 0 required sources failed for ${symbol}: ${labels} (${reasons.join(" | ")})`,
+    );
+    // 最初の rejection を cause に保持 (Node が自動でログに含めるため Sentry でも可視化される)
+    const firstRejected = failures.find(([, r]) => r.status === "rejected");
+    if (firstRejected && firstRejected[1].status === "rejected") {
+      (err as Error & { cause?: unknown }).cause = firstRejected[1].reason;
+    }
+    throw err;
   }
 
   for (const [label, res] of [

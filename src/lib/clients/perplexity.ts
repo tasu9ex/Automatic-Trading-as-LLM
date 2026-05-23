@@ -39,18 +39,6 @@ export async function callPerplexity(req: PerplexityRequest): Promise<Perplexity
 }
 
 /**
- * periodHours から Perplexity の `search_recency_filter` enum へマッピング。
- * search_after_date_filter と併用する想定で、recency は緩めの上限として機能。
- */
-export function recencyFilterFor(periodHours: number): "hour" | "day" | "week" | "month" | "year" {
-  if (periodHours <= 1) return "hour";
-  if (periodHours <= 24) return "day";
-  if (periodHours <= 168) return "week";
-  if (periodHours <= 720) return "month";
-  return "year";
-}
-
-/**
  * `now - periodHours` を MM/DD/YYYY 形式へ変換 (UTC)。
  * Perplexity API は日付単位までしか受け付けないため、実窓は最大 +24h ゆるくなる。
  * プロンプトの自然文「過去 N 時間」と併用して絞る前提。
@@ -77,7 +65,8 @@ async function callPerplexityOnce(
     max_tokens: req.maxTokens ?? 800,
   };
   if (req.periodHours != null && req.periodHours > 0) {
-    body.search_recency_filter = recencyFilterFor(req.periodHours);
+    // Perplexity API は search_recency_filter と search_after_date_filter の併用を 400 で弾く
+    // (`invalid_date_filter_combination`)。after_date の方が日付精度で絞れるのでこちら一本。
     body.search_after_date_filter = afterDateFilter(req.periodHours);
   }
 

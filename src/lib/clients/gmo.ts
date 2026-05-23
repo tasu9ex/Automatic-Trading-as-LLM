@@ -66,9 +66,24 @@ async function gmoGet<T>(path: string): Promise<T> {
       logger.error({ status: res.status, path, body }, "GMO API error");
       throw new Error(`GMO ${res.status}: ${body.slice(0, 200)}`);
     }
-    const json = (await res.json()) as GmoPublicResponse<T>;
+    // HTTP 200 でも JSON 内 status が 0 以外なら失敗 (メンテ / レート制限 / 銘柄不在 など)。
+    // body 全文をログに残さないと「HTTP 200 なのに失敗扱い」のトラブルシュートが不可能になる。
+    const text = await res.text();
+    let json: GmoPublicResponse<T>;
+    try {
+      json = JSON.parse(text) as GmoPublicResponse<T>;
+    } catch (parseErr) {
+      logger.error({ path, body: text.slice(0, 500), parseErr }, "GMO JSON parse failed");
+      throw new Error(`GMO JSON parse failed (path=${path}): ${text.slice(0, 200)}`);
+    }
     if (json.status !== 0) {
-      throw new Error(`GMO non-zero status: ${json.status} (path=${path})`);
+      logger.error(
+        { path, gmoStatus: json.status, body: text.slice(0, 500) },
+        "GMO non-zero status",
+      );
+      throw new Error(
+        `GMO non-zero status: ${json.status} (path=${path}, body=${text.slice(0, 200)})`,
+      );
     }
     return json.data;
   });
