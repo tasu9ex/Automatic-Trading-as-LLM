@@ -17,6 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { SizingMethod } from "@/lib/allocator";
+import { DEFAULT_SIZING_METHOD, DEFAULT_STRATEGY_ID } from "@/lib/cycle/defaults";
 import { isEmergencyStopError, recordEmergencyStop } from "@/lib/cycle/emergency-stop";
 import { recordCycleFailure } from "@/lib/cycle/failure";
 import { type FinalizeResult, finalize } from "@/lib/cycle/finalize";
@@ -60,8 +61,8 @@ async function runJudgmentCycleInner(
   cycleId: string,
   input: JudgmentCycleInput,
 ): Promise<JudgmentCycleResult> {
-  const strategyId = input.strategyId ?? "trial-5";
-  const method = input.method ?? "confidence";
+  const strategyId = input.strategyId ?? DEFAULT_STRATEGY_ID;
+  const method = input.method ?? DEFAULT_SIZING_METHOD;
   const startedAt = Date.now();
 
   logger.info({ cycleId, strategyId, method }, "Cycle started");

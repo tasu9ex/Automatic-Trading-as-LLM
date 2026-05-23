@@ -24,11 +24,13 @@
 
 import { db } from "@/db/client";
 import { coins, orders, pendingOrders, portfolios, positions, trades } from "@/db/schema";
+import { PositionStatusValue } from "@/lib/constants/enums";
 import { formatJpy, formatJpySigned } from "@/lib/format/jpy";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { and, eq } from "drizzle-orm";
 import { type FillResult, calculateFill } from "./fees";
+import { isPaperMode } from "./mode";
 
 const logger = createLogger("executor");
 
@@ -75,10 +77,6 @@ async function insertStopLossOrders(
     triggerPrice: (peakPrice * STOP_MARKET_PEAK_RATIO).toFixed(4),
     createdBy: "code",
   });
-}
-
-function isPaperMode(): boolean {
-  return (process.env.PAPER_TRADE ?? "true").toLowerCase() !== "false";
 }
 
 function expiresAtFrom(now: Date, ttlHours: number | null | undefined): Date | null {
@@ -216,7 +214,7 @@ interface FillEntryArgs {
 }
 
 /** Entry 約定: orders を filled に更新 + position/trade/portfolio 反映 + "🟢 約定" 通知 */
-export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
+async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
   const { orderId, strategyId, symbol, fill } = args;
   await db.transaction(async (tx) => {
     const coin = (await tx.select().from(coins).where(eq(coins.symbol, symbol)).limit(1))[0];
@@ -241,7 +239,7 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
           and(
             eq(positions.strategyId, strategyId),
             eq(positions.coinId, coin.id),
-            eq(positions.status, "open"),
+            eq(positions.status, PositionStatusValue.OPEN),
           ),
         )
         .limit(1)
@@ -462,7 +460,7 @@ async function placeExitOrder(input: ExecuteExitInput): Promise<PlacedExitOrder 
         and(
           eq(positions.strategyId, input.strategyId),
           eq(positions.coinId, coin.id),
-          eq(positions.status, "open"),
+          eq(positions.status, PositionStatusValue.OPEN),
         ),
       )
       .limit(1)
@@ -538,7 +536,7 @@ interface FillExitArgs {
 }
 
 /** Exit 約定: orders を filled に更新 + position/trade/portfolio 反映 + "🔵/🔴 約定" 通知 */
-export async function fillExitOrder(args: FillExitArgs): Promise<void> {
+async function fillExitOrder(args: FillExitArgs): Promise<void> {
   const { orderId, positionId, strategyId, symbol, fill, sellQty, ratio } = args;
   const isFullClose = ratio >= 0.999999;
 
@@ -659,80 +657,5 @@ export async function fillExitOrder(args: FillExitArgs): Promise<void> {
       body: args.reason ?? undefined,
       fields: sellFields,
     });
-  });
-}
-
-// =====================================================================
-// 実マネー mode 用 lifecycle ハンドラ (将来 GMO webhook から呼ぶ)
-// =====================================================================
-
-/**
- * 注文期限切れ (実マネー時、TTL 超過で取引所がキャンセル)。
- * placeXxxOrder で記録した状態 → expired に遷移、通知。trade / portfolio 変更なし。
- */
-export async function expireOrder(orderId: string): Promise<void> {
-  const order = (await db.select().from(orders).where(eq(orders.id, orderId)).limit(1))[0];
-  if (!order) throw new Error(`Order not found: ${orderId}`);
-  if (order.status !== "placed") {
-    logger.warn({ orderId, status: order.status }, "expireOrder: not placed");
-    return;
-  }
-  await db
-    .update(orders)
-    .set({ status: "expired", completedAt: new Date() })
-    .where(eq(orders.id, orderId));
-  const coin = (await db.select().from(coins).where(eq(coins.id, order.coinId)).limit(1))[0];
-  const sideJp = order.side === "buy" ? "買" : "売";
-  await notify({
-    level: "warning",
-    title: `⏰ 期限切れ ${coin?.symbol ?? "?"} (${sideJp})`,
-    body: `TTL ${order.ttlHours ?? "—"}h 超過で自動失効`,
-    fields: {
-      数量: Number(order.quantity).toFixed(8),
-      参考価格: formatJpy(Number(order.price)),
-      TTL: order.ttlHours ? `${order.ttlHours}h` : "—",
-    },
-  });
-}
-
-/** 注文拒否 (取引所側で reject、残高不足など) */
-export async function rejectOrder(orderId: string, reason: string): Promise<void> {
-  const order = (await db.select().from(orders).where(eq(orders.id, orderId)).limit(1))[0];
-  if (!order) throw new Error(`Order not found: ${orderId}`);
-  await db
-    .update(orders)
-    .set({ status: "rejected", completedAt: new Date(), reason })
-    .where(eq(orders.id, orderId));
-  const coin = (await db.select().from(coins).where(eq(coins.id, order.coinId)).limit(1))[0];
-  const sideJp = order.side === "buy" ? "買" : "売";
-  await notify({
-    level: "warning",
-    title: `🚫 拒否 ${coin?.symbol ?? "?"} (${sideJp})`,
-    body: reason,
-    fields: {
-      数量: Number(order.quantity).toFixed(8),
-      参考価格: formatJpy(Number(order.price)),
-    },
-  });
-}
-
-/** 注文キャンセル (手動 / システム) */
-export async function cancelOrder(orderId: string, reason: string): Promise<void> {
-  const order = (await db.select().from(orders).where(eq(orders.id, orderId)).limit(1))[0];
-  if (!order) throw new Error(`Order not found: ${orderId}`);
-  await db
-    .update(orders)
-    .set({ status: "cancelled", completedAt: new Date(), reason })
-    .where(eq(orders.id, orderId));
-  const coin = (await db.select().from(coins).where(eq(coins.id, order.coinId)).limit(1))[0];
-  const sideJp = order.side === "buy" ? "買" : "売";
-  await notify({
-    level: "info",
-    title: `❌ キャンセル ${coin?.symbol ?? "?"} (${sideJp})`,
-    body: reason,
-    fields: {
-      数量: Number(order.quantity).toFixed(8),
-      参考価格: formatJpy(Number(order.price)),
-    },
   });
 }

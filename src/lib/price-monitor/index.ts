@@ -1,7 +1,9 @@
 import { db } from "@/db/client";
 import { coins, pendingOrders, positions, systemEvents } from "@/db/schema";
 import { getKlines } from "@/lib/clients/gmo";
+import { PositionStatusValue } from "@/lib/constants/enums";
 import { executeExit } from "@/lib/executor";
+import { isPaperMode } from "@/lib/executor/mode";
 import { formatJpy } from "@/lib/format/jpy";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
@@ -74,7 +76,7 @@ export interface PriceMonitorInput {
  */
 export async function runPriceMonitor(input: PriceMonitorInput = {}): Promise<void> {
   // REAL mode では GMO 側で逆指値が動くため、ローカル replay は不要かつ二重決済リスク
-  if ((process.env.PAPER_TRADE ?? "true").toLowerCase() === "false") {
+  if (!isPaperMode()) {
     logger.info("REAL mode: price-monitor skipped (GMO handles SL)");
     return;
   }
@@ -84,7 +86,7 @@ export async function runPriceMonitor(input: PriceMonitorInput = {}): Promise<vo
     .select({ position: positions, coin: coins })
     .from(positions)
     .innerJoin(coins, eq(positions.coinId, coins.id))
-    .where(eq(positions.status, "open"));
+    .where(eq(positions.status, PositionStatusValue.OPEN));
 
   if (openPositions.length === 0) {
     logger.debug("No open positions");

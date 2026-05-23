@@ -8,6 +8,7 @@ import {
   systemState,
 } from "@/db/schema";
 import { getTicker } from "@/lib/clients/gmo";
+import { PositionStatusValue } from "@/lib/constants/enums";
 import { executeExit } from "@/lib/executor";
 import { formatJpy } from "@/lib/format/jpy";
 import { createLogger } from "@/lib/logging";
@@ -51,7 +52,12 @@ export async function checkAndTriggerKillSwitch(
     .select({ position: positions, coin: coins })
     .from(positions)
     .innerJoin(coins, eq(positions.coinId, coins.id))
-    .where(and(eq(positions.strategyId, input.strategyId), eq(positions.status, "open")));
+    .where(
+      and(
+        eq(positions.strategyId, input.strategyId),
+        eq(positions.status, PositionStatusValue.OPEN),
+      ),
+    );
 
   // §8: ticker 取得失敗時に position を silent skip すると DD が過小評価される。
   // フォールバック順:

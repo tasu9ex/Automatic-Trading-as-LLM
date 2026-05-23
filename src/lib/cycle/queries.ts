@@ -19,6 +19,8 @@ import {
   systemState,
 } from "@/db/schema";
 import { getTicker } from "@/lib/clients/gmo";
+import { PositionStatusValue } from "@/lib/constants/enums";
+import { DEFAULT_STRATEGY_ID } from "@/lib/cycle/defaults";
 import { createLogger } from "@/lib/logging";
 import type { AnalystOutput } from "@/lib/schemas/llm-outputs";
 import {
@@ -39,7 +41,19 @@ const CACHE_REVALIDATE_SECONDS = 30;
 
 const logger = createLogger("cycle.queries");
 
-const STRATEGY_ID = "trial-5";
+/**
+ * dashboard 系クエリ用の unstable_cache ラッパー。
+ * 30 秒 TTL + DASHBOARD_CACHE_TAG。手動操作の server action から revalidateTag で即時無効化。
+ */
+function cachedDashboardQuery<TArgs extends unknown[], T>(
+  cacheKey: string,
+  impl: (...args: TArgs) => Promise<T>,
+): (...args: TArgs) => Promise<T> {
+  return unstable_cache(impl, [cacheKey], {
+    revalidate: CACHE_REVALIDATE_SECONDS,
+    tags: [DASHBOARD_CACHE_TAG],
+  });
+}
 
 export interface DashboardStats {
   state: string | undefined;
@@ -72,10 +86,7 @@ export interface DashboardStats {
   autoPauseThreshold: number;
 }
 
-const _cachedDashboardStats = unstable_cache(() => getDashboardStatsImpl(), ["dashboard.stats"], {
-  revalidate: CACHE_REVALIDATE_SECONDS,
-  tags: [DASHBOARD_CACHE_TAG],
-});
+const _cachedDashboardStats = cachedDashboardQuery("dashboard.stats", getDashboardStatsImpl);
 
 /** cache 越しに Date が string に化けるので Date に戻す */
 export async function getDashboardStats(): Promise<DashboardStats> {
@@ -107,14 +118,14 @@ export async function getDashboardStatsImpl(): Promise<DashboardStats> {
     db
       .select()
       .from(portfolios)
-      .where(eq(portfolios.strategyId, STRATEGY_ID))
+      .where(eq(portfolios.strategyId, DEFAULT_STRATEGY_ID))
       .limit(1)
       .then((r) => r[0]),
     // open / closed 問わず全 position の確定損益を合算 (部分決済 → open のまま realized 累積される)
     db
       .select({ sum: sql<string>`COALESCE(SUM(${positions.realizedPnlJpy}), 0)` })
       .from(positions)
-      .where(eq(positions.strategyId, STRATEGY_ID))
+      .where(eq(positions.strategyId, DEFAULT_STRATEGY_ID))
       .then((r) => Number(r[0]?.sum ?? 0)),
     // critic_outputs.model は LLM モデル名なので portfolio モデルではフィルタしない
     // (現状 portfolio は1つなので全 critic = 全 cycle)
@@ -169,10 +180,9 @@ export interface OpenPositionRow {
   openedAt: Date;
 }
 
-const _cachedOpenPositionsRaw = unstable_cache(
-  () => getOpenPositionsRawImpl(),
-  ["dashboard.open-positions-raw"],
-  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+const _cachedOpenPositionsRaw = cachedDashboardQuery(
+  "dashboard.open-positions-raw",
+  getOpenPositionsRawImpl,
 );
 
 interface RawOpenPositionRow {
@@ -189,7 +199,12 @@ export async function getOpenPositionsRawImpl(): Promise<RawOpenPositionRow[]> {
     .select({ position: positions, coin: coins })
     .from(positions)
     .innerJoin(coins, eq(positions.coinId, coins.id))
-    .where(and(eq(positions.strategyId, STRATEGY_ID), eq(positions.status, "open")))
+    .where(
+      and(
+        eq(positions.strategyId, DEFAULT_STRATEGY_ID),
+        eq(positions.status, PositionStatusValue.OPEN),
+      ),
+    )
     .orderBy(desc(positions.openedAt));
   return rows.map((r) => ({
     positionId: r.position.id,
@@ -208,11 +223,10 @@ export interface TickerSnapshot {
   fetchedAt: Date | string;
 }
 
-const _cachedTickerSnapshot = unstable_cache(
-  () => getTickerSnapshotImpl(),
-  ["dashboard.ticker-snapshot"],
-  // ticker は短い TTL で独立リフレッシュ。失敗時も同じ TTL でキャッシュされ過剰リトライを防ぐ。
-  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+// ticker は短い TTL で独立リフレッシュ。失敗時も同じ TTL でキャッシュされ過剰リトライを防ぐ。
+const _cachedTickerSnapshot = cachedDashboardQuery(
+  "dashboard.ticker-snapshot",
+  getTickerSnapshotImpl,
 );
 
 export async function getTickerSnapshot(): Promise<TickerSnapshot> {
@@ -261,11 +275,7 @@ export interface RecentCycleRow {
   symbolCount: number;
 }
 
-const _cachedRecentCycles = unstable_cache(
-  (limit = 15) => getRecentCyclesImpl(limit),
-  ["dashboard.recent-cycles"],
-  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
-);
+const _cachedRecentCycles = cachedDashboardQuery("dashboard.recent-cycles", getRecentCyclesImpl);
 
 export async function getRecentCycles(limit = 15): Promise<RecentCycleRow[]> {
   const rows = await _cachedRecentCycles(limit);
@@ -360,11 +370,7 @@ export interface CycleDetail {
  * cycleId をキーに含めて per-cycle キャッシュ。in_flight cycle も同じ TTL でキャッシュされるが、
  * dashboard tag invalidation でサイクル完了時に無効化される。
  */
-const _cachedCycleDetail = unstable_cache(
-  (cycleId: string) => getCycleDetailImpl(cycleId),
-  ["dashboard.cycle-detail"],
-  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
-);
+const _cachedCycleDetail = cachedDashboardQuery("dashboard.cycle-detail", getCycleDetailImpl);
 
 export async function getCycleDetail(cycleId: string): Promise<CycleDetail | null> {
   const cached = await _cachedCycleDetail(cycleId);
@@ -542,10 +548,9 @@ export interface CoinChecklistRow {
   enabled: boolean;
 }
 
-export const getCoinChecklist = unstable_cache(
-  () => getCoinChecklistImpl(),
-  ["dashboard.coin-checklist"],
-  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+export const getCoinChecklist = cachedDashboardQuery(
+  "dashboard.coin-checklist",
+  getCoinChecklistImpl,
 );
 
 async function getCoinChecklistImpl(): Promise<CoinChecklistRow[]> {
@@ -561,11 +566,7 @@ async function getCoinChecklistImpl(): Promise<CoinChecklistRow[]> {
   return rows;
 }
 
-export const isCycleInFlight = unstable_cache(
-  () => isCycleInFlightImpl(),
-  ["dashboard.in-flight"],
-  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
-);
+export const isCycleInFlight = cachedDashboardQuery("dashboard.in-flight", isCycleInFlightImpl);
 
 /**
  * N: 「実行中」判定の堅牢化。
@@ -610,18 +611,14 @@ export interface SystemEventRow {
   occurredAt: Date;
 }
 
-const _cachedRecentEvents = unstable_cache(
-  (limit = 20) => getRecentEventsImpl(limit),
-  ["dashboard.recent-events"],
-  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
-);
+const _cachedRecentEvents = cachedDashboardQuery("dashboard.recent-events", getRecentEventsImpl);
 
 export async function getRecentSystemEvents(limit = 20): Promise<SystemEventRow[]> {
   const rows = await _cachedRecentEvents(limit);
   return rows.map((r) => ({ ...r, occurredAt: reviveDate(r.occurredAt) ?? new Date(0) }));
 }
 
-async function getRecentEventsImpl(limit: number): Promise<SystemEventRow[]> {
+async function getRecentEventsImpl(limit = 20): Promise<SystemEventRow[]> {
   const rows = await db
     .select({
       id: systemEvents.id,
@@ -649,18 +646,14 @@ export interface CapitalEventRow {
   occurredAt: Date;
 }
 
-const _cachedCapitalEvents = unstable_cache(
-  (limit = 20) => getCapitalEventsImpl(limit),
-  ["dashboard.capital-events"],
-  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
-);
+const _cachedCapitalEvents = cachedDashboardQuery("dashboard.capital-events", getCapitalEventsImpl);
 
 export async function getCapitalEvents(limit = 20): Promise<CapitalEventRow[]> {
   const rows = await _cachedCapitalEvents(limit);
   return rows.map((r) => ({ ...r, occurredAt: reviveDate(r.occurredAt) ?? new Date(0) }));
 }
 
-async function getCapitalEventsImpl(limit: number): Promise<CapitalEventRow[]> {
+async function getCapitalEventsImpl(limit = 20): Promise<CapitalEventRow[]> {
   const rows = await db
     .select({
       id: portfolioCapitalEvents.id,
@@ -670,7 +663,7 @@ async function getCapitalEventsImpl(limit: number): Promise<CapitalEventRow[]> {
       occurredAt: portfolioCapitalEvents.occurredAt,
     })
     .from(portfolioCapitalEvents)
-    .where(eq(portfolioCapitalEvents.strategyId, STRATEGY_ID))
+    .where(eq(portfolioCapitalEvents.strategyId, DEFAULT_STRATEGY_ID))
     .orderBy(desc(portfolioCapitalEvents.occurredAt))
     .limit(limit);
   return rows.map((r) => ({
@@ -706,10 +699,9 @@ export interface PositionDetail {
   }>;
 }
 
-const _cachedPositionDetails = unstable_cache(
-  () => getPositionDetailsImpl(),
-  ["dashboard.position-details"],
-  { revalidate: CACHE_REVALIDATE_SECONDS, tags: [DASHBOARD_CACHE_TAG] },
+const _cachedPositionDetails = cachedDashboardQuery(
+  "dashboard.position-details",
+  getPositionDetailsImpl,
 );
 
 export async function getPositionDetails(): Promise<PositionDetail[]> {
@@ -721,7 +713,12 @@ async function getPositionDetailsImpl(): Promise<PositionDetail[]> {
     .select({ position: positions, coin: coins })
     .from(positions)
     .innerJoin(coins, eq(positions.coinId, coins.id))
-    .where(and(eq(positions.strategyId, STRATEGY_ID), eq(positions.status, "open")));
+    .where(
+      and(
+        eq(positions.strategyId, DEFAULT_STRATEGY_ID),
+        eq(positions.status, PositionStatusValue.OPEN),
+      ),
+    );
 
   if (rows.length === 0) return [];
 
