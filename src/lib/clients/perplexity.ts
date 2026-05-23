@@ -11,6 +11,11 @@ export interface PerplexityRequest {
   systemPrompt?: string;
   userPrompt: string;
   maxTokens?: number;
+  /**
+   * 検索対象期間 (時間)。指定時は API レベルで rec filter + after_date filter をかけ、
+   * プロンプト指示無視による古ニュース流入を防ぐ。
+   */
+  periodHours?: number;
 }
 
 export interface PerplexityResponse {
@@ -33,6 +38,31 @@ export async function callPerplexity(req: PerplexityRequest): Promise<Perplexity
   );
 }
 
+/**
+ * periodHours から Perplexity の `search_recency_filter` enum へマッピング。
+ * search_after_date_filter と併用する想定で、recency は緩めの上限として機能。
+ */
+export function recencyFilterFor(periodHours: number): "hour" | "day" | "week" | "month" | "year" {
+  if (periodHours <= 1) return "hour";
+  if (periodHours <= 24) return "day";
+  if (periodHours <= 168) return "week";
+  if (periodHours <= 720) return "month";
+  return "year";
+}
+
+/**
+ * `now - periodHours` を MM/DD/YYYY 形式へ変換 (UTC)。
+ * Perplexity API は日付単位までしか受け付けないため、実窓は最大 +24h ゆるくなる。
+ * プロンプトの自然文「過去 N 時間」と併用して絞る前提。
+ */
+export function afterDateFilter(periodHours: number, nowMs: number = Date.now()): string {
+  const d = new Date(nowMs - periodHours * 3600_000);
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const yyyy = d.getUTCFullYear();
+  return `${mm}/${dd}/${yyyy}`;
+}
+
 async function callPerplexityOnce(
   req: PerplexityRequest,
   apiKey: string,
@@ -41,17 +71,23 @@ async function callPerplexityOnce(
   if (req.systemPrompt) messages.push({ role: "system", content: req.systemPrompt });
   messages.push({ role: "user", content: req.userPrompt });
 
+  const body: Record<string, unknown> = {
+    model: req.model ?? "sonar-pro",
+    messages,
+    max_tokens: req.maxTokens ?? 800,
+  };
+  if (req.periodHours != null && req.periodHours > 0) {
+    body.search_recency_filter = recencyFilterFor(req.periodHours);
+    body.search_after_date_filter = afterDateFilter(req.periodHours);
+  }
+
   const res = await fetch(BASE_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: req.model ?? "sonar-pro",
-      messages,
-      max_tokens: req.maxTokens ?? 800,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {

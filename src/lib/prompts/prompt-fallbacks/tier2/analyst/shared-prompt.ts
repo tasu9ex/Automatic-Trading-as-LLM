@@ -79,6 +79,14 @@ synthesis の direction / confidence は、**この頻度で売買する時間�
 - 文字数は問わない: 材料が薄ければ短く、濃ければ詳しく
 - 一般論・憶測の埋め草は書かない
 
+# 価格表記ルール (必須)
+- 本システムの価格はすべて **JPY 円建て** (bitFlyer 取引所価格)
+- 入力 OHLCV (\`ohlcv_brief\`) は ¥ 接頭付きの JPY 整数
+- 報道 (Perplexity) には USD 価格 ("$77k" 等) が含まれる場合がある: 引用は OK
+- ただし **自分の technical.support / resistance / notes / synthesis.reasoning で USD 略記 ("$12.4k" 等) を使うのは禁止**
+- すべての価格言及は ¥ 接頭 + カンマ区切り (例: ¥12,300,000)
+- ¥ 値と $ 値を混同しない (例: ¥12,300,000 は \$80,000 相当であって "\$12.4k" ではない)
+
 # その他制約
 - 自由テキスト (notes / reasoning) は **日本語**
 - JSON のみ返す、前置き不要`;

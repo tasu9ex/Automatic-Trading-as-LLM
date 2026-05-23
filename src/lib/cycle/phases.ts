@@ -750,21 +750,41 @@ async function processCriticDecision(args: {
     ctxs.filter((c) => c.analyst).map((c) => [c.coin.symbol, c.analyst?.synthesis]),
   );
   const decisionsBySymbol = Object.fromEntries(
-    ctxs.map((c) => [
-      c.coin.symbol,
-      {
-        entry: c.entry
-          ? { decision: c.entry.result, confidence: Number(c.entry.confidence) }
-          : null,
-        exit: c.exit
-          ? {
-              decision: c.exit.result,
-              confidence: Number(c.exit.confidence),
-              close_pct: c.exit.closePct ? Number(c.exit.closePct) : 100,
-            }
-          : null,
-      },
-    ]),
+    ctxs.map((c) => {
+      const lastPriceJpy = c.snap.ticker?.last ? Number(c.snap.ticker.last) : null;
+      return [
+        c.coin.symbol,
+        {
+          // 現在価格 (Critic の target_price_jpy sanity check 用)
+          last_price_jpy: lastPriceJpy,
+          entry: c.entry
+            ? {
+                decision: c.entry.result,
+                confidence: Number(c.entry.confidence),
+                // Trader が出した「次サイクル後の緩い目標 (JPY)」。
+                // Critic は last_price_jpy との比率でスケール sanity check に使う。
+                target_price_jpy: c.entry.entryTargetPriceJpy
+                  ? Number(c.entry.entryTargetPriceJpy)
+                  : null,
+                expected_holding_days:
+                  c.entry.entryExpectedHoldingDaysMin && c.entry.entryExpectedHoldingDaysMax
+                    ? {
+                        min: Number(c.entry.entryExpectedHoldingDaysMin),
+                        max: Number(c.entry.entryExpectedHoldingDaysMax),
+                      }
+                    : null,
+              }
+            : null,
+          exit: c.exit
+            ? {
+                decision: c.exit.result,
+                confidence: Number(c.exit.confidence),
+                close_pct: c.exit.closePct ? Number(c.exit.closePct) : 100,
+              }
+            : null,
+        },
+      ];
+    }),
   );
   const symbolToName = Object.fromEntries(ctxs.map((c) => [c.coin.symbol, c.coin.name]));
   const systemHealth = await buildSystemHealth({ strategyId: args.strategyId, ctxs });

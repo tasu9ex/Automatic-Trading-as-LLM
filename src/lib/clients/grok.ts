@@ -14,6 +14,11 @@ export interface GrokRequest {
   maxTokens?: number;
   /** true: Responses API + web_search + x_search ツール自動実行 (Tier 0 sentiment 向け) */
   useTools?: boolean;
+  /**
+   * useTools=true 時に Live Search の検索期間を API レベルで絞る (時間)。
+   * `from_date = now - periodHours` を ISO datetime で渡す (分単位精度)。
+   */
+  periodHours?: number;
 }
 
 export interface GrokResponse {
@@ -99,18 +104,24 @@ async function callGrokWithTools(req: GrokRequest, apiKey: string): Promise<Grok
   if (req.systemPrompt) input.push({ role: "system", content: req.systemPrompt });
   input.push({ role: "user", content: req.userPrompt });
 
+  const body: Record<string, unknown> = {
+    model: req.model ?? "grok-4.3",
+    input,
+    tools: [{ type: "web_search" }, { type: "x_search" }],
+    max_output_tokens: req.maxTokens ?? 800,
+  };
+  if (req.periodHours != null && req.periodHours > 0) {
+    const fromIso = new Date(Date.now() - req.periodHours * 3600_000).toISOString();
+    body.search_parameters = { mode: "on", from_date: fromIso };
+  }
+
   const res = await fetch(RESPONSES_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: req.model ?? "grok-4.3",
-      input,
-      tools: [{ type: "web_search" }, { type: "x_search" }],
-      max_output_tokens: req.maxTokens ?? 800,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {

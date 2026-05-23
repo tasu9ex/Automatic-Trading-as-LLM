@@ -11,13 +11,18 @@ export interface AnalystResult {
   llmModel: string;
 }
 
-function formatBars(bars: Snapshot["ohlcv"], maxRows: number): string {
+/**
+ * OHLCV を LLM 用テキストに整形。価格は **bitFlyer JPY 建て** であることを ¥ 接頭で明示。
+ * 報道由来の USD 価格と混同してスケール誤読 ($12.4k 等) するのを防ぐため。
+ */
+export function formatBars(bars: Snapshot["ohlcv"], maxRows: number): string {
   if (bars.length === 0) return "(データなし)";
   const recent = bars.slice(-maxRows);
+  const fmt = (n: string | number) => `¥${Math.round(Number(n)).toLocaleString("en-US")}`;
   return recent
     .map((bar) => {
       const d = new Date(Number(bar.openTime)).toISOString();
-      return `${d}: O=${bar.open} H=${bar.high} L=${bar.low} C=${bar.close} V=${bar.volume}`;
+      return `${d}: O=${fmt(bar.open)} H=${fmt(bar.high)} L=${fmt(bar.low)} C=${fmt(bar.close)} V=${bar.volume}`;
     })
     .join("\n");
 }

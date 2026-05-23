@@ -181,6 +181,7 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
             systemPrompt: newsPrompt.compiled.system,
             userPrompt: newsPrompt.compiled.user,
             maxTokens: newsPrompt.config.maxTokens,
+            periodHours,
           });
           return { result: r, usage: r.usage };
         },
@@ -198,6 +199,7 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
             userPrompt: sentimentPrompt.compiled.user,
             maxTokens: sentimentPrompt.config.maxTokens,
             useTools: true,
+            periodHours,
           });
           return { result: r, usage: r.usage };
         },

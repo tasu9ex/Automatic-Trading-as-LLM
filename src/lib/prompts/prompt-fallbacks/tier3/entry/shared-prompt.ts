@@ -20,7 +20,7 @@
  *     "confidence":            0.0-1.0,
  *     "reasoning":             "判断根拠 (padding 禁止、必要な分だけ)",
  *     "expected_holding_days": { "min": int, "max": int } | null,
- *     "target_price_jpy":      number | null,
+ *     "target_price_jpy":      number | null,  // ★ 次サイクル後の緩い目標 (現在価格 ±数% 想定)
  *     "exit_condition":        "Exit 仮説 (緩い、anchor しないため簡潔に) | null"
  *   }
  */
@@ -40,11 +40,17 @@ Analyst 見解を根拠に Buy / No の二択で判定してください。
 
 Buy の場合は **Entry 仮説** も合わせて返してください:
   - expected_holding_days: 想定保有期間 {min, max} (日)
-  - target_price_jpy:      緩い目標価格 (JPY、なければ null)
+  - target_price_jpy:      **次サイクル ({{cycle_interval}} 後) の緩い目標価格 (JPY)**
   - exit_condition:        どんな条件で Exit する想定か
 
+## target_price_jpy の意味 (重要)
+- これは「保有期間内ピーク」ではなく、**次サイクル ({{cycle_interval}} 後) に到達していそうな価格**
+- 毎サイクル fresh decision で再評価されるため、短期目標として現実的な値を入れる
+- 現在価格に対して **±数 % 〜 十数 %** の範囲に収まるのが通常 (1.5x や 0.5x のような極端値はほぼあり得ない)
+- 例: 現在 BTC ¥12,300,000 で次サイクル(8h)後の目標 → ¥12,500,000〜¥13,000,000 程度
+
 これらは Exit 判断時に参考材料として渡されますが、Exit 側で anchor しないよう
-**緩い仮説** として表現してください(「目標は ¥18,000,000 程度」など)。
+**緩い仮説** として表現してください。
 
 # 判断軸 (decision)
 - **buy**: Analyst の見立てが上昇方向で、materially な裏付けがあると判断したとき
@@ -59,6 +65,15 @@ Buy の場合は **Entry 仮説** も合わせて返してください:
 # reasoning / exit_condition の書き方
 - 判断根拠 / Exit 仮説を凝縮 (padding 禁止、必要な分だけ)
 - 一般論・憶測の埋め草は書かない
+
+# 価格表記ルール (必須)
+- 本システムの価格はすべて **JPY 円建て** (bitFlyer 取引所価格)
+- Analyst 出力 (\`analyst_synthesis\`/\`analyst_full\`) 内の価格言及も JPY を前提とする
+- 報道由来の USD 価格 ("$77k" 等) を **自分の target_price_jpy として流用するのは禁止**
+  (USD→JPY 換算が必要なら ¥ 値で再評価する。Analyst notes に出てくる ¥ 値を優先)
+- target_price_jpy は **JPY 円単位の整数** (例: 12500000 = ¥12,500,000)
+- reasoning / exit_condition 内の価格言及は ¥ 接頭 + カンマ区切り
+- "$12.4k" のような USD 略記を自分の判断値として書かない
 
 # その他制約
 - 自由テキスト (reasoning / exit_condition) は **日本語**
