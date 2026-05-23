@@ -16,6 +16,7 @@ import { checkAndTriggerKillSwitch } from "@/lib/kill-switch";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { getRiskParams } from "@/lib/risk/params";
+import { advanceNextScheduledAt } from "@/lib/system-control";
 import { eq } from "drizzle-orm";
 
 const logger = createLogger("cycle.failure");
@@ -142,13 +143,22 @@ export async function recordCycleFailure(args: {
     if (result === "paused") autoPausedNow = true;
   }
 
+  // 失敗時も成功時と同じくサイクル間隔バケットを進める。これをやらないと
+  // next_scheduled_at が過去のまま残り、毎時 cron が即 due 判定して
+  // periodHours を無視した毎時リトライになる。
+  // quota / auto-pause 発動時は人手再開なので進めない (再開時に startSystem が再設定)。
+  const shouldAdvance = kind !== "quota" && !autoPausedNow;
+  const advancedNextScheduledAt = shouldAdvance
+    ? await advanceNextScheduledAt(new Date())
+    : (state?.nextScheduledAt ?? null);
+
   await sendFailureNotification({
     kind,
     phase: args.phase,
     cycleId: args.cycleId,
     errMsg,
     newCount,
-    nextScheduledAt: state?.nextScheduledAt ?? null,
+    nextScheduledAt: advancedNextScheduledAt,
     autoPausedNow,
     autoPauseThreshold: riskParams.autoPauseThreshold,
   });
