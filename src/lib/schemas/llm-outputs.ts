@@ -58,11 +58,11 @@ export const ExitDecisionOutputSchema = z.object({
   confidence: z.number().min(0).max(1),
   reasoning: z.string(),
   /**
-   * close 時の決済比率 (% 整数、10-100)。100 = 全決済、<100 = 部分決済。
-   * decision === "hold" のときは無視 (LLM が値を入れても OK)。
-   * 省略時は 100 として扱う (後方互換)。
+   * close 時の決済比率 (% 整数、1-100)。100 = 全決済、<100 = 部分決済。
+   * 微小決済 (1% で最小発注額未満) は Clipper / executor 側で扱う。
+   * decision === "hold" のときは無視。省略時は 100。
    */
-  close_pct: z.number().int().min(10).max(100).default(100),
+  close_pct: z.number().int().min(1).max(100).default(100),
 });
 export type ExitDecisionOutput = z.infer<typeof ExitDecisionOutputSchema>;
 
@@ -73,15 +73,15 @@ export const CriticOutputSchema = z.object({
   confidence: z.number().min(0).max(1),
   /**
    * modify 時のみ非 null:
-   *   buys:  symbol → 修正後 size_pct (0-100 整数 %、Entry の size_pct を上書き、0 で除外)
-   *   exits: symbol → 修正後 close_pct (10-100 整数 %、Tier 3 の close_pct を上書き)
-   *           close 中止したいなら veto を使う (exits 操作では止められない)
+   *   buys:  symbol → 修正後 size_pct  (0-100 整数 %、Entry の size_pct を上書き、0 で個別除外)
+   *   exits: symbol → 修正後 close_pct (0-100 整数 %、Tier 3 の close_pct を上書き、0 で個別 Exit キャンセル)
+   *   全体停止は veto を使う。
    * 修正不要な銘柄は省略可。approve / veto のときは null。
    */
   adjustments: z
     .object({
       buys: z.record(z.string(), z.number().int().min(0).max(100)).optional(),
-      exits: z.record(z.string(), z.number().int().min(10).max(100)).optional(),
+      exits: z.record(z.string(), z.number().int().min(0).max(100)).optional(),
     })
     .nullable(),
   reasoning: z.string(),

@@ -264,8 +264,8 @@ LLM が抽象 % で語ったものを **ここで初めて JPY 額に変換**。
 | ------------------- | -------------------------------- | --------------------------------- | -------------------------------------- |
 | `decision`          | `approve` / `veto` / `modify`    | 最終判定                              | Executor 起動可否 / ダッシュボード Badge          |
 | `confidence`        | 0-1                              | Critic 自身の判断確信度(観測用)              | ダッシュボード                                |
-| `adjustments.buys`  | record<symbol, int 0-100> | null | entries の **size_pct** 上書き(0 で除外) | applyModify → Allocator 再計算 → Executor |
-| `adjustments.exits` | record<symbol, int 0-100> | null | exits の **close_pct** 上書き(0 で除外)  | applyModify → Executor                 |
+| `adjustments.buys`  | record<symbol, int 0-100> | null | entries の **size_pct** 上書き(0 で個別除外) | applyModify → Allocator 再計算 → Executor |
+| `adjustments.exits` | record<symbol, int 0-100> | null | exits の **close_pct** 上書き(0 で個別 Exit キャンセル) | applyModify → Executor |
 | `reasoning`         | string                           | 判断根拠                              | ダッシュボード                                |
 
 
@@ -302,7 +302,7 @@ LLM が抽象 % で語ったものを **ここで初めて JPY 額に変換**。
   Entry ← analyst + last_price_jpy         Exit ← analyst + last_price_jpy + 含み損益% + 保有日数
        │                                          │
        ├─► decision + confidence + size_pct       ├─► decision + confidence + close_pct
-       │     (1-100、max の何%)                   │     (10-100、保有量の何%)
+       │     (1-100、max の何%)                   │     (1-100、保有量の何%)
        │                                          │
        └──────────┬───────────────────────────────┘
                   │

@@ -104,6 +104,11 @@ describe("applyModify (pct → JPY 変換)", () => {
     const r = applyModify(basePlan, { exits: { ETH: 50 } }, MAX_BUDGET);
     expect(r.exits.ETH).toBeUndefined();
   });
+
+  it("exits = 0 → 個別 Exit キャンセル (plan から削除)", () => {
+    const r = applyModify(basePlan, { exits: { SOL: 0 } }, MAX_BUDGET);
+    expect(r.exits.SOL).toBeUndefined();
+  });
 });
 
 describe("computeModifiedPositions", () => {

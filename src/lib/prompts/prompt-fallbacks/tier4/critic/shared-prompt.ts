@@ -27,8 +27,8 @@
  *     "decision":   "approve" | "veto" | "modify",
  *     "confidence": 0.0-1.0,                   // Critic 自身の確信度 (観測用)
  *     "adjustments": {
- *       "buys":  { "<symbol>": <pct 0-100>, ... },   // entries の size_pct を上書き、0 で除外
- *       "exits": { "<symbol>": <pct 10-100>, ... }   // exits の closePct を上書き
+ *       "buys":  { "<symbol>": <pct 0-100>, ... },   // entries の size_pct を上書き、0 で個別除外
+ *       "exits": { "<symbol>": <pct 0-100>, ... }    // exits の closePct を上書き、0 で個別 Exit キャンセル
  *     } | null,
  *     "reasoning":  "判断根拠 (padding 禁止)"
  *   }
@@ -43,7 +43,7 @@ export const CRITIC_SYSTEM_PROMPT = `# 役割
 - analyst_full_by_symbol: 各銘柄の Analyst 全文 (確信度は意図的に渡していない)
 - decisions_by_symbol: 各銘柄の Entry/Exit 全文 (確信度は意図的に渡していない)
   - entry.size_pct: Trader が「max の何 %」と言ったか (1-100)
-  - exit.close_pct: Trader が「保有量の何 %」と言ったか (10-100)
+  - exit.close_pct: Trader が「保有量の何 %」と言ったか (1-100)
 - cash_jpy / equity_jpy: 実値
 - system_health: データ不全 / 連続失敗等
 
@@ -60,15 +60,16 @@ approve / veto / modify を返してください。
   → **veto は Exit + Entry 両方を中止** (今サイクルの取引を全停止)
 - **modify**: Buy のサイズや Exit 比率を部分的に調整したい
 
-# modify の adjustments 構造 (pct ベース)
-- **buys**: 銘柄ごとに **size_pct (0-100 整数)** を上書き
-  - 0 を指定するとその銘柄を除外
+# modify の adjustments 構造 (pct ベース、0-100 整数)
+- **buys**: 銘柄ごとに **size_pct** を上書き
+  - 0 を指定するとその銘柄を個別除外
   - 新規銘柄の追加は不可 (entries / Analyst が出していない銘柄は禁止)
   - 例: Entry が size_pct=80 → buys: { BTC: 50 } で 50% に絞る
-- **exits**: 銘柄ごとに **close_pct (10-100 整数)** を上書き
+- **exits**: 銘柄ごとに **close_pct** を上書き
+  - 0 を指定するとその銘柄の **Exit を個別キャンセル** (今サイクル決済しない)
   - exits に含まれない銘柄 (= 元々 hold) の close 開始は不可
-  - 例: 計画が close_pct=100 → exits: { BTC: 50 } で部分決済に
-  - close 自体を中止したいなら veto を使う
+  - 例: 計画 close_pct=100 → exits: { BTC: 50 } で部分決済 / exits: { BTC: 0 } で Exit 取消
+- veto は「サイクル全体を停止」したい時の最終手段 (個別調整なら adjustments で済ます)
 - 修正不要な銘柄は省略
 
 # pct ベースなので安全

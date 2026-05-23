@@ -64,9 +64,15 @@ export function applyModify(
   for (const [sym, pct] of Object.entries(adjustments.exits ?? {})) {
     const orig = exits[sym];
     if (!orig) continue;
-    const ratio = pct / orig.closePct;
+    const clamped = Math.max(0, Math.min(100, pct));
+    if (clamped <= 0) {
+      // 0 で個別 Exit キャンセル (この銘柄は今サイクル決済しない)
+      delete exits[sym];
+      continue;
+    }
+    const ratio = clamped / orig.closePct;
     exits[sym] = {
-      closePct: pct,
+      closePct: clamped,
       qtyToClose: orig.qtyToClose * ratio,
       expectedCashJpy: orig.expectedCashJpy * ratio,
     };
