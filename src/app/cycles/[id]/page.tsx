@@ -90,23 +90,40 @@ export default async function CycleDetailPage({ params }: PageProps) {
                 実行計画 (Exit + Entry、Clipper 適用済) を承認・拒否・修正する最終ゲート
               </CardDescription>
             </div>
-            <Badge
-              variant={
-                detail.critic.decision === "approve"
-                  ? "default"
-                  : detail.critic.decision === "modify"
-                    ? "outline"
-                    : "destructive"
-              }
-            >
-              {jpDecision(detail.critic.decision)}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge
+                variant={
+                  detail.critic.decision === "approve"
+                    ? "default"
+                    : detail.critic.decision === "modify"
+                      ? "outline"
+                      : "destructive"
+                }
+              >
+                {jpDecision(detail.critic.decision)}
+              </Badge>
+              {detail.critic.confidence !== null && (
+                <span className="text-muted-foreground text-xs">
+                  確信度 {detail.critic.confidence.toFixed(2)}
+                </span>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
             {detail.critic.reasoning && (
               <div>
                 <div className="mb-1 text-muted-foreground text-xs">判断理由</div>
                 <p className="whitespace-pre-wrap">{detail.critic.reasoning}</p>
+              </div>
+            )}
+            {detail.critic.adjustments !== null && (
+              <div>
+                <div className="mb-1 text-muted-foreground text-xs">
+                  adjustments (raw、pct ベース)
+                </div>
+                <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-xs">
+                  {JSON.stringify(detail.critic.adjustments, null, 2)}
+                </pre>
               </div>
             )}
             <CriticPlanView
@@ -300,6 +317,27 @@ function CoinCard({ c }: { c: CoinDetail }) {
             <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide">
               Decision (売買判断)
             </h3>
+            {(c.lastPriceJpy !== null || c.unrealizedPnlPct !== null) && (
+              <div className="flex items-center gap-3 text-muted-foreground text-xs">
+                {c.lastPriceJpy !== null && (
+                  <span>現在価格 ¥{c.lastPriceJpy.toLocaleString()}</span>
+                )}
+                {c.unrealizedPnlPct !== null && (
+                  <span
+                    className={
+                      c.unrealizedPnlPct > 0
+                        ? "text-emerald-500"
+                        : c.unrealizedPnlPct < 0
+                          ? "text-red-500"
+                          : ""
+                    }
+                  >
+                    含み損益 {c.unrealizedPnlPct >= 0 ? "+" : ""}
+                    {c.unrealizedPnlPct.toFixed(2)}%
+                  </span>
+                )}
+              </div>
+            )}
             <div className="grid gap-3 md:grid-cols-2">
               {c.entryDecision ? (
                 <div className="rounded border border-border p-3">
@@ -344,6 +382,11 @@ function CoinCard({ c }: { c: CoinDetail }) {
                     <span className="text-muted-foreground text-xs">
                       確信度 {c.exitDecision.confidence.toFixed(2)}
                     </span>
+                    {c.exitDecision.result === "close" && c.exitDecision.closePct !== null && (
+                      <span className="text-muted-foreground text-xs">
+                        close {c.exitDecision.closePct}%
+                      </span>
+                    )}
                   </div>
                   {c.exitDecision.reasoning && (
                     <p className="whitespace-pre-wrap text-xs">{c.exitDecision.reasoning}</p>

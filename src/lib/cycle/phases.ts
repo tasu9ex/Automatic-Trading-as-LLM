@@ -304,10 +304,10 @@ function asAnalystRunLike(analyst: AnalystRow) {
 
 async function runEntryForCoin(args: {
   coin: CycleCoin;
+  snapshotRow: SnapshotRow;
   analyst: AnalystRow;
   analystResLike: ReturnType<typeof asAnalystRunLike>;
   cycleIntervalMinutes: number;
-  maxBudgetJpy: number;
 }): Promise<void> {
   const existing = (
     await db
@@ -318,12 +318,15 @@ async function runEntryForCoin(args: {
   )[0];
   if (existing) return;
 
+  const snap = loadSnapshotFromRow(args.snapshotRow, args.coin);
+  const lastPriceJpy = Number(snap.ticker.last) || 0;
+
   const entry = await runEntryDecision(
     args.coin.symbol,
     args.coin.name,
     args.analystResLike as Parameters<typeof runEntryDecision>[2],
     args.cycleIntervalMinutes,
-    args.maxBudgetJpy,
+    lastPriceJpy,
   );
   await db.insert(decisions).values({
     analystId: args.analyst.id,
@@ -335,16 +338,6 @@ async function runEntryForCoin(args: {
     entrySizePct: entry.output.size_pct ?? null,
     reasoning: entry.output.reasoning,
     promptVersion: entry.promptVersion,
-    entryExpectedHoldingDaysMin:
-      entry.output.expected_holding_days?.min !== undefined
-        ? String(entry.output.expected_holding_days.min)
-        : null,
-    entryExpectedHoldingDaysMax:
-      entry.output.expected_holding_days?.max !== undefined
-        ? String(entry.output.expected_holding_days.max)
-        : null,
-    entryTargetPriceJpy: entry.output.target_price_jpy?.toFixed(4) ?? null,
-    entryExitCondition: entry.output.exit_condition ?? null,
   });
 }
 
@@ -384,34 +377,20 @@ async function runExitForCoin(args: {
   const lastPrice = Number(snap.ticker.last) || 0;
   const qty = Number(openPos.quantity);
   const avg = Number(openPos.avgEntryPrice);
-  const expHoldingDays =
-    openPos.entryExpectedHoldingDaysMin && openPos.entryExpectedHoldingDaysMax
-      ? {
-          min: openPos.entryExpectedHoldingDaysMin,
-          max: openPos.entryExpectedHoldingDaysMax,
-        }
-      : null;
+  const costBasis = qty * avg;
+  const currentValue = qty * lastPrice;
+  const unrealizedPnlPct = costBasis > 0 ? ((currentValue - costBasis) / costBasis) * 100 : 0;
 
   const exit = await runExitDecision(
     {
       symbol: args.coin.symbol,
       name: args.coin.name,
-      avgEntryPrice: avg,
-      quantity: qty,
-      marketValueJpy: qty * lastPrice,
-      unrealizedPnlJpy: (lastPrice - avg) * qty,
+      unrealizedPnlPct,
       holdingDays: Math.max(0, (Date.now() - openPos.openedAt.getTime()) / 86_400_000),
-      entryReason: openPos.entryReason,
-      peakPnlJpy: (Number(openPos.peakPrice) - avg) * qty,
-      troughPnlJpy: (Number(openPos.troughPrice) - avg) * qty,
-      entryExpectation: {
-        expectedHoldingDays: expHoldingDays,
-        targetPriceJpy: openPos.entryTargetPriceJpy ? Number(openPos.entryTargetPriceJpy) : null,
-        exitCondition: openPos.entryExitCondition,
-      },
     },
     args.analystResLike as Parameters<typeof runExitDecision>[1],
     args.cycleIntervalMinutes,
+    lastPrice,
   );
   await db.insert(decisions).values({
     analystId: args.analyst.id,
@@ -435,27 +414,6 @@ export async function tier3Decisions(
   await assertNotEmergencyStop("tier3-decisions");
   const enabledCoins = await getCycleCoins(cycleId);
 
-  // §size: Entry LLM への max_budget は「現在 cash × perCoinMaxRatio」。
-  // Exit の見込み回収は計算に含めない (Exit 約定リスクを LLM 入力から排除する保守設計)。
-  // 全銘柄共通の値なので tier3 の冒頭で 1 度だけ読む (per-coin で都度 read すると微妙にズレうる)。
-  const [portfolio, state] = await Promise.all([
-    db
-      .select()
-      .from(portfolios)
-      .where(eq(portfolios.strategyId, strategyId))
-      .limit(1)
-      .then((r) => r[0]),
-    db
-      .select()
-      .from(systemState)
-      .where(eq(systemState.id, SINGLETON_ID))
-      .limit(1)
-      .then((r) => r[0]),
-  ]);
-  const currentCashJpy = Number(portfolio?.cashJpy ?? 0);
-  const perCoinMaxRatio = Number(state?.perCoinMaxRatio ?? 0.25);
-  const maxBudgetJpy = Math.max(0, Math.floor(currentCashJpy * perCoinMaxRatio));
-
   await Promise.all(
     enabledCoins.map((coin) =>
       withRetry(
@@ -477,10 +435,10 @@ export async function tier3Decisions(
           const analystResLike = asAnalystRunLike(analyst);
           await runEntryForCoin({
             coin,
+            snapshotRow: snapshot,
             analyst,
             analystResLike,
             cycleIntervalMinutes,
-            maxBudgetJpy,
           });
           await runExitForCoin({
             coin,

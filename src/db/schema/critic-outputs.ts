@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, jsonb, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { criticDecisionEnum } from "./enums";
 
 export const criticOutputs = pgTable(
@@ -9,6 +9,8 @@ export const criticOutputs = pgTable(
     cycleId: uuid("cycle_id").notNull(),
     llmModel: text("llm_model").notNull(),
     decision: criticDecisionEnum("decision").notNull(),
+    /** Critic 自身の判断確信度 (観測用) */
+    confidence: numeric("confidence", { precision: 4, scale: 3 }),
     /**
      * Critic に渡した実行計画 (Exit dry-run + Allocator + Clipper 適用済)。
      * 構造: ExecutionPlan ({ exits, entries, projectedCashJpy, currentPositions,

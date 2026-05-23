@@ -11,18 +11,19 @@ export interface EntryDecisionResult {
 }
 
 /**
- * Entry Decision: Analyst 見解を元に Buy / No を判定。
- * 未保有銘柄に対して実行。
+ * Entry Decision: Analyst 見解を元に Buy / No と size_pct を判定。
  *
- * maxBudgetJpy: この銘柄に対する上限予算 (= 現金 × perCoinMaxRatio)。
- * LLM はこの金額の何 % 使うかを `size_pct` (1-100) で表現する。
+ * Tier 3 はポートフォリオ金額を見ない方針。size_pct は「max を 100 とした時の何 %」
+ * という抽象 % で、JPY 換算は Allocator + Clipper が行う。
+ *
+ * lastPriceJpy: 現在価格 (市場価格 = 公開事実、判断材料として渡す)。
  */
 export async function runEntryDecision(
   symbol: string,
   name: string,
   analyst: AnalystResult,
   cycleIntervalMinutes: number,
-  maxBudgetJpy: number,
+  lastPriceJpy: number,
 ): Promise<EntryDecisionResult> {
   return runPromptedJson<EntryDecisionOutput>({
     promptName: "tier3/entry",
@@ -31,7 +32,7 @@ export async function runEntryDecision(
       name,
       analyst_synthesis: JSON.stringify(analyst.output.synthesis, null, 2),
       analyst_full: JSON.stringify(analyst.output, null, 2),
-      max_budget_jpy: formatJpy(maxBudgetJpy).replace(/^¥/, ""),
+      last_price_jpy: formatJpy(lastPriceJpy).replace(/^¥/, ""),
       cycle_interval: formatCycleInterval(cycleIntervalMinutes),
     },
     schema: EntryDecisionOutputSchema,

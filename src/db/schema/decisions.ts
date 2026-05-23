@@ -22,19 +22,6 @@ export const decisions = pgTable(
     closePct: numeric("close_pct", { precision: 5, scale: 2 }),
     /** Entry のみ: max_budget の何% を使うか (整数 1-100)。result=buy のとき必須、no/exit は null。 */
     entrySizePct: integer("entry_size_pct"),
-    /** Entry のみ: 保有想定日数 (LLM 仮説、参考値)。 */
-    entryExpectedHoldingDaysMin: numeric("entry_expected_holding_days_min", {
-      precision: 6,
-      scale: 0,
-    }),
-    entryExpectedHoldingDaysMax: numeric("entry_expected_holding_days_max", {
-      precision: 6,
-      scale: 0,
-    }),
-    /** Entry のみ: 目標価格 JPY。 */
-    entryTargetPriceJpy: numeric("entry_target_price_jpy", { precision: 20, scale: 4 }),
-    /** Entry のみ: 出口条件の自然文 (max 300 char)。 */
-    entryExitCondition: text("entry_exit_condition"),
     reasoning: text("reasoning"),
     promptVersion: text("prompt_version"),
     langfuseTraceId: text("langfuse_trace_id"),

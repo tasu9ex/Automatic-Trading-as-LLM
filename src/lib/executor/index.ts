@@ -96,10 +96,6 @@ export interface ExecuteEntryInput {
   budgetJpy: number;
   takerFeeRate: number;
   entryReason: string | null;
-  /** Entry 時の仮説 (Exit で reference として参照、ピラミ時は最新で上書き) */
-  expectedHoldingDays?: { min: number; max: number } | null;
-  targetPriceJpy?: number | null;
-  exitCondition?: string | null;
   /** 注文 TTL (時間)。null = 無期限。実マネー時のみ意味あり、ペーパーは記録のみ */
   ttlHours?: number | null;
 }
@@ -128,9 +124,6 @@ export async function executeEntry(input: ExecuteEntryInput): Promise<void> {
         symbol: input.symbol,
         fill,
         entryReason: input.entryReason,
-        expectedHoldingDays: input.expectedHoldingDays ?? null,
-        targetPriceJpy: input.targetPriceJpy ?? null,
-        exitCondition: input.exitCondition ?? null,
       });
     } catch (fillErr) {
       try {
@@ -208,9 +201,6 @@ interface FillEntryArgs {
   symbol: string;
   fill: FillResult;
   entryReason: string | null;
-  expectedHoldingDays: { min: number; max: number } | null;
-  targetPriceJpy: number | null;
-  exitCondition: string | null;
 }
 
 /** Entry 約定: orders を filled に更新 + position/trade/portfolio 反映 + "🟢 約定" 通知 */
@@ -267,10 +257,6 @@ async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
           // §25: peak と対称に trough も更新 (新規 fill が既存最安値より低い場合のみ動く)
           troughPrice: Math.min(Number(existing.troughPrice), fill.executedPrice).toFixed(4),
           entryReason: args.entryReason,
-          entryExpectedHoldingDaysMin: args.expectedHoldingDays?.min ?? null,
-          entryExpectedHoldingDaysMax: args.expectedHoldingDays?.max ?? null,
-          entryTargetPriceJpy: args.targetPriceJpy?.toFixed(4) ?? null,
-          entryExitCondition: args.exitCondition,
           updatedAt: new Date(),
         })
         .where(eq(positions.id, existing.id));
@@ -288,10 +274,6 @@ async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
           peakPrice: fill.executedPrice.toFixed(4),
           troughPrice: fill.executedPrice.toFixed(4),
           entryReason: args.entryReason,
-          entryExpectedHoldingDaysMin: args.expectedHoldingDays?.min ?? null,
-          entryExpectedHoldingDaysMax: args.expectedHoldingDays?.max ?? null,
-          entryTargetPriceJpy: args.targetPriceJpy?.toFixed(4) ?? null,
-          entryExitCondition: args.exitCondition,
           openedAt: new Date(),
         })
         .returning();

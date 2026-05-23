@@ -181,8 +181,8 @@ function ctxToSignal(c: CoinCtx): ExecutionPlanSignal {
 
 /**
  * 1 銘柄分の Critic 入力 (entry / exit + 現在価格)。
- * last_price_jpy は Critic の target_price_jpy スケール sanity check に使う。
- * target_price_jpy は Trader が出した「次サイクル後の緩い目標 (JPY)」。
+ * confidence は意図的に渡さない (LLM の自己申告は判断材料に不適)。
+ * 仮説フィールド (target_price_jpy / expected_holding_days / exit_condition) は廃止済。
  */
 function criticDecisionForCtx(c: CoinCtx) {
   return {
@@ -190,27 +190,34 @@ function criticDecisionForCtx(c: CoinCtx) {
     entry: c.entry
       ? {
           decision: c.entry.result,
-          confidence: Number(c.entry.confidence),
           size_pct: c.entry.entrySizePct ?? null,
-          target_price_jpy: c.entry.entryTargetPriceJpy
-            ? Number(c.entry.entryTargetPriceJpy)
-            : null,
-          expected_holding_days:
-            c.entry.entryExpectedHoldingDaysMin && c.entry.entryExpectedHoldingDaysMax
-              ? {
-                  min: Number(c.entry.entryExpectedHoldingDaysMin),
-                  max: Number(c.entry.entryExpectedHoldingDaysMax),
-                }
-              : null,
+          reasoning: c.entry.reasoning ?? "",
         }
       : null,
     exit: c.exit
       ? {
           decision: c.exit.result,
-          confidence: Number(c.exit.confidence),
           close_pct: c.exit.closePct ? Number(c.exit.closePct) : 100,
+          reasoning: c.exit.reasoning ?? "",
         }
       : null,
+  };
+}
+
+/** Analyst 全文 (confidence 除く) を Critic に渡すための変換。 */
+function analystForCritic(c: CoinCtx) {
+  const a = c.analyst;
+  if (!a) return null;
+  const stripConfidence = (sec: unknown) => {
+    if (!sec || typeof sec !== "object") return sec;
+    const { confidence: _c, ...rest } = sec as Record<string, unknown>;
+    return rest;
+  };
+  return {
+    fundamental: stripConfidence(a.fundamental),
+    sentiment: stripConfidence(a.sentiment),
+    technical: stripConfidence(a.technical),
+    synthesis: stripConfidence(a.synthesis),
   };
 }
 
@@ -228,13 +235,13 @@ async function processCriticDecision(args: {
   buyCandidates: Set<string>;
   currentCashJpy: number;
   equityJpy: number;
-  riskParams: Awaited<ReturnType<typeof getRiskParams>>;
+  maxBudgetJpy: number;
   cycleIntervalMinutes: number;
 }): Promise<CriticDecisionResult> {
-  const { plan, ctxs, buyCandidates, currentCashJpy, equityJpy, riskParams } = args;
+  const { plan, ctxs, buyCandidates, currentCashJpy, equityJpy, maxBudgetJpy } = args;
 
-  const analystSummariesBySymbol = Object.fromEntries(
-    ctxs.filter((c) => c.analyst).map((c) => [c.coin.symbol, c.analyst?.synthesis]),
+  const analystFullBySymbol = Object.fromEntries(
+    ctxs.filter((c) => c.analyst).map((c) => [c.coin.symbol, analystForCritic(c)]),
   );
   const decisionsBySymbol = Object.fromEntries(
     ctxs.map((c) => [c.coin.symbol, criticDecisionForCtx(c)]),
@@ -252,6 +259,7 @@ async function processCriticDecision(args: {
     critic = {
       output: {
         decision: "approve",
+        confidence: 1,
         adjustments: null,
         reasoning:
           "No buy signals and no exits to evaluate — Critic auto-approved (skipped LLM call)",
@@ -261,34 +269,25 @@ async function processCriticDecision(args: {
     };
     logger.info("Critic skipped (no buy / no exit) — Opus call saved");
   } else {
-    // 0.1: Critic 必須化 (ALL-or-NOTHING)。失敗は通常 failure path 経由で consecutiveFailures++。
+    // Critic 必須化 (ALL-or-NOTHING)。失敗は通常 failure path 経由で consecutiveFailures++。
     critic = await runCritic({
       plan,
-      analystSummariesBySymbol,
+      analystFullBySymbol,
       decisionsBySymbol,
       symbolToName,
       currentCashJpy,
       equityJpy,
-      riskParams: {
-        perCoinMaxRatio: riskParams.perCoinMaxRatio,
-        perCoinTotalMaxRatio: riskParams.perCoinTotalMaxRatio,
-        killSwitchDdRatio: riskParams.portfolioDdTrigger,
-      },
       systemHealth,
       cycleIntervalMinutes: args.cycleIntervalMinutes,
     });
   }
 
-  // Critic modify の機械検算 (ALL-or-NOTHING)。違反は throw。
+  // pct-based adjustments の whitelist チェック (ハードガード違反は pct schema が防ぐ)
   if (critic.output.decision === "modify" && critic.output.adjustments) {
     const violation = validateCriticModify({
       plan,
       adjustments: critic.output.adjustments,
       buyCandidates,
-      cashJpy: currentCashJpy,
-      equityJpy,
-      perCoinMaxRatio: riskParams.perCoinMaxRatio,
-      perCoinTotalMaxRatio: riskParams.perCoinTotalMaxRatio,
     });
     if (violation) {
       logger.error({ violation, adjustments: critic.output.adjustments }, "Critic modify 違反");
@@ -300,7 +299,7 @@ async function processCriticDecision(args: {
     critic.output.decision === "veto"
       ? { entries: {} as Record<string, number>, exits: {} as ExecutionPlan["exits"] }
       : critic.output.decision === "modify" && critic.output.adjustments
-        ? applyModify(plan, critic.output.adjustments)
+        ? applyModify(plan, critic.output.adjustments, maxBudgetJpy)
         : { entries: plan.entries, exits: plan.exits };
 
   const modifiedPositions =
@@ -310,6 +309,7 @@ async function processCriticDecision(args: {
     cycleId: args.cycleId,
     llmModel: critic.llmModel,
     decision: critic.output.decision,
+    confidence: critic.output.confidence.toFixed(3),
     executionPlan: plan,
     modifiedPositions,
     adjustments: critic.output.adjustments,
@@ -449,12 +449,6 @@ async function executeOneEntry(args: {
     return { ok: false, reason: "1m bar 空で参考価格 0 円 (Tier 0 データ取得問題)" };
   }
   try {
-    const minDays = ctx.entry?.entryExpectedHoldingDaysMin
-      ? Number(ctx.entry.entryExpectedHoldingDaysMin)
-      : null;
-    const maxDays = ctx.entry?.entryExpectedHoldingDaysMax
-      ? Number(ctx.entry.entryExpectedHoldingDaysMax)
-      : null;
     await executeEntry({
       strategyId: args.strategyId,
       symbol,
@@ -463,10 +457,6 @@ async function executeOneEntry(args: {
       budgetJpy: budget,
       takerFeeRate: Number(ctx.coin.takerFeeRate),
       entryReason: ctx.entry?.reasoning ?? null,
-      expectedHoldingDays:
-        minDays !== null && maxDays !== null ? { min: minDays, max: maxDays } : null,
-      targetPriceJpy: ctx.entry?.entryTargetPriceJpy ? Number(ctx.entry.entryTargetPriceJpy) : null,
-      exitCondition: ctx.entry?.entryExitCondition ?? null,
     });
     return { ok: true };
   } catch (err) {
@@ -683,6 +673,9 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     signals.filter((s) => s.entry?.decision === "buy").map((s) => s.symbol),
   );
 
+  // Critic の adjustments.buys (pct) を JPY 化するときの base。Allocator と一致させる。
+  const maxBudgetJpy = Math.max(0, Math.floor(currentCashJpy * riskParams.perCoinMaxRatio));
+
   const { final, criticOutput: critic } = await processCriticDecision({
     cycleId,
     strategyId,
@@ -691,7 +684,7 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
     buyCandidates,
     currentCashJpy,
     equityJpy: equityForCritic,
-    riskParams,
+    maxBudgetJpy,
     cycleIntervalMinutes: input.cycleIntervalMinutes,
   });
 

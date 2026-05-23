@@ -331,6 +331,7 @@ export interface CycleDetail {
   abortReason: { phase: string; kind: string; message: string } | null;
   critic: {
     decision: string;
+    confidence: number | null;
     reasoning: string | null;
     executionPlan: unknown;
     modifiedPositions: unknown;
@@ -361,8 +362,13 @@ export interface CycleDetail {
     exitDecision: {
       result: string;
       confidence: number;
+      closePct: number | null;
       reasoning: string | null;
     } | null;
+    /** ticker.last (Tier 3 が見た現在価格) */
+    lastPriceJpy: number | null;
+    /** Exit に渡した含み損益 % (保有銘柄のみ) */
+    unrealizedPnlPct: number | null;
   }>;
 }
 
@@ -391,6 +397,13 @@ export async function getCycleDetail(cycleId: string): Promise<CycleDetail | nul
         : null,
     })),
   };
+}
+
+function extractLastFromTicker(t: unknown): number | null {
+  if (!t || typeof t !== "object") return null;
+  const last = (t as { last?: unknown }).last;
+  const n = last == null ? Number.NaN : Number(last);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 async function getCycleDetailImpl(cycleId: string): Promise<CycleDetail | null> {
@@ -516,11 +529,44 @@ async function getCycleDetailImpl(cycleId: string): Promise<CycleDetail | null> 
         ? {
             result: exitDecision.result,
             confidence: Number(exitDecision.confidence),
+            closePct: exitDecision.closePct ? Number(exitDecision.closePct) : null,
             reasoning: exitDecision.reasoning,
           }
         : null,
+      lastPriceJpy: extractLastFromTicker(snap.ticker),
+      // 算出は下のループで上書き (positions と JOIN するため)
+      unrealizedPnlPct: null as number | null,
     };
   });
+
+  // 保有銘柄 (Tier 3 Exit に含み損益 % が渡された) について算出
+  const openPosForCycle = await db
+    .select()
+    .from(positions)
+    .where(
+      and(
+        eq(positions.strategyId, DEFAULT_STRATEGY_ID),
+        inArray(
+          positions.coinId,
+          snapshots.map((s) => s.coin.id),
+        ),
+        eq(positions.status, PositionStatusValue.OPEN),
+      ),
+    );
+  const posByCoinId = new Map(openPosForCycle.map((p) => [p.coinId, p]));
+  for (const section of coinSections) {
+    const snap = snapshots.find((s) => s.coin.symbol === section.symbol);
+    if (!snap) continue;
+    const pos = posByCoinId.get(snap.coin.id);
+    if (!pos) continue;
+    const qty = Number(pos.quantity);
+    const avg = Number(pos.avgEntryPrice);
+    const last = section.lastPriceJpy ?? 0;
+    const cost = qty * avg;
+    if (cost > 0 && last > 0) {
+      section.unrealizedPnlPct = ((qty * last - cost) / cost) * 100;
+    }
+  }
 
   return {
     cycleId,
@@ -531,6 +577,7 @@ async function getCycleDetailImpl(cycleId: string): Promise<CycleDetail | null> 
     critic: critic
       ? {
           decision: critic.decision,
+          confidence: critic.confidence ? Number(critic.confidence) : null,
           reasoning: critic.reasoning,
           executionPlan: critic.executionPlan,
           modifiedPositions: critic.modifiedPositions,
@@ -686,10 +733,6 @@ export interface PositionDetail {
   peakPrice: number;
   troughPrice: number;
   entryReason: string | null;
-  entryExpectedHoldingDaysMin: number | null;
-  entryExpectedHoldingDaysMax: number | null;
-  entryTargetPriceJpy: number | null;
-  entryExitCondition: string | null;
   realizedPnlJpy: number;
   /** 配置中の逆指値 (active=true のみ) */
   pendingOrders: Array<{
@@ -743,16 +786,6 @@ async function getPositionDetailsImpl(): Promise<PositionDetail[]> {
     peakPrice: Number(r.position.peakPrice),
     troughPrice: Number(r.position.troughPrice),
     entryReason: r.position.entryReason,
-    entryExpectedHoldingDaysMin: r.position.entryExpectedHoldingDaysMin
-      ? Number(r.position.entryExpectedHoldingDaysMin)
-      : null,
-    entryExpectedHoldingDaysMax: r.position.entryExpectedHoldingDaysMax
-      ? Number(r.position.entryExpectedHoldingDaysMax)
-      : null,
-    entryTargetPriceJpy: r.position.entryTargetPriceJpy
-      ? Number(r.position.entryTargetPriceJpy)
-      : null,
-    entryExitCondition: r.position.entryExitCondition,
     realizedPnlJpy: Number(r.position.realizedPnlJpy ?? 0),
     pendingOrders: (slByPos.get(r.position.id) ?? []).map((s) => ({
       id: s.id,

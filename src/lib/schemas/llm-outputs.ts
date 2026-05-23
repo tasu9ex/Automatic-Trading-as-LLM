@@ -39,31 +39,16 @@ export type AnalystOutput = z.infer<typeof AnalystOutputSchema>;
 /**
  * Entry Decision の出力 (DECISION_RESULTS の部分集合)。
  *
- * Entry 仮説 3 つ (`expected_*`, `target_price_jpy`, `exit_condition`) は
- * **緩い参考値** として記録される。Exit 側で anchor 化を避けるため、
- * Exit プロンプトは「reference のみ、anchor 禁止」と明示する。
- *
- * "no" 判定時は仮説フィールドは null。
+ * Tier 3 は JPY 絶対値を見ない方針:
+ *   - size_pct は「max を 100 とした時の何 %」(抽象値)
+ *   - JPY 化はコード (Allocator + Clipper) の責任
  */
 export const EntryDecisionOutputSchema = z.object({
   decision: z.enum(ENTRY_DECISIONS),
   confidence: z.number().min(0).max(1),
-  /**
-   * Buy 時のサイズ指定 (1-100 整数 %)。
-   *   actual_buy_jpy = max_budget_jpy × (size_pct / 100)
-   * max_budget_jpy はコード側 (現金 × perCoinMaxRatio) で計算して prompt に渡す。
-   * decision === "no" のときは null。
-   */
+  /** Buy 時のサイズ指定 (1-100 整数 %、max の何 % 使うか)。decision === "no" のときは null。 */
   size_pct: z.number().int().min(1).max(100).nullable(),
   reasoning: z.string(),
-  expected_holding_days: z
-    .object({
-      min: z.number().int().min(1),
-      max: z.number().int().min(1),
-    })
-    .nullable(),
-  target_price_jpy: z.number().positive().nullable(),
-  exit_condition: z.string().max(300).nullable(),
 });
 export type EntryDecisionOutput = z.infer<typeof EntryDecisionOutputSchema>;
 
@@ -84,16 +69,18 @@ export type ExitDecisionOutput = z.infer<typeof ExitDecisionOutputSchema>;
 /** Critic の出力 */
 export const CriticOutputSchema = z.object({
   decision: z.enum(CRITIC_DECISIONS),
+  /** Critic 自身の判断確信度 (観測用) */
+  confidence: z.number().min(0).max(1),
   /**
    * modify 時のみ非 null:
-   *   buys:  symbol → 修正後 JPY 額 (Allocator 提案を上書き)
-   *   exits: symbol → 修正後 close 比率 % (10-100 整数、Tier 3 の close_pct を上書き)
-   *           値 0 は意味なし (実装側で 10 にクランプ)、close 中止したいなら veto を使う
-   * 修正不要な銘柄は省略可。approve / veto は null。
+   *   buys:  symbol → 修正後 size_pct (0-100 整数 %、Entry の size_pct を上書き、0 で除外)
+   *   exits: symbol → 修正後 close_pct (10-100 整数 %、Tier 3 の close_pct を上書き)
+   *           close 中止したいなら veto を使う (exits 操作では止められない)
+   * 修正不要な銘柄は省略可。approve / veto のときは null。
    */
   adjustments: z
     .object({
-      buys: z.record(z.string(), z.number()).optional(),
+      buys: z.record(z.string(), z.number().int().min(0).max(100)).optional(),
       exits: z.record(z.string(), z.number().int().min(10).max(100)).optional(),
     })
     .nullable(),

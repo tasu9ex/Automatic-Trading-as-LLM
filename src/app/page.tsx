@@ -98,22 +98,6 @@ function PositionDetailPanel({ detail }: { detail: PositionDetail }) {
         <div>
           {formatJpy(detail.peakPrice)} / {formatJpy(detail.troughPrice)}
         </div>
-        {detail.entryTargetPriceJpy && (
-          <>
-            <div className="text-muted-foreground">target</div>
-            <div>{formatJpy(detail.entryTargetPriceJpy)}</div>
-          </>
-        )}
-        {(detail.entryExpectedHoldingDaysMin !== null ||
-          detail.entryExpectedHoldingDaysMax !== null) && (
-          <>
-            <div className="text-muted-foreground">想定保有日数</div>
-            <div>
-              {detail.entryExpectedHoldingDaysMin ?? "?"} -{" "}
-              {detail.entryExpectedHoldingDaysMax ?? "?"} 日
-            </div>
-          </>
-        )}
         <div className="text-muted-foreground">実現損益 (部分決済)</div>
         <div className={pnlClass}>{formatJpy(detail.realizedPnlJpy)}</div>
       </div>
@@ -121,12 +105,6 @@ function PositionDetailPanel({ detail }: { detail: PositionDetail }) {
         <div className="mt-2">
           <div className="text-muted-foreground">エントリー理由</div>
           <p className="whitespace-pre-wrap">{detail.entryReason}</p>
-        </div>
-      )}
-      {detail.entryExitCondition && (
-        <div className="mt-2">
-          <div className="text-muted-foreground">Exit 条件 (Entry 仮説)</div>
-          <p className="whitespace-pre-wrap">{detail.entryExitCondition}</p>
         </div>
       )}
       {detail.pendingOrders.length > 0 && (
