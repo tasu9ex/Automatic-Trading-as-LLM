@@ -30,6 +30,7 @@ import {
   tier3Decisions,
 } from "@/lib/cycle/phases";
 import { createLogger } from "@/lib/logging";
+import { notify } from "@/lib/notifications";
 import { advanceNextScheduledAt, getSystemStateRow, isScheduleDue } from "@/lib/system-control";
 import { captureError, initSentry, runWithSession, shutdownSentry } from "@/lib/telemetry";
 import { inngest } from "./client";
@@ -99,6 +100,18 @@ export const judgmentCron = inngest.createFunction(
       const { cycleId, periodHours, cycleIntervalMinutes, startedAt } = pre;
       const strategyId = DEFAULT_STRATEGY_ID;
 
+      await step.run("notify-cycle-start", () =>
+        notify({
+          level: "info",
+          title: "▶️ サイクル開始",
+          fields: {
+            cycleId: cycleId.slice(0, 8),
+            periodHours,
+            intervalMin: cycleIntervalMinutes,
+          },
+        }),
+      );
+
       // 2-6. 各 Tier step.run (失敗時は recordCycleFailure → throw → Inngest 側で retry/abort)
       // finalize も同じパターンで包んで、Critic / Executor 失敗時に連続失敗カウンタ / Discord 通知が
       // CLI 経由 (judgment.ts) と同じになるようにする (§4)。
@@ -151,6 +164,17 @@ export const judgmentCron = inngest.createFunction(
       }
 
       await step.run("advance-schedule", () => advanceNextScheduledAt(new Date(startedAt)));
+
+      await step.run("notify-cycle-end", () =>
+        notify({
+          level: "info",
+          title: "✅ サイクル完了",
+          fields: {
+            cycleId: cycleId.slice(0, 8),
+            elapsedSec: ((Date.now() - startedAt) / 1000).toFixed(1),
+          },
+        }),
+      );
 
       // 別 step で Langfuse cost 取得 + 累計加算 + Discord 通知 (15s ingestion 待ち含む)
       await step.run("cost-summary", () => notifyCycleCost(cycleId));
