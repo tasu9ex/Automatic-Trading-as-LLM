@@ -10,6 +10,7 @@
 
 import { db } from "@/db/client";
 import { systemState } from "@/db/schema";
+import { formatJpy } from "@/lib/format/jpy";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { fetchCycleCost } from "@/lib/telemetry";
@@ -53,7 +54,7 @@ export async function notifyCycleCost(cycleId: string): Promise<void> {
     title: "💰 サイクルコスト集計",
     fields: {
       "累計 (USD)": `$${newCum.toFixed(4)}`,
-      "累計 (JPY)": `¥${Math.round(newCum * USD_TO_JPY).toLocaleString()}`,
+      "累計 (JPY)": formatJpy(newCum * USD_TO_JPY),
     },
   });
 }

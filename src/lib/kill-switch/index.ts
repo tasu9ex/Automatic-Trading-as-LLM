@@ -9,6 +9,7 @@ import {
 } from "@/db/schema";
 import { getTicker } from "@/lib/clients/gmo";
 import { executeExit } from "@/lib/executor";
+import { formatJpy } from "@/lib/format/jpy";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { getRiskParams } from "@/lib/risk/params";
@@ -90,7 +91,7 @@ export async function checkAndTriggerKillSwitch(
   const ddTriggered = ddEvaluable && ddRatio >= riskParams.portfolioDdTrigger;
 
   if (ddTriggered) {
-    const reason = `portfolio DD ${(ddRatio * 100).toFixed(1)}% (HWM ¥${Math.round(hwm).toLocaleString()})`;
+    const reason = `portfolio DD ${(ddRatio * 100).toFixed(1)}% (HWM ${formatJpy(hwm)})`;
     await triggerKillSwitch({
       strategyId: input.strategyId,
       open,
@@ -238,8 +239,8 @@ async function triggerKillSwitch(input: {
     title: "🚨 緊急停止 (Kill Switch) 発動",
     body: `**${reason}**\n全ポジションを強制クローズしました。システムは停止状態です。手動で再開してください。`,
     fields: {
-      HWM: `¥${Math.round(initial).toLocaleString()}`,
-      現在資産: `¥${Math.round(totalValue).toLocaleString()}`,
+      HWM: formatJpy(initial),
+      現在資産: formatJpy(totalValue),
       ドローダウン: `${(ddRatio * 100).toFixed(1)}%`,
     },
   });

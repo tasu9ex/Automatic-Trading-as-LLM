@@ -2,6 +2,7 @@ import { db } from "@/db/client";
 import { coins, pendingOrders, positions, systemEvents } from "@/db/schema";
 import { getKlines } from "@/lib/clients/gmo";
 import { executeExit } from "@/lib/executor";
+import { formatJpy } from "@/lib/format/jpy";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { and, eq } from "drizzle-orm";
@@ -170,9 +171,9 @@ export async function runPriceMonitor(input: PriceMonitorInput = {}): Promise<vo
       title: `⚠️ 逆指値発火: ${coin.symbol}`,
       body: `種別: \`${fired.kind}\`${fired.forced ? " (成行強制、スリッページ 0.3%)" : " (指値、スリッページなし)"}`,
       fields: {
-        発火価格: `¥${Math.round(fired.marketPrice).toLocaleString()}`,
-        直近安値: `¥${Math.round(recentLow).toLocaleString()}`,
-        ピーク: `¥${Math.round(peak).toLocaleString()}`,
+        発火価格: formatJpy(fired.marketPrice),
+        直近安値: formatJpy(recentLow),
+        ピーク: formatJpy(peak),
       },
     });
   }

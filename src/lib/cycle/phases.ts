@@ -53,6 +53,7 @@ import { buildSystemHealth } from "@/lib/cycle/system-health";
 import { runEntryDecision } from "@/lib/decision/entry";
 import { runExitDecision } from "@/lib/decision/exit";
 import { executeEntry, executeExit } from "@/lib/executor";
+import { formatJpy, formatJpySigned } from "@/lib/format/jpy";
 import { checkAndTriggerKillSwitch } from "@/lib/kill-switch";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
@@ -198,14 +199,7 @@ export async function tier0Snapshots(
       withRetry(
         async () => {
           // 冪等: 既に snapshot 行があれば skip
-          const existing = (
-            await db
-              .select({ id: marketSnapshots.id })
-              .from(marketSnapshots)
-              .where(and(eq(marketSnapshots.cycleId, cycleId), eq(marketSnapshots.coinId, coin.id)))
-              .limit(1)
-          )[0];
-          if (existing) return;
+          if (await getCycleSnapshot(cycleId, coin.id)) return;
 
           const snap = await fetchSnapshot({
             symbol: coin.symbol,
@@ -233,26 +227,39 @@ export async function tier0Snapshots(
   );
 }
 
-/** snapshot 行 + coin 情報を結合して Snapshot 型に復元 */
-async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: string }) {
-  const row = (
-    await db.select().from(marketSnapshots).where(eq(marketSnapshots.id, snapshotId)).limit(1)
-  )[0];
-  if (!row) throw new Error(`Snapshot not found: ${snapshotId}`);
+type SnapshotRow = typeof marketSnapshots.$inferSelect;
+
+/**
+ * 指定 cycle × coin の snapshot 行を引く。idempotency check と本 fetch の両方で使う。
+ * 行は呼び元で再利用するので、見つかったらそのまま row を返す (loadSnapshotFromRow に渡せる)。
+ */
+async function getCycleSnapshot(cycleId: string, coinId: string): Promise<SnapshotRow | null> {
+  return (
+    (
+      await db
+        .select()
+        .from(marketSnapshots)
+        .where(and(eq(marketSnapshots.cycleId, cycleId), eq(marketSnapshots.coinId, coinId)))
+        .limit(1)
+    )[0] ?? null
+  );
+}
+
+/** snapshot 行 + coin 情報を結合して Snapshot 型に復元。行は呼び元が既に握っている前提 (二重 fetch 防止)。 */
+function loadSnapshotFromRow(row: SnapshotRow, coin: { symbol: string; name: string }): Snapshot {
   const ohlcv = (row.ohlcv as Snapshot["ohlcv"] | null) ?? [];
   const klineInterval = (row.klineInterval as Snapshot["klineInterval"] | null) ?? "1day";
 
   // ticker は新規行は DB に直接保存 (§31 根治)。旧行は最終 bar の close で再構成 fallback。
   const tickerRow = row.ticker as Snapshot["ticker"] | null;
-  let ticker: Snapshot["ticker"];
-  if (tickerRow) {
-    ticker = tickerRow;
-  } else {
-    const lastClose = ohlcv.at(-1)?.close ?? "0";
-    ticker = { last: lastClose, bid: lastClose, ask: lastClose, volume: "0" };
-  }
+  const ticker: Snapshot["ticker"] = tickerRow ?? {
+    last: ohlcv.at(-1)?.close ?? "0",
+    bid: ohlcv.at(-1)?.close ?? "0",
+    ask: ohlcv.at(-1)?.close ?? "0",
+    volume: "0",
+  };
 
-  const snap: Snapshot = {
+  return {
     symbol: coin.symbol,
     name: coin.name,
     fetchedAt: row.fetchedAt,
@@ -265,7 +272,6 @@ async function loadSnapshot(snapshotId: string, coin: { symbol: string; name: st
     ticker,
     micro: (row.micro as Snapshot["micro"] | null) ?? null,
   };
-  return { snapshotRow: row, snap };
 }
 
 /** Phase 3: Tier 1 Pre-Analyst (ALL-or-NOTHING) */
@@ -280,13 +286,7 @@ export async function tier1PreAnalyst(
     enabledCoins.map((coin) =>
       withRetry(
         async () => {
-          const snapshot = (
-            await db
-              .select()
-              .from(marketSnapshots)
-              .where(and(eq(marketSnapshots.cycleId, cycleId), eq(marketSnapshots.coinId, coin.id)))
-              .limit(1)
-          )[0];
+          const snapshot = await getCycleSnapshot(cycleId, coin.id);
           if (!snapshot) throw new Error(`No snapshot for coin ${coin.symbol}`);
 
           const existing = (
@@ -298,7 +298,7 @@ export async function tier1PreAnalyst(
           )[0];
           if (existing) return;
 
-          const { snap } = await loadSnapshot(snapshot.id, coin);
+          const snap = loadSnapshotFromRow(snapshot, coin);
           const preRes = await runPreAnalyst(snap, cycleIntervalMinutes);
           await db.insert(preAnalystOutputs).values({
             snapshotId: snapshot.id,
@@ -334,13 +334,7 @@ export async function tier2Analyst(
     enabledCoins.map((coin) =>
       withRetry(
         async () => {
-          const snapshot = (
-            await db
-              .select()
-              .from(marketSnapshots)
-              .where(and(eq(marketSnapshots.cycleId, cycleId), eq(marketSnapshots.coinId, coin.id)))
-              .limit(1)
-          )[0];
+          const snapshot = await getCycleSnapshot(cycleId, coin.id);
           if (!snapshot) throw new Error(`No snapshot for coin ${coin.symbol}`);
 
           const pre = (
@@ -383,7 +377,7 @@ export async function tier2Analyst(
           )[0];
           if (existing) return;
 
-          const { snap } = await loadSnapshot(snapshot.id, coin);
+          const snap = loadSnapshotFromRow(snapshot, coin);
           const preResLike = {
             output: {
               summary: pre.summary,
@@ -473,7 +467,7 @@ async function runEntryForCoin(args: {
 
 async function runExitForCoin(args: {
   coin: CycleCoin;
-  snapshotId: string;
+  snapshotRow: SnapshotRow;
   analyst: AnalystRow;
   analystResLike: ReturnType<typeof asAnalystRunLike>;
   strategyId: string;
@@ -503,7 +497,7 @@ async function runExitForCoin(args: {
   )[0];
   if (existing) return;
 
-  const { snap } = await loadSnapshot(args.snapshotId, args.coin);
+  const snap = loadSnapshotFromRow(args.snapshotRow, args.coin);
   const lastPrice = Number(snap.ticker.last) || 0;
   const qty = Number(openPos.quantity);
   const avg = Number(openPos.avgEntryPrice);
@@ -562,13 +556,7 @@ export async function tier3Decisions(
     enabledCoins.map((coin) =>
       withRetry(
         async () => {
-          const snapshot = (
-            await db
-              .select()
-              .from(marketSnapshots)
-              .where(and(eq(marketSnapshots.cycleId, cycleId), eq(marketSnapshots.coinId, coin.id)))
-              .limit(1)
-          )[0];
+          const snapshot = await getCycleSnapshot(cycleId, coin.id);
           if (!snapshot) throw new Error(`No snapshot for coin ${coin.symbol}`);
 
           const analyst = (
@@ -586,7 +574,7 @@ export async function tier3Decisions(
           await runEntryForCoin({ coin, analyst, analystResLike, cycleIntervalMinutes });
           await runExitForCoin({
             coin,
-            snapshotId: snapshot.id,
+            snapshotRow: snapshot,
             analyst,
             analystResLike,
             strategyId,
@@ -633,15 +621,9 @@ async function buildCoinContext(
   cycleId: string,
   strategyId: string,
 ): Promise<CoinCtx> {
-  const snapshot = (
-    await db
-      .select()
-      .from(marketSnapshots)
-      .where(and(eq(marketSnapshots.cycleId, cycleId), eq(marketSnapshots.coinId, coin.id)))
-      .limit(1)
-  )[0];
+  const snapshot = await getCycleSnapshot(cycleId, coin.id);
   if (!snapshot) throw new Error(`No snapshot for coin ${coin.symbol} in finalize`);
-  const { snap } = await loadSnapshot(snapshot.id, coin);
+  const snap = loadSnapshotFromRow(snapshot, coin);
 
   const analyst =
     (
@@ -896,7 +878,7 @@ async function notifyCriticDecision(args: {
     const vetoBuyList =
       Object.keys(plan.entries).length > 0
         ? Object.entries(plan.entries)
-            .map(([sym, jpy]) => `${sym}: ¥${Math.round(jpy).toLocaleString()}`)
+            .map(([sym, jpy]) => `${sym}: ${formatJpy(jpy)}`)
             .join(", ")
         : "なし";
     const vetoExitList =
@@ -975,7 +957,7 @@ async function executeOneExit(args: {
       body: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
       fields: {
         意図: `${closePct}% 決済`,
-        参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
+        参考価格: formatJpy(lastPrice),
         影響: "ポジション保有継続、price-monitor SL に依存",
       },
     });
@@ -1024,8 +1006,8 @@ async function executeOneEntry(args: {
       title: `🚨 Entry 失敗 ${symbol}`,
       body: msg,
       fields: {
-        配分: `¥${budget.toLocaleString()}`,
-        参考価格: `¥${Math.round(lastPrice).toLocaleString()}`,
+        配分: formatJpy(budget),
+        参考価格: formatJpy(lastPrice),
         影響: "この銘柄の Entry をスキップ、次サイクル待ち",
       },
     });
@@ -1115,9 +1097,9 @@ async function sendCycleCompletionNotification(args: {
   criticDecision: string;
 }): Promise<void> {
   const { strategyId, ctxs, execution, finalExits, criticDecision } = args;
-  const buys = execution.executedEntries.map((e) => `• ${e.symbol}: ¥${e.budget.toLocaleString()}`);
+  const buys = execution.executedEntries.map((e) => `• ${e.symbol}: ${formatJpy(e.budget)}`);
   const skippedBuys = execution.skippedEntries.map(
-    (e) => `• ${e.symbol}: ¥${e.budget.toLocaleString()} — ${e.reason}`,
+    (e) => `• ${e.symbol}: ${formatJpy(e.budget)} — ${e.reason}`,
   );
   const closes = criticDecision === "veto" ? [] : Object.keys(finalExits).map((sym) => `• ${sym}`);
 
@@ -1143,10 +1125,10 @@ async function sendCycleCompletionNotification(args: {
       const sym = c?.symbol ?? "?";
       const qtyNum = Number(p.quantity);
       const qty = qtyNum.toFixed(6);
-      const avg = Math.round(Number(p.avgEntryPrice)).toLocaleString();
+      const avg = formatJpy(Number(p.avgEntryPrice));
       const price = lastPriceByCoinId.get(p.coinId) ?? 0;
-      const valueJpy = Math.round(qtyNum * price).toLocaleString();
-      return `• ${sym}: ${qty} @ ¥${avg} (¥${valueJpy})`;
+      const valueJpy = formatJpy(qtyNum * price);
+      return `• ${sym}: ${qty} @ ${avg} (${valueJpy})`;
     }),
   );
 
@@ -1164,8 +1146,6 @@ async function sendCycleCompletionNotification(args: {
     );
   const realizedPnlCycle = cycleTrades.reduce((s, t) => s + Number(t.pnl ?? 0), 0);
   const cumulativePnl = totalAssetJpy - initialCash;
-  const fmtJpySigned = (v: number) =>
-    `${v >= 0 ? "+" : "-"}¥${Math.abs(Math.round(v)).toLocaleString()}`;
 
   const bodyParts: string[] = [];
   if (buys.length > 0) bodyParts.push(`**📥 新規 Entry**\n${buys.join("\n")}`);
@@ -1176,10 +1156,10 @@ async function sendCycleCompletionNotification(args: {
   }
   bodyParts.push(
     [
-      `**💰 現金**: ¥${Math.round(cashAfter).toLocaleString()}`,
-      `**🏦 資産時価総額**: ¥${Math.round(totalAssetJpy).toLocaleString()}`,
-      `**📈 実現損益 (今回)**: ${fmtJpySigned(realizedPnlCycle)}`,
-      `**🧮 累計損益**: ${fmtJpySigned(cumulativePnl)} (初期 ¥${Math.round(initialCash).toLocaleString()})`,
+      `**💰 現金**: ${formatJpy(cashAfter)}`,
+      `**🏦 資産時価総額**: ${formatJpy(totalAssetJpy)}`,
+      `**📈 実現損益 (今回)**: ${formatJpySigned(realizedPnlCycle)}`,
+      `**🧮 累計損益**: ${formatJpySigned(cumulativePnl)} (初期 ${formatJpy(initialCash)})`,
     ].join("\n"),
   );
 

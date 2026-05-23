@@ -24,6 +24,7 @@
 
 import { db } from "@/db/client";
 import { coins, orders, pendingOrders, portfolios, positions, trades } from "@/db/schema";
+import { formatJpy, formatJpySigned } from "@/lib/format/jpy";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { and, eq } from "drizzle-orm";
@@ -193,9 +194,9 @@ async function placeEntryOrder(input: ExecuteEntryInput): Promise<{ orderId: str
     title: `📤 発注 ${input.symbol} (買)`,
     fields: {
       数量: intendedQty.toFixed(8),
-      参考価格: `¥${Math.round(input.marketPrice).toLocaleString()}`,
-      想定金額: `¥${Math.round(intendedQty * input.marketPrice).toLocaleString()}`,
-      予算: `¥${input.budgetJpy.toLocaleString()}`,
+      参考価格: formatJpy(input.marketPrice),
+      想定金額: formatJpy(intendedQty * input.marketPrice),
+      予算: formatJpy(input.budgetJpy),
       TTL: input.ttlHours ? `${input.ttlHours}h` : "無期限",
     },
   });
@@ -350,11 +351,11 @@ export async function fillEntryOrder(args: FillEntryArgs): Promise<void> {
       title: `🟢 約定 ${symbol} (買)`,
       fields: {
         数量: fill.quantity.toFixed(8),
-        価格: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
-        約定金額: `¥${Math.round(grossJpy).toLocaleString()}`,
+        価格: formatJpy(fill.executedPrice),
+        約定金額: formatJpy(grossJpy),
         手数料: `¥${fill.feeJpy.toFixed(0)}`,
-        支払総額: `¥${Math.round(fill.netCashJpy).toLocaleString()}`,
-        残現金: `¥${Math.round(newCash).toLocaleString()}`,
+        支払総額: formatJpy(fill.netCashJpy),
+        残現金: formatJpy(newCash),
       },
     });
   });
@@ -509,8 +510,8 @@ async function placeExitOrder(input: ExecuteExitInput): Promise<PlacedExitOrder 
       body: input.reason ?? undefined,
       fields: {
         数量: sellQty.toFixed(8),
-        参考価格: `¥${Math.round(input.marketPrice).toLocaleString()}`,
-        想定金額: `¥${Math.round(sellQty * input.marketPrice).toLocaleString()}`,
+        参考価格: formatJpy(input.marketPrice),
+        想定金額: formatJpy(sellQty * input.marketPrice),
         TTL: input.ttlHours ? `${input.ttlHours}h` : "無期限",
       },
     });
@@ -642,12 +643,12 @@ export async function fillExitOrder(args: FillExitArgs): Promise<void> {
     const grossJpy = sellQty * fill.executedPrice;
     const sellFields: Record<string, string> = {
       数量: sellQty.toFixed(8),
-      価格: `¥${Math.round(fill.executedPrice).toLocaleString()}`,
-      約定金額: `¥${Math.round(grossJpy).toLocaleString()}`,
+      価格: formatJpy(fill.executedPrice),
+      約定金額: formatJpy(grossJpy),
       手数料: `¥${fill.feeJpy.toFixed(0)}`,
-      受領額: `¥${Math.round(fill.netCashJpy).toLocaleString()}`,
-      損益: `${isProfit ? "+" : ""}¥${Math.round(pnlJpy).toLocaleString()}`,
-      残現金: `¥${Math.round(newCash).toLocaleString()}`,
+      受領額: formatJpy(fill.netCashJpy),
+      損益: formatJpySigned(pnlJpy),
+      残現金: formatJpy(newCash),
     };
     if (args.forced) {
       sellFields.スリッページ = `¥${fill.slippageJpy.toFixed(0)}`;
@@ -688,7 +689,7 @@ export async function expireOrder(orderId: string): Promise<void> {
     body: `TTL ${order.ttlHours ?? "—"}h 超過で自動失効`,
     fields: {
       数量: Number(order.quantity).toFixed(8),
-      参考価格: `¥${Math.round(Number(order.price)).toLocaleString()}`,
+      参考価格: formatJpy(Number(order.price)),
       TTL: order.ttlHours ? `${order.ttlHours}h` : "—",
     },
   });
@@ -710,7 +711,7 @@ export async function rejectOrder(orderId: string, reason: string): Promise<void
     body: reason,
     fields: {
       数量: Number(order.quantity).toFixed(8),
-      参考価格: `¥${Math.round(Number(order.price)).toLocaleString()}`,
+      参考価格: formatJpy(Number(order.price)),
     },
   });
 }
@@ -731,7 +732,7 @@ export async function cancelOrder(orderId: string, reason: string): Promise<void
     body: reason,
     fields: {
       数量: Number(order.quantity).toFixed(8),
-      参考価格: `¥${Math.round(Number(order.price)).toLocaleString()}`,
+      参考価格: formatJpy(Number(order.price)),
     },
   });
 }

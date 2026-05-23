@@ -6,6 +6,8 @@
  * Critic が変えたセルだけ ⚠ マーキング。
  */
 
+import { formatJpy } from "@/lib/format/jpy";
+
 type ExecutionPlan = {
   entries?: Record<string, number>;
   exits?: Record<string, { closePct: number; qtyToClose: number; expectedCashJpy: number }>;
@@ -29,15 +31,11 @@ function asPlan(v: unknown): ExecutionPlan | null {
   return v as ExecutionPlan;
 }
 
-function fmtJpy(v: number): string {
-  return `¥${Math.round(v).toLocaleString("ja-JP")}`;
-}
-
 function fmtDelta(delta: number): { text: string; cls: string } {
   if (Math.abs(delta) < 1) return { text: "(変化なし)", cls: "text-muted-foreground" };
   const sign = delta > 0 ? "+" : "-";
   return {
-    text: `(${sign}${fmtJpy(Math.abs(delta))})`,
+    text: `(${sign}${formatJpy(Math.abs(delta))})`,
     cls: delta > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
   };
 }
@@ -79,7 +77,7 @@ function PositionList({
           return (
             <li key={sym} className="flex items-center gap-2">
               <span className="w-12 font-bold">{sym}</span>
-              <span className="w-24 text-right">{fmtJpy(tgt)}</span>
+              <span className="w-24 text-right">{formatJpy(tgt)}</span>
               <span className={`${d.cls} w-32`}>{d.text}</span>
               {changedByCritic && (
                 <span
