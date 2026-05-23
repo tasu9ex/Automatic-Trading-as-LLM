@@ -28,6 +28,21 @@ function decisionVariant(result: string): "default" | "destructive" | "outline" 
   return "destructive";
 }
 
+/** Analyst synthesis.direction → Badge variant + 日本語ラベル */
+function directionVariant(d: string): "default" | "destructive" | "outline" {
+  if (d === "long_bias") return "default";
+  if (d === "short_bias") return "destructive";
+  return "outline"; // flat
+}
+const DIRECTION_JP: Record<string, string> = {
+  long_bias: "強気",
+  flat: "中立",
+  short_bias: "弱気",
+};
+function jpDirection(d: string): string {
+  return DIRECTION_JP[d] ?? d;
+}
+
 const DECISION_JP: Record<string, string> = {
   buy: "買い",
   no: "見送り",
@@ -263,9 +278,13 @@ function CoinCard({ c }: { c: CoinDetail }) {
                 <div className="rounded border border-foreground/40 bg-muted/40 p-3 text-xs">
                   <div className="mb-1 flex items-center justify-between font-semibold">
                     <span>統合見解</span>
-                    <span className="text-muted-foreground">
-                      方向 {c.analyst.synthesis.direction} ・ 信頼度{" "}
-                      {c.analyst.synthesis.confidence.toFixed(2)}
+                    <span className="flex items-center gap-2">
+                      <Badge variant={directionVariant(c.analyst.synthesis.direction)}>
+                        {jpDirection(c.analyst.synthesis.direction)}
+                      </Badge>
+                      <span className="text-muted-foreground">
+                        信頼度 {c.analyst.synthesis.confidence.toFixed(2)}
+                      </span>
                     </span>
                   </div>
                   <p className="whitespace-pre-wrap">{c.analyst.synthesis.reasoning}</p>
