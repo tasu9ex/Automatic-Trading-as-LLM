@@ -7,6 +7,7 @@
  */
 
 import { formatJpy } from "@/lib/format/jpy";
+import { AlertTriangle } from "lucide-react";
 
 type ExecutionPlan = {
   entries?: Record<string, number>;
@@ -81,10 +82,10 @@ function PositionList({
               <span className={`${d.cls} w-32`}>{d.text}</span>
               {changedByCritic && (
                 <span
-                  className="rounded bg-amber-200 px-1 text-amber-900 dark:bg-amber-700 dark:text-amber-100"
+                  className="inline-flex items-center rounded bg-amber-200 px-1 text-amber-900 dark:bg-amber-700 dark:text-amber-100"
                   title="Critic が計画から変更"
                 >
-                  ⚠
+                  <AlertTriangle className="size-3" />
                 </span>
               )}
             </li>

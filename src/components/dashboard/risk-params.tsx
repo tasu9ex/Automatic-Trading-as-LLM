@@ -4,6 +4,7 @@ import { setRiskParamsAction } from "@/app/actions/system-control";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ChevronDown, Lock, LockOpen } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -97,14 +98,24 @@ export function RiskParams({
             <CardTitle className="text-base">リスクパラメータ</CardTitle>
             <CardDescription>ハードガード閾値。次サイクル開始時に反映される。</CardDescription>
           </div>
-          <span className="text-muted-foreground text-xs">▼ 展開</span>
+          <span className="flex items-center gap-1 text-muted-foreground text-xs">
+            <ChevronDown className="size-3.5" /> 展開
+          </span>
         </summary>
         <CardContent className="flex flex-col gap-4 border-border border-t pt-4">
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground text-xs">
-              {unlocked
-                ? "🔓 編集モード (保存するか、ロックすると元に戻ります)"
-                : "🔒 ロック中 — 値を変更するには右のボタンを押してください"}
+            <span className="flex items-center gap-1.5 text-muted-foreground text-xs">
+              {unlocked ? (
+                <>
+                  <LockOpen className="size-3.5" /> 編集モード
+                  (保存するか、ロックすると元に戻ります)
+                </>
+              ) : (
+                <>
+                  <Lock className="size-3.5" /> ロック中 —
+                  値を変更するには右のボタンを押してください
+                </>
+              )}
             </span>
             <Button
               type="button"
@@ -123,7 +134,15 @@ export function RiskParams({
               }}
               disabled={pending}
             >
-              {unlocked ? "🔒 ロック" : "🔓 ロック解除"}
+              {unlocked ? (
+                <>
+                  <Lock className="size-3.5" /> ロック
+                </>
+              ) : (
+                <>
+                  <LockOpen className="size-3.5" /> ロック解除
+                </>
+              )}
             </Button>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

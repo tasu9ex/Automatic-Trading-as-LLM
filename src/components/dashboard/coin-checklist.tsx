@@ -3,6 +3,7 @@
 import { setCoinEnabledAction } from "@/app/actions/coins";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
+import { ChevronDown, Lock, LockOpen, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -63,14 +64,23 @@ export function CoinChecklist({ coins, cycleInFlight }: CoinChecklistProps) {
               判定サイクルで分析する銘柄 ({enabledCount}/{coins.length} 有効)
             </CardDescription>
           </div>
-          <span className="text-muted-foreground text-xs">▼ 展開</span>
+          <span className="flex items-center gap-1 text-muted-foreground text-xs">
+            <ChevronDown className="size-3.5" /> 展開
+          </span>
         </summary>
         <CardContent className="flex flex-col gap-3 border-border border-t pt-4">
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground text-xs">
-              {unlocked
-                ? "🔓 編集モード (再度押すとロックされます)"
-                : "🔒 ロック中 — チェック切替には右のボタンを押してください"}
+            <span className="flex items-center gap-1.5 text-muted-foreground text-xs">
+              {unlocked ? (
+                <>
+                  <LockOpen className="size-3.5" /> 編集モード (再度押すとロックされます)
+                </>
+              ) : (
+                <>
+                  <Lock className="size-3.5" /> ロック中 —
+                  チェック切替には右のボタンを押してください
+                </>
+              )}
             </span>
             <Button
               type="button"
@@ -78,13 +88,22 @@ export function CoinChecklist({ coins, cycleInFlight }: CoinChecklistProps) {
               size="sm"
               onClick={() => setUnlocked(!unlocked)}
             >
-              {unlocked ? "🔒 ロック" : "🔓 ロック解除"}
+              {unlocked ? (
+                <>
+                  <Lock className="size-3.5" /> ロック
+                </>
+              ) : (
+                <>
+                  <LockOpen className="size-3.5" /> ロック解除
+                </>
+              )}
             </Button>
           </div>
 
           {cycleInFlight && (
-            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-700 text-xs dark:text-amber-300">
-              🔄 サイクル実行中 — 銘柄の変更は次サイクルから反映されます
+            <p className="flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-700 text-xs dark:text-amber-300">
+              <RefreshCw className="size-3.5 animate-spin" /> サイクル実行中 —
+              銘柄の変更は次サイクルから反映されます
             </p>
           )}
 

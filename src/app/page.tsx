@@ -23,6 +23,7 @@ import {
   isCycleInFlight,
 } from "@/lib/cycle/queries";
 import { formatJstDate, formatJstDateTime } from "@/lib/format/datetime";
+import { AlertTriangle } from "lucide-react";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -235,9 +236,12 @@ export default async function Home({
       </header>
 
       {!ticker.ok && (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-amber-700 text-sm dark:text-amber-300">
-          <strong className="font-semibold">⚠ GMO ティッカー取得失敗</strong>{" "}
-          含み損益は建値ベースで表示しています (実際の含み損益と乖離している可能性あり)。
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-amber-700 text-sm dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <span>
+            <strong className="font-semibold">GMO ティッカー取得失敗</strong>{" "}
+            含み損益は建値ベースで表示しています (実際の含み損益と乖離している可能性あり)。
+          </span>
         </div>
       )}
 

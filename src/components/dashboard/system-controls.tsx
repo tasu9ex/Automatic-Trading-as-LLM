@@ -17,6 +17,7 @@ import {
   type CycleIntervalMinutes,
   formatIntervalLabel,
 } from "@/lib/system-control/constants";
+import { ChevronDown, Lock, LockOpen } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 
@@ -278,15 +279,23 @@ export function SystemControls({
             <Badge variant={stateBadgeVariant(effectiveState)}>
               {STATE_LABELS[effectiveState] ?? effectiveState}
             </Badge>
-            <span className="text-muted-foreground text-xs">▼ 展開</span>
+            <span className="flex items-center gap-1 text-muted-foreground text-xs">
+              <ChevronDown className="size-3.5" /> 展開
+            </span>
           </div>
         </summary>
         <CardContent className="flex flex-col gap-4 border-border border-t pt-4">
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground text-xs">
-              {unlocked
-                ? "🔓 編集モード (再度押すとロックされます)"
-                : "🔒 ロック中 — 制御操作には右のボタンを押してください"}
+            <span className="flex items-center gap-1.5 text-muted-foreground text-xs">
+              {unlocked ? (
+                <>
+                  <LockOpen className="size-3.5" /> 編集モード (再度押すとロックされます)
+                </>
+              ) : (
+                <>
+                  <Lock className="size-3.5" /> ロック中 — 制御操作には右のボタンを押してください
+                </>
+              )}
             </span>
             <Button
               type="button"
@@ -294,7 +303,15 @@ export function SystemControls({
               size="sm"
               onClick={() => setUnlocked(!unlocked)}
             >
-              {unlocked ? "🔒 ロック" : "🔓 ロック解除"}
+              {unlocked ? (
+                <>
+                  <Lock className="size-3.5" /> ロック
+                </>
+              ) : (
+                <>
+                  <LockOpen className="size-3.5" /> ロック解除
+                </>
+              )}
             </Button>
           </div>
 
