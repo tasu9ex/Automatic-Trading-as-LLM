@@ -727,6 +727,40 @@ function ctxToSignal(c: CoinCtx): ExecutionPlanSignal {
   };
 }
 
+/**
+ * 1 銘柄分の Critic 入力 (entry / exit + 現在価格)。
+ * last_price_jpy は Critic の target_price_jpy スケール sanity check に使う。
+ * target_price_jpy は Trader が出した「次サイクル後の緩い目標 (JPY)」。
+ */
+function criticDecisionForCtx(c: CoinCtx) {
+  return {
+    last_price_jpy: c.snap.ticker?.last ? Number(c.snap.ticker.last) : null,
+    entry: c.entry
+      ? {
+          decision: c.entry.result,
+          confidence: Number(c.entry.confidence),
+          target_price_jpy: c.entry.entryTargetPriceJpy
+            ? Number(c.entry.entryTargetPriceJpy)
+            : null,
+          expected_holding_days:
+            c.entry.entryExpectedHoldingDaysMin && c.entry.entryExpectedHoldingDaysMax
+              ? {
+                  min: Number(c.entry.entryExpectedHoldingDaysMin),
+                  max: Number(c.entry.entryExpectedHoldingDaysMax),
+                }
+              : null,
+        }
+      : null,
+    exit: c.exit
+      ? {
+          decision: c.exit.result,
+          confidence: Number(c.exit.confidence),
+          close_pct: c.exit.closePct ? Number(c.exit.closePct) : 100,
+        }
+      : null,
+  };
+}
+
 interface CriticDecisionResult {
   final: { entries: Record<string, number>; exits: ExecutionPlan["exits"] };
   modifiedPositions: Record<string, number> | null;
@@ -750,41 +784,7 @@ async function processCriticDecision(args: {
     ctxs.filter((c) => c.analyst).map((c) => [c.coin.symbol, c.analyst?.synthesis]),
   );
   const decisionsBySymbol = Object.fromEntries(
-    ctxs.map((c) => {
-      const lastPriceJpy = c.snap.ticker?.last ? Number(c.snap.ticker.last) : null;
-      return [
-        c.coin.symbol,
-        {
-          // 現在価格 (Critic の target_price_jpy sanity check 用)
-          last_price_jpy: lastPriceJpy,
-          entry: c.entry
-            ? {
-                decision: c.entry.result,
-                confidence: Number(c.entry.confidence),
-                // Trader が出した「次サイクル後の緩い目標 (JPY)」。
-                // Critic は last_price_jpy との比率でスケール sanity check に使う。
-                target_price_jpy: c.entry.entryTargetPriceJpy
-                  ? Number(c.entry.entryTargetPriceJpy)
-                  : null,
-                expected_holding_days:
-                  c.entry.entryExpectedHoldingDaysMin && c.entry.entryExpectedHoldingDaysMax
-                    ? {
-                        min: Number(c.entry.entryExpectedHoldingDaysMin),
-                        max: Number(c.entry.entryExpectedHoldingDaysMax),
-                      }
-                    : null,
-              }
-            : null,
-          exit: c.exit
-            ? {
-                decision: c.exit.result,
-                confidence: Number(c.exit.confidence),
-                close_pct: c.exit.closePct ? Number(c.exit.closePct) : 100,
-              }
-            : null,
-        },
-      ];
-    }),
+    ctxs.map((c) => [c.coin.symbol, criticDecisionForCtx(c)]),
   );
   const symbolToName = Object.fromEntries(ctxs.map((c) => [c.coin.symbol, c.coin.name]));
   const systemHealth = await buildSystemHealth({ strategyId: args.strategyId, ctxs });

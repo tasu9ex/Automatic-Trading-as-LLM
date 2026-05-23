@@ -1,3 +1,4 @@
+import { periodAsMdy } from "@/lib/clients/period-date";
 import { withClientRetry } from "@/lib/clients/retry";
 import { createLogger } from "@/lib/logging";
 import { runWith } from "@/lib/rate-limit";
@@ -38,19 +39,6 @@ export async function callPerplexity(req: PerplexityRequest): Promise<Perplexity
   );
 }
 
-/**
- * `now - periodHours` を MM/DD/YYYY 形式へ変換 (UTC)。
- * Perplexity API は日付単位までしか受け付けないため、実窓は最大 +24h ゆるくなる。
- * プロンプトの自然文「過去 N 時間」と併用して絞る前提。
- */
-export function afterDateFilter(periodHours: number, nowMs: number = Date.now()): string {
-  const d = new Date(nowMs - periodHours * 3600_000);
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const yyyy = d.getUTCFullYear();
-  return `${mm}/${dd}/${yyyy}`;
-}
-
 async function callPerplexityOnce(
   req: PerplexityRequest,
   apiKey: string,
@@ -67,7 +55,7 @@ async function callPerplexityOnce(
   if (req.periodHours != null && req.periodHours > 0) {
     // Perplexity API は search_recency_filter と search_after_date_filter の併用を 400 で弾く
     // (`invalid_date_filter_combination`)。after_date の方が日付精度で絞れるのでこちら一本。
-    body.search_after_date_filter = afterDateFilter(req.periodHours);
+    body.search_after_date_filter = periodAsMdy(req.periodHours);
   }
 
   const res = await fetch(BASE_URL, {

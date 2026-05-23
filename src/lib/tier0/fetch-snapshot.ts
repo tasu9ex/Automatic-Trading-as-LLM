@@ -264,26 +264,35 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
 }
 
 /**
- * Tier 0 必須ソース失敗時の Error 組み立て。
+ * Tier 0 必須ソース失敗を構造化して伝えるエラー。
  *
- * message には `<labels> (<label>: <reason>... | ...)` 形式で各 rejection の生メッセージを連結し、
- * cause に最初の rejection を保持。これがないと Sentry 上で `failed for X: Ticker, Kline` の
- * ラベルしか残らず、HTTP status や API のエラー本体を breadcrumb から推理する羽目になる。
+ * message は `<labels> (<label>: <reason>... | ...)` 形式で Sentry の breadcrumb なしでも
+ * 原因まで読める。consumer 側は labels 配列を直接読めるので message を regex parse しなくて済む。
  */
+export class RequiredSourcesFailedError extends Error {
+  constructor(
+    readonly symbol: string,
+    readonly failures: ReadonlyArray<{ label: string; reasonMessage: string }>,
+    options?: { cause?: unknown },
+  ) {
+    const labels = failures.map((f) => f.label).join(", ");
+    const reasons = failures.map((f) => `${f.label}: ${f.reasonMessage}`).join(" | ");
+    super(`Tier 0 required sources failed for ${symbol}: ${labels} (${reasons})`, options);
+    this.name = "RequiredSourcesFailedError";
+  }
+}
+
 function buildRequiredSourcesError(
   symbol: string,
   failures: Array<readonly [string, PromiseSettledResult<unknown>]>,
-): Error {
-  const labels = failures.map(([l]) => l).join(", ");
-  const reasons = failures.map(([label, res]) => `${label}: ${reasonText(res)}`);
-  const err = new Error(
-    `Tier 0 required sources failed for ${symbol}: ${labels} (${reasons.join(" | ")})`,
-  );
+): RequiredSourcesFailedError {
+  const structured = failures.map(([label, res]) => ({
+    label,
+    reasonMessage: reasonText(res),
+  }));
   const firstRejected = failures.find(([, r]) => r.status === "rejected");
-  if (firstRejected?.[1].status === "rejected") {
-    (err as Error & { cause?: unknown }).cause = firstRejected[1].reason;
-  }
-  return err;
+  const cause = firstRejected?.[1].status === "rejected" ? firstRejected[1].reason : undefined;
+  return new RequiredSourcesFailedError(symbol, structured, { cause });
 }
 
 function reasonText(res: PromiseSettledResult<unknown>): string {

@@ -12,13 +12,7 @@ import type { SizingMethod } from "@/lib/allocator";
 import { notifyCycleCost } from "@/lib/cycle/cost-notify";
 import { runJudgmentCycle } from "@/lib/cycle/judgment";
 import { createLogger } from "@/lib/logging";
-import {
-  captureError,
-  initSentry,
-  initTelemetry,
-  shutdownSentry,
-  shutdownTelemetry,
-} from "@/lib/telemetry";
+import { captureError, initSentry, shutdownSentry } from "@/lib/telemetry";
 
 const logger = createLogger("cycle.judgment.cli");
 
@@ -38,15 +32,10 @@ function parseArgs(argv: string[]): { strategyId?: string; method?: SizingMethod
 }
 
 async function main() {
-  // 順序重要: Telemetry を先に初期化しないと @sentry/node 内部の OTel が
-  // グローバル TracerProvider を握ってしまい、AI SDK のスパンが Langfuse に届かない
-  initTelemetry();
   initSentry();
 
   const args = parseArgs(process.argv.slice(2));
   const result = await runJudgmentCycle(args);
-
-  await shutdownTelemetry();
 
   // 内部で Langfuse ingestion 待ち + 取得 + 累計加算 + Discord 通知
   console.log("\n--- Langfuse cost 取得 + Discord 通知...");
@@ -59,7 +48,6 @@ async function main() {
 main().catch(async (err) => {
   logger.error({ err }, "Cycle failed");
   captureError(err, { tags: { script: "cycle.judgment" } });
-  await shutdownTelemetry();
   await shutdownSentry();
   process.exit(1);
 });

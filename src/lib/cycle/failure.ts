@@ -17,6 +17,7 @@ import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { getRiskParams } from "@/lib/risk/params";
 import { advanceNextScheduledAt } from "@/lib/system-control";
+import { RequiredSourcesFailedError } from "@/lib/tier0/fetch-snapshot";
 import { eq } from "drizzle-orm";
 
 const logger = createLogger("cycle.failure");
@@ -156,6 +157,7 @@ export async function recordCycleFailure(args: {
     kind,
     phase: args.phase,
     cycleId: args.cycleId,
+    err: args.err,
     errMsg,
     newCount,
     nextScheduledAt: advancedNextScheduledAt,
@@ -168,6 +170,7 @@ async function sendFailureNotification(args: {
   kind: ErrorKind;
   phase: string;
   cycleId: string;
+  err: unknown;
   errMsg: string;
   newCount: number;
   nextScheduledAt: Date | null;
@@ -217,9 +220,9 @@ async function sendFailureNotification(args: {
   }
 
   // transient (リトライ尽き)
-  // 1. error.message から失敗ソースが読み取れればそれを優先 (例: "Tier 0 required sources failed for ETH: 1m kline")
+  // 1. RequiredSourcesFailedError なら symbol + label 配列から具体ヒントを組み立てる
   // 2. 読み取れなければ phase 単位の固定 hint にフォールバック
-  const dynamicHint = extractFailureHint(args.errMsg);
+  const dynamicHint = extractFailureHint(args.err);
   const hint = dynamicHint ??
     PHASE_HINTS[args.phase] ?? {
       cause: "外部 API の一時障害の可能性",
@@ -258,22 +261,11 @@ function formatFailureCounter(newCount: number, autoPausedNow: boolean, threshol
 }
 
 /**
- * Tier 0 系のエラーメッセージから失敗ソースを抜き出して、具体的な原因 / 対応を組み立てる。
- *   "Tier 0 required sources failed for ETH: 1m kline" → kline 由来とみなす
- * 抽出できないなら null (呼び元が PHASE_HINTS にフォールバック)
+ * Tier 0 必須ソース失敗から具体的な原因 / 対応を組み立てる。
+ * RequiredSourcesFailedError 以外は null (呼び元が PHASE_HINTS にフォールバック)。
  */
-function extractFailureHint(errMsg: string): { cause: string; action: string } | null {
-  // "Tier 0 required sources failed for <SYMBOL>: <SOURCE1>, <SOURCE2> (<reason details>...)" を捕捉
-  // 後ろの "(<reason ...>)" は cause 抽出には使わないので、最初の "(" 直前までを source 列として読む。
-  const m = errMsg.match(/Tier 0 required sources failed for (\w+):\s*([^(\n]+)/i);
-  if (!m) return null;
-  const symbol = m[1];
-  const sources = (m[2] ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (sources.length === 0) return null;
-
+function extractFailureHint(err: unknown): { cause: string; action: string } | null {
+  if (!(err instanceof RequiredSourcesFailedError)) return null;
   const causeBySource: Record<string, string> = {
     "1m kline": "GMO の 1m kline がデータ未公開 (早朝など date が変わった直後に発生しやすい)",
     "1d kline": "GMO の 1d kline 取得失敗",
@@ -284,9 +276,9 @@ function extractFailureHint(errMsg: string): { cause: string; action: string } |
     Perplexity: "Perplexity API の障害 (status 確認: https://status.perplexity.ai)",
     Grok: "xAI Grok API の障害 (status 確認: https://status.x.ai)",
   };
-  const causes = sources.map((s) => causeBySource[s] ?? `${s} 取得失敗`);
+  const causes = err.failures.map((f) => causeBySource[f.label] ?? `${f.label} 取得失敗`);
   return {
-    cause: `${symbol}: ${causes.join(" / ")}`,
+    cause: `${err.symbol}: ${causes.join(" / ")}`,
     action: "次サイクルで自動リトライ。連発するなら API status と periodHours 設定を確認",
   };
 }

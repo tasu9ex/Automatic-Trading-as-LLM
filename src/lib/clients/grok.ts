@@ -1,3 +1,4 @@
+import { periodAsIsoDate } from "@/lib/clients/period-date";
 import { withClientRetry } from "@/lib/clients/retry";
 import { createLogger } from "@/lib/logging";
 import { runWith } from "@/lib/rate-limit";
@@ -113,7 +114,7 @@ async function callGrokWithTools(req: GrokRequest, apiKey: string): Promise<Grok
   const webTool: Record<string, unknown> = { type: "web_search" };
   const xTool: Record<string, unknown> = { type: "x_search" };
   if (req.periodHours != null && req.periodHours > 0) {
-    const fromDate = fromDateForPeriod(req.periodHours);
+    const fromDate = periodAsIsoDate(req.periodHours);
     webTool.from_date = fromDate;
     xTool.from_date = fromDate;
   }
@@ -170,12 +171,4 @@ async function callGrokWithTools(req: GrokRequest, apiKey: string): Promise<Grok
       outputTokens: json.usage?.output_tokens ?? 0,
     },
   };
-}
-
-/** periodHours → from_date (YYYY-MM-DD, UTC)。日精度なので実窓は最大 +24h 緩くなる。 */
-function fromDateForPeriod(periodHours: number, nowMs: number = Date.now()): string {
-  const d = new Date(nowMs - periodHours * 3600_000);
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  return `${d.getUTCFullYear()}-${mm}-${dd}`;
 }

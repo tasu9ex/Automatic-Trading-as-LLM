@@ -9,11 +9,7 @@ import { SentryPropagator, SentrySpanProcessor, getSentryResource } from "@sentr
 
 const logger = createLogger("telemetry.otel-setup");
 
-/**
- * Sentry の AdditionalOpenTelemetryOptions に渡せる SpanProcessor 群を返す。
- * 主に setupOtelWithSentry 内部用だが、initOpenTelemetry 経由でも使えるようにエクスポート。
- */
-export function langfuseProcessors(): SpanProcessor[] {
+function langfuseProcessors(): SpanProcessor[] {
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
   const secretKey = process.env.LANGFUSE_SECRET_KEY;
   if (!publicKey || !secretKey) {
@@ -70,18 +66,4 @@ export function setupOtelWithSentry(client: NodeClient): void {
     { langfuseEnabled: lfProcs.length > 0 },
     "OTel TracerProvider initialized (Sentry + Langfuse)",
   );
-}
-
-/**
- * @deprecated setupOtelWithSentry に統合済み。残置は後方互換のため。
- */
-export function initTelemetry(): void {
-  // no-op
-}
-
-/**
- * @deprecated shutdownSentry が provider の flush も担う。
- */
-export async function shutdownTelemetry(): Promise<void> {
-  // no-op
 }

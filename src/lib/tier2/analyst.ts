@@ -3,6 +3,7 @@ import { formatCycleInterval } from "@/lib/cycle/cycle-interval";
 import { getPrompt } from "@/lib/prompts";
 import { type AnalystOutput, AnalystOutputSchema } from "@/lib/schemas/llm-outputs";
 import type { Snapshot } from "@/lib/tier0/fetch-snapshot";
+import { formatOhlcvBars } from "@/lib/tier0/format-ohlcv";
 import type { PreAnalystResult } from "@/lib/tier1/pre-analyst";
 
 export interface AnalystResult {
@@ -11,20 +12,12 @@ export interface AnalystResult {
   llmModel: string;
 }
 
-/**
- * OHLCV を LLM 用テキストに整形。価格は **bitFlyer JPY 建て** であることを ¥ 接頭で明示。
- * 報道由来の USD 価格と混同してスケール誤読 ($12.4k 等) するのを防ぐため。
- */
 export function formatBars(bars: Snapshot["ohlcv"], maxRows: number): string {
-  if (bars.length === 0) return "(データなし)";
-  const recent = bars.slice(-maxRows);
-  const fmt = (n: string | number) => `¥${Math.round(Number(n)).toLocaleString("en-US")}`;
-  return recent
-    .map((bar) => {
-      const d = new Date(Number(bar.openTime)).toISOString();
-      return `${d}: O=${fmt(bar.open)} H=${fmt(bar.high)} L=${fmt(bar.low)} C=${fmt(bar.close)} V=${bar.volume}`;
-    })
-    .join("\n");
+  return formatOhlcvBars(bars, {
+    maxRows,
+    datePrecision: "iso",
+    emptyText: "(データなし)",
+  });
 }
 
 /**

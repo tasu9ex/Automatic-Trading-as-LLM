@@ -31,14 +31,7 @@ import {
 } from "@/lib/cycle/phases";
 import { createLogger } from "@/lib/logging";
 import { advanceNextScheduledAt, getSystemStateRow, isScheduleDue } from "@/lib/system-control";
-import {
-  captureError,
-  initSentry,
-  initTelemetry,
-  runWithSession,
-  shutdownSentry,
-  shutdownTelemetry,
-} from "@/lib/telemetry";
+import { captureError, initSentry, runWithSession, shutdownSentry } from "@/lib/telemetry";
 import { inngest } from "./client";
 
 const logger = createLogger("inngest.functions");
@@ -62,7 +55,6 @@ export const judgmentCron = inngest.createFunction(
     triggers: [{ cron: "0 * * * *" }],
   },
   async ({ step }) => {
-    initTelemetry();
     initSentry();
 
     try {
@@ -174,7 +166,6 @@ export const judgmentCron = inngest.createFunction(
       captureError(err, { tags: { trigger: "inngest.judgment-cron" } });
       throw err;
     } finally {
-      await shutdownTelemetry();
       await shutdownSentry();
     }
   },
