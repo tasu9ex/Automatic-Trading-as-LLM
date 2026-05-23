@@ -222,23 +222,7 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
         `${label} fetch failed`,
       );
     }
-    const labels = failures.map(([l]) => l).join(", ");
-    // 元エラーの message を throw に含めないと Sentry breadcrumb 推理になってしまう。
-    // 各 source の最初の rejection を `<label>: <msg>` 形式で連結し、`cause` にも生 reason を残す。
-    const reasons = failures.map(([label, res]) => {
-      if (res.status !== "rejected") return `${label}: <unknown>`;
-      const msg = res.reason instanceof Error ? res.reason.message : String(res.reason);
-      return `${label}: ${msg.slice(0, 200)}`;
-    });
-    const err = new Error(
-      `Tier 0 required sources failed for ${symbol}: ${labels} (${reasons.join(" | ")})`,
-    );
-    // 最初の rejection を cause に保持 (Node が自動でログに含めるため Sentry でも可視化される)
-    const firstRejected = failures.find(([, r]) => r.status === "rejected");
-    if (firstRejected && firstRejected[1].status === "rejected") {
-      (err as Error & { cause?: unknown }).cause = firstRejected[1].reason;
-    }
-    throw err;
+    throw buildRequiredSourcesError(symbol, failures);
   }
 
   for (const [label, res] of [
@@ -277,6 +261,35 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
     },
     micro,
   };
+}
+
+/**
+ * Tier 0 必須ソース失敗時の Error 組み立て。
+ *
+ * message には `<labels> (<label>: <reason>... | ...)` 形式で各 rejection の生メッセージを連結し、
+ * cause に最初の rejection を保持。これがないと Sentry 上で `failed for X: Ticker, Kline` の
+ * ラベルしか残らず、HTTP status や API のエラー本体を breadcrumb から推理する羽目になる。
+ */
+function buildRequiredSourcesError(
+  symbol: string,
+  failures: Array<readonly [string, PromiseSettledResult<unknown>]>,
+): Error {
+  const labels = failures.map(([l]) => l).join(", ");
+  const reasons = failures.map(([label, res]) => `${label}: ${reasonText(res)}`);
+  const err = new Error(
+    `Tier 0 required sources failed for ${symbol}: ${labels} (${reasons.join(" | ")})`,
+  );
+  const firstRejected = failures.find(([, r]) => r.status === "rejected");
+  if (firstRejected?.[1].status === "rejected") {
+    (err as Error & { cause?: unknown }).cause = firstRejected[1].reason;
+  }
+  return err;
+}
+
+function reasonText(res: PromiseSettledResult<unknown>): string {
+  if (res.status !== "rejected") return "<unknown>";
+  const msg = res.reason instanceof Error ? res.reason.message : String(res.reason);
+  return msg.slice(0, 200);
 }
 
 function summarizeMicro(book: Orderbook, trades: PublicTrade[]): MicroMarket | null {
