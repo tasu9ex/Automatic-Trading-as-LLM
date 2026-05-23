@@ -22,34 +22,13 @@ import {
   getTickerSnapshot,
   isCycleInFlight,
 } from "@/lib/cycle/queries";
+import { criticStatusLabel, criticStatusVariant } from "@/lib/format/critic-decision";
 import { formatJstDate, formatJstDateTime } from "@/lib/format/datetime";
+import { formatJpy } from "@/lib/format/jpy";
 import { AlertTriangle } from "lucide-react";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
-
-function jpy(n: number) {
-  return `¥${n.toLocaleString("ja-JP", { maximumFractionDigits: 0 })}`;
-}
-
-// recentCycles の Critic 判定ラベル / バッジ variant を共通化 (page.tsx の複雑度低減)。
-const CRITIC_LABEL: Record<string, string> = {
-  approve: "承認",
-  modify: "修正",
-  veto: "拒否",
-  failed: "失敗",
-  in_flight: "実行中",
-  "auto-skip": "審査スキップ",
-};
-function criticLabel(decision: string): string {
-  return CRITIC_LABEL[decision] ?? decision;
-}
-function criticBadgeVariant(decision: string): "default" | "outline" | "destructive" {
-  if (decision === "approve") return "default";
-  if (decision === "modify" || decision === "in_flight" || decision === "auto-skip")
-    return "outline";
-  return "destructive";
-}
 
 function CycleRow({ c }: { c: RecentCycleRow }) {
   return (
@@ -64,8 +43,8 @@ function CycleRow({ c }: { c: RecentCycleRow }) {
         </div>
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground text-xs">{c.symbolCount} 銘柄</span>
-          <Badge variant={criticBadgeVariant(c.criticDecision)}>
-            {criticLabel(c.criticDecision)}
+          <Badge variant={criticStatusVariant(c.criticDecision)}>
+            {criticStatusLabel(c.criticDecision)}
           </Badge>
         </div>
       </Link>
@@ -88,12 +67,12 @@ function PositionRow({ p, detail }: { p: OpenPositionRow; detail: PositionDetail
           <span className="font-medium">{p.symbol}</span>
           <div className="flex flex-col items-end text-xs">
             <span className="font-mono text-muted-foreground">
-              {p.quantity} @ {jpy(p.avgEntryPrice)}・建玉日 {formatJstDate(p.openedAt)}
+              {p.quantity} @ {formatJpy(p.avgEntryPrice)}・建玉日 {formatJstDate(p.openedAt)}
             </span>
             {hasMtm && (
               <span className={`font-mono ${pnlColor}`}>
                 {sign}
-                {jpy(p.unrealizedPnlJpy)} ({sign}
+                {formatJpy(p.unrealizedPnlJpy)} ({sign}
                 {pnlPct.toFixed(2)}%)
               </span>
             )}
@@ -117,12 +96,12 @@ function PositionDetailPanel({ detail }: { detail: PositionDetail }) {
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono">
         <div className="text-muted-foreground">peak / trough</div>
         <div>
-          {jpy(detail.peakPrice)} / {jpy(detail.troughPrice)}
+          {formatJpy(detail.peakPrice)} / {formatJpy(detail.troughPrice)}
         </div>
         {detail.entryTargetPriceJpy && (
           <>
             <div className="text-muted-foreground">target</div>
-            <div>{jpy(detail.entryTargetPriceJpy)}</div>
+            <div>{formatJpy(detail.entryTargetPriceJpy)}</div>
           </>
         )}
         {(detail.entryExpectedHoldingDaysMin !== null ||
@@ -136,7 +115,7 @@ function PositionDetailPanel({ detail }: { detail: PositionDetail }) {
           </>
         )}
         <div className="text-muted-foreground">実現損益 (部分決済)</div>
-        <div className={pnlClass}>{jpy(detail.realizedPnlJpy)}</div>
+        <div className={pnlClass}>{formatJpy(detail.realizedPnlJpy)}</div>
       </div>
       {detail.entryReason && (
         <div className="mt-2">
@@ -156,8 +135,8 @@ function PositionDetailPanel({ detail }: { detail: PositionDetail }) {
           <ul className="mt-1 ml-2 space-y-0.5">
             {detail.pendingOrders.map((s) => (
               <li key={s.id} className="font-mono">
-                {s.kind}: trigger {jpy(s.triggerPrice)}
-                {s.limitPrice !== null && ` / limit ${jpy(s.limitPrice)}`}
+                {s.kind}: trigger {formatJpy(s.triggerPrice)}
+                {s.limitPrice !== null && ` / limit ${formatJpy(s.limitPrice)}`}
               </li>
             ))}
           </ul>
@@ -275,7 +254,7 @@ export default async function Home({
             <Card>
               <CardHeader className="pb-2">
                 <CardDescription>現金</CardDescription>
-                <CardTitle className="font-mono text-lg">{jpy(stats.cashJpy)}</CardTitle>
+                <CardTitle className="font-mono text-lg">{formatJpy(stats.cashJpy)}</CardTitle>
               </CardHeader>
             </Card>
             <Card>
@@ -286,23 +265,23 @@ export default async function Home({
                     stats.realizedPnlJpy >= 0 ? "text-emerald-500" : "text-red-500"
                   }`}
                 >
-                  {jpy(stats.realizedPnlJpy)}
+                  {formatJpy(stats.realizedPnlJpy)}
                 </CardTitle>
               </CardHeader>
             </Card>
             <Card>
               <CardHeader className="pb-2">
                 <CardDescription>資産時価総額</CardDescription>
-                <CardTitle className="font-mono text-lg">{jpy(equity)}</CardTitle>
+                <CardTitle className="font-mono text-lg">{formatJpy(equity)}</CardTitle>
                 <CardDescription className="pt-1 text-xs">
                   累計:{" "}
                   <span className={totalPnl >= 0 ? "text-emerald-500" : "text-red-500"}>
-                    {jpy(totalPnl)} ({totalPnlPct.toFixed(2)}%)
+                    {formatJpy(totalPnl)} ({totalPnlPct.toFixed(2)}%)
                   </span>
                   {" / "}
                   含み:{" "}
                   <span className={unrealizedPnl >= 0 ? "text-emerald-500" : "text-red-500"}>
-                    {jpy(unrealizedPnl)}
+                    {formatJpy(unrealizedPnl)}
                   </span>
                 </CardDescription>
               </CardHeader>
@@ -318,7 +297,7 @@ export default async function Home({
             <Card>
               <CardHeader className="pb-2">
                 <CardDescription>HWM (資産ピーク)</CardDescription>
-                <CardTitle className="font-mono text-lg">{jpy(hwm)}</CardTitle>
+                <CardTitle className="font-mono text-lg">{formatJpy(hwm)}</CardTitle>
                 <CardDescription className={`pt-1 text-xs ${ddColor}`}>
                   現在 DD: {ddPct}% / Kill 閾値: {triggerPct}%
                 </CardDescription>

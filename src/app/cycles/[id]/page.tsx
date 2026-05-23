@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCycleDetail } from "@/lib/cycle/queries";
+import { criticStatusLabel, criticStatusVariant } from "@/lib/format/critic-decision";
 import { formatJstDateTime } from "@/lib/format/datetime";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -20,6 +21,7 @@ export async function generateMetadata({ params }: PageProps) {
   };
 }
 
+/** Entry/Exit/Critic decision の Badge variant (trade-decision 専用、buy/close/no/hold を扱う) */
 function decisionVariant(result: string): "default" | "destructive" | "outline" {
   if (result === "buy" || result === "close" || result === "approve") return "default";
   if (result === "no" || result === "hold") return "outline";
@@ -39,19 +41,6 @@ function jpDecision(v: string): string {
   return DECISION_JP[v] ?? v;
 }
 
-const STATUS_JP: Record<string, string> = {
-  approve: "承認",
-  modify: "修正",
-  veto: "拒否",
-  failed: "失敗",
-  in_flight: "実行中",
-};
-function statusVariant(status: string): "default" | "destructive" | "outline" {
-  if (status === "approve") return "default";
-  if (status === "modify" || status === "in_flight") return "outline";
-  return "destructive";
-}
-
 export default async function CycleDetailPage({ params }: PageProps) {
   const { id } = await params;
   const detail = await getCycleDetail(id);
@@ -65,8 +54,8 @@ export default async function CycleDetailPage({ params }: PageProps) {
         </Link>
         <div className="flex items-center gap-3">
           <h1 className="font-mono text-xl">サイクル {detail.cycleId.slice(0, 12)}</h1>
-          <Badge variant={statusVariant(detail.status)}>
-            {STATUS_JP[detail.status] ?? detail.status}
+          <Badge variant={criticStatusVariant(detail.status)}>
+            {criticStatusLabel(detail.status)}
           </Badge>
         </div>
         <span className="text-muted-foreground text-xs">
