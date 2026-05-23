@@ -20,10 +20,10 @@ import { randomUUID } from "node:crypto";
 import type { SizingMethod } from "@/lib/allocator";
 import { notifyCycleCost } from "@/lib/cycle/cost-notify";
 import { isEmergencyStopError, recordEmergencyStop } from "@/lib/cycle/emergency-stop";
+import { recordCycleFailure } from "@/lib/cycle/failure";
+import { finalize } from "@/lib/cycle/finalize";
 import {
-  finalize,
   preflight,
-  recordCycleFailure,
   tier0Snapshots,
   tier1PreAnalyst,
   tier2Analyst,

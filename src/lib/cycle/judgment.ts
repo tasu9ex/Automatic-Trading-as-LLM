@@ -18,11 +18,10 @@
 import { randomUUID } from "node:crypto";
 import type { SizingMethod } from "@/lib/allocator";
 import { isEmergencyStopError, recordEmergencyStop } from "@/lib/cycle/emergency-stop";
+import { recordCycleFailure } from "@/lib/cycle/failure";
+import { type FinalizeResult, finalize } from "@/lib/cycle/finalize";
 import {
-  type FinalizeResult,
-  finalize,
   preflight,
-  recordCycleFailure,
   tier0Snapshots,
   tier1PreAnalyst,
   tier2Analyst,
