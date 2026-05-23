@@ -1,6 +1,6 @@
-import { generateJson } from "@/lib/clients/generate-json";
 import { formatCycleInterval } from "@/lib/cycle/cycle-interval";
-import { getPrompt } from "@/lib/prompts";
+import { formatJpy } from "@/lib/format/jpy";
+import { runPromptedJson } from "@/lib/prompts";
 import { type ExitDecisionOutput, ExitDecisionOutputSchema } from "@/lib/schemas/llm-outputs";
 import type { AnalystResult } from "@/lib/tier2/analyst";
 
@@ -46,51 +46,38 @@ export async function runExitDecision(
       予想保有期間: exp.expectedHoldingDays
         ? `${exp.expectedHoldingDays.min}-${exp.expectedHoldingDays.max} 日 (現在 ${position.holdingDays.toFixed(1)} 日経過)`
         : "(なし)",
-      緩い目標価格: exp.targetPriceJpy ? `¥${exp.targetPriceJpy.toLocaleString()}` : "(なし)",
+      緩い目標価格: exp.targetPriceJpy ? formatJpy(exp.targetPriceJpy) : "(なし)",
       Exit条件仮説: exp.exitCondition ?? "(なし)",
     },
     null,
     2,
   );
 
-  const resolved = await getPrompt("tier3/exit", {
-    symbol: position.symbol,
-    name: position.name,
-    position_state: JSON.stringify(
-      {
-        建値: position.avgEntryPrice,
-        保有量: position.quantity,
-        含み損益JPY: position.unrealizedPnlJpy,
-        保有期間日数: position.holdingDays,
-        Entry理由: position.entryReason ?? "(記録なし)",
-        保有中最大含み益JPY: position.peakPnlJpy,
-        保有中最大含み損JPY: position.troughPnlJpy,
-      },
-      null,
-      2,
-    ),
-    entry_expectation: entryExpectationDesc,
-    analyst_synthesis: JSON.stringify(analyst.output.synthesis, null, 2),
-    analyst_full: JSON.stringify(analyst.output, null, 2),
-    cycle_interval: formatCycleInterval(cycleIntervalMinutes),
-  });
-
-  const output = await generateJson<ExitDecisionOutput>({
-    modelId: resolved.config.model,
-    system: resolved.compiled.system ?? "",
-    prompt: resolved.compiled.user,
+  return runPromptedJson<ExitDecisionOutput>({
+    promptName: "tier3/exit",
+    vars: {
+      symbol: position.symbol,
+      name: position.name,
+      position_state: JSON.stringify(
+        {
+          建値: position.avgEntryPrice,
+          保有量: position.quantity,
+          含み損益JPY: position.unrealizedPnlJpy,
+          保有期間日数: position.holdingDays,
+          Entry理由: position.entryReason ?? "(記録なし)",
+          保有中最大含み益JPY: position.peakPnlJpy,
+          保有中最大含み損JPY: position.troughPnlJpy,
+        },
+        null,
+        2,
+      ),
+      entry_expectation: entryExpectationDesc,
+      analyst_synthesis: JSON.stringify(analyst.output.synthesis, null, 2),
+      analyst_full: JSON.stringify(analyst.output, null, 2),
+      cycle_interval: formatCycleInterval(cycleIntervalMinutes),
+    },
     schema: ExitDecisionOutputSchema,
-    temperature: resolved.config.temperature,
-    maxOutputTokens: resolved.config.maxTokens,
-    thinkingLevel: resolved.config.thinkingLevel,
     feature: "decision.exit",
     metadata: { symbol: position.symbol },
   });
-
-  return {
-    output,
-    promptVersion:
-      resolved.metadata.source === "langfuse" ? String(resolved.metadata.version) : null,
-    llmModel: resolved.config.model,
-  };
 }

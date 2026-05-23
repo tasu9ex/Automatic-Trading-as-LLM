@@ -17,6 +17,7 @@ import {
   PER_COIN_MIN_JPY,
   TOTAL_MAX_RATIO,
 } from "@/lib/constants/risk";
+import { SINGLETON_ID } from "@/lib/system-control/constants";
 import { eq } from "drizzle-orm";
 
 export { PER_COIN_MIN_JPY, TOTAL_MAX_RATIO };
@@ -38,7 +39,7 @@ export interface RiskParams {
  */
 export async function getRiskParams(): Promise<RiskParams> {
   const row = (
-    await db.select().from(systemState).where(eq(systemState.id, "singleton")).limit(1)
+    await db.select().from(systemState).where(eq(systemState.id, SINGLETON_ID)).limit(1)
   )[0];
 
   const perCoinMaxRatio = clampRatio(

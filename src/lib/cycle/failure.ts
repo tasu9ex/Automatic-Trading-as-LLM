@@ -10,13 +10,15 @@
  */
 
 import { db } from "@/db/client";
-import { cycles, systemEvents, systemState } from "@/db/schema";
+import { systemEvents, systemState } from "@/db/schema";
+import { markCycleCompleted } from "@/lib/cycle/mark-completed";
 import { type ErrorKind, classifyError } from "@/lib/cycle/retry";
 import { checkAndTriggerKillSwitch } from "@/lib/kill-switch";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { getRiskParams } from "@/lib/risk/params";
 import { advanceNextScheduledAt } from "@/lib/system-control";
+import { SINGLETON_ID } from "@/lib/system-control/constants";
 import { RequiredSourcesFailedError } from "@/lib/tier0/fetch-snapshot";
 import { eq } from "drizzle-orm";
 
@@ -61,7 +63,7 @@ export async function recordCycleFailure(args: {
     db
       .select()
       .from(systemState)
-      .where(eq(systemState.id, "singleton"))
+      .where(eq(systemState.id, SINGLETON_ID))
       .limit(1)
       .then((r) => r[0]),
     getRiskParams(),
@@ -84,7 +86,7 @@ export async function recordCycleFailure(args: {
   await db
     .insert(systemState)
     .values({
-      id: "singleton",
+      id: SINGLETON_ID,
       state: nextStateValue,
       consecutiveFailures: newCount,
       lastFailureKind: kind,
@@ -123,7 +125,7 @@ export async function recordCycleFailure(args: {
 
   // DD: 失敗 cycle も completedAt を埋めて "in_flight" 扱いを終わらせる
   // (dashboard の getRecentCyclesImpl / isCycleInFlight が completedAt IS NULL を見るため)
-  await db.update(cycles).set({ completedAt: new Date() }).where(eq(cycles.id, args.cycleId));
+  await markCycleCompleted(args.cycleId);
 
   if (kind === "quota") {
     await db.insert(systemEvents).values({

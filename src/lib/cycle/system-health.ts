@@ -13,6 +13,7 @@ import type { DataFreshnessLevel, SystemHealth } from "@/lib/schemas/system-heal
 import type { Snapshot } from "@/lib/tier0/fetch-snapshot";
 import { eq } from "drizzle-orm";
 
+import { SINGLETON_ID } from "@/lib/system-control/constants";
 const FRESH_THRESHOLD_MS = 60 * 60_000; // 1 時間
 
 type CoinCtx = {
@@ -27,7 +28,7 @@ export interface BuildSystemHealthInput {
 
 export async function buildSystemHealth(input: BuildSystemHealthInput): Promise<SystemHealth> {
   const state = (
-    await db.select().from(systemState).where(eq(systemState.id, "singleton")).limit(1)
+    await db.select().from(systemState).where(eq(systemState.id, SINGLETON_ID)).limit(1)
   )[0];
 
   const dataFreshness: Record<string, DataFreshnessLevel> = {};

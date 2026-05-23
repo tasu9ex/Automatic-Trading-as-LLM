@@ -10,9 +10,11 @@
  */
 
 import { db } from "@/db/client";
-import { cycles, systemEvents, systemState } from "@/db/schema";
+import { systemEvents, systemState } from "@/db/schema";
+import { markCycleCompleted } from "@/lib/cycle/mark-completed";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
+import { SINGLETON_ID } from "@/lib/system-control/constants";
 import { eq } from "drizzle-orm";
 
 const logger = createLogger("cycle.emergency-stop");
@@ -38,7 +40,7 @@ export async function assertNotEmergencyStop(phase: string): Promise<void> {
     await db
       .select({ emergencyStop: systemState.emergencyStop })
       .from(systemState)
-      .where(eq(systemState.id, "singleton"))
+      .where(eq(systemState.id, SINGLETON_ID))
       .limit(1)
   )[0];
   if (row?.emergencyStop) {
@@ -64,7 +66,7 @@ export async function recordEmergencyStop(args: {
   });
 
   // DD と同じく completedAt を埋めて "in_flight" 扱いを終わらせる
-  await db.update(cycles).set({ completedAt: new Date() }).where(eq(cycles.id, args.cycleId));
+  await markCycleCompleted(args.cycleId);
 
   await notify({
     level: "warning",

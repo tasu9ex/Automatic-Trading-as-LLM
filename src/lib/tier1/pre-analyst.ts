@@ -1,6 +1,5 @@
-import { generateJson } from "@/lib/clients/generate-json";
 import { formatCycleInterval } from "@/lib/cycle/cycle-interval";
-import { getPrompt } from "@/lib/prompts";
+import { runPromptedJson } from "@/lib/prompts";
 import { type PreAnalystOutput, PreAnalystOutputSchema } from "@/lib/schemas/llm-outputs";
 import type { Snapshot } from "@/lib/tier0/fetch-snapshot";
 import { formatOhlcvBars } from "@/lib/tier0/format-ohlcv";
@@ -28,31 +27,18 @@ export async function runPreAnalyst(
   snapshot: Snapshot,
   cycleIntervalMinutes: number,
 ): Promise<PreAnalystResult> {
-  const resolved = await getPrompt("tier1/pre-analyst", {
-    symbol: snapshot.symbol,
-    name: snapshot.name,
-    perplexity_summary: snapshot.perplexitySummary,
-    grok_summary: snapshot.grokSummary,
-    price_snapshot: buildPriceSnapshotText(snapshot),
-    cycle_interval: formatCycleInterval(cycleIntervalMinutes),
-  });
-
-  const output = await generateJson<PreAnalystOutput>({
-    modelId: resolved.config.model,
-    system: resolved.compiled.system ?? "",
-    prompt: resolved.compiled.user,
+  return runPromptedJson<PreAnalystOutput>({
+    promptName: "tier1/pre-analyst",
+    vars: {
+      symbol: snapshot.symbol,
+      name: snapshot.name,
+      perplexity_summary: snapshot.perplexitySummary,
+      grok_summary: snapshot.grokSummary,
+      price_snapshot: buildPriceSnapshotText(snapshot),
+      cycle_interval: formatCycleInterval(cycleIntervalMinutes),
+    },
     schema: PreAnalystOutputSchema,
-    temperature: resolved.config.temperature,
-    maxOutputTokens: resolved.config.maxTokens,
-    thinkingLevel: resolved.config.thinkingLevel,
     feature: "tier1.pre-analyst",
     metadata: { symbol: snapshot.symbol },
   });
-
-  return {
-    output,
-    promptVersion:
-      resolved.metadata.source === "langfuse" ? String(resolved.metadata.version) : null,
-    llmModel: resolved.config.model,
-  };
 }

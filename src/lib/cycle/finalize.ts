@@ -14,7 +14,6 @@ import {
   analystOutputs,
   coins,
   criticOutputs,
-  cycles,
   decisions,
   portfolios,
   positions,
@@ -37,6 +36,7 @@ import {
   type ExecutionPlanSignal,
   buildExecutionPlan,
 } from "@/lib/cycle/execution-plan";
+import { markCycleCompleted } from "@/lib/cycle/mark-completed";
 import { getCycleSnapshot, loadSnapshotFromRow } from "@/lib/cycle/snapshot";
 import { buildSystemHealth } from "@/lib/cycle/system-health";
 import { executeEntry, executeExit } from "@/lib/executor";
@@ -48,6 +48,7 @@ import { PER_COIN_MIN_JPY, TOTAL_MAX_RATIO, getRiskParams } from "@/lib/risk/par
 import type { Snapshot } from "@/lib/tier0/fetch-snapshot";
 import { and, eq, gte } from "drizzle-orm";
 
+import { SINGLETON_ID } from "@/lib/system-control/constants";
 const logger = createLogger("cycle.finalize");
 
 export interface FinalizeResult {
@@ -705,9 +706,9 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
       lastCycleAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(eq(systemState.id, "singleton"));
+    .where(eq(systemState.id, SINGLETON_ID));
 
-  await db.update(cycles).set({ completedAt: new Date() }).where(eq(cycles.id, cycleId));
+  await markCycleCompleted(cycleId);
   await checkAndTriggerKillSwitch({ strategyId });
 
   const elapsedMs = Date.now() - startedAt;

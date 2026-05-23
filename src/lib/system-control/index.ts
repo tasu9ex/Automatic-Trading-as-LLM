@@ -5,11 +5,10 @@ import { and, eq, inArray } from "drizzle-orm";
 import {
   type CycleIntervalMinutes,
   DEFAULT_CYCLE_INTERVAL_MINUTES,
+  SINGLETON_ID,
   isCycleIntervalMinutes,
 } from "./constants";
 import { computeNextScheduledAt } from "./scheduling";
-
-const SINGLETON_ID = "singleton";
 
 export async function getSystemStateRow(): Promise<SystemState | undefined> {
   return (await db.select().from(systemState).where(eq(systemState.id, SINGLETON_ID)).limit(1))[0];
@@ -204,5 +203,6 @@ export { formatIntervalLabel } from "./constants";
 export {
   CYCLE_INTERVAL_MINUTES,
   DEFAULT_CYCLE_INTERVAL_MINUTES,
+  SINGLETON_ID,
   isCycleIntervalMinutes,
 } from "./constants";

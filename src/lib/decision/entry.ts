@@ -1,6 +1,5 @@
-import { generateJson } from "@/lib/clients/generate-json";
 import { formatCycleInterval } from "@/lib/cycle/cycle-interval";
-import { getPrompt } from "@/lib/prompts";
+import { runPromptedJson } from "@/lib/prompts";
 import { type EntryDecisionOutput, EntryDecisionOutputSchema } from "@/lib/schemas/llm-outputs";
 import type { AnalystResult } from "@/lib/tier2/analyst";
 
@@ -20,30 +19,17 @@ export async function runEntryDecision(
   analyst: AnalystResult,
   cycleIntervalMinutes: number,
 ): Promise<EntryDecisionResult> {
-  const resolved = await getPrompt("tier3/entry", {
-    symbol,
-    name,
-    analyst_synthesis: JSON.stringify(analyst.output.synthesis, null, 2),
-    analyst_full: JSON.stringify(analyst.output, null, 2),
-    cycle_interval: formatCycleInterval(cycleIntervalMinutes),
-  });
-
-  const output = await generateJson<EntryDecisionOutput>({
-    modelId: resolved.config.model,
-    system: resolved.compiled.system ?? "",
-    prompt: resolved.compiled.user,
+  return runPromptedJson<EntryDecisionOutput>({
+    promptName: "tier3/entry",
+    vars: {
+      symbol,
+      name,
+      analyst_synthesis: JSON.stringify(analyst.output.synthesis, null, 2),
+      analyst_full: JSON.stringify(analyst.output, null, 2),
+      cycle_interval: formatCycleInterval(cycleIntervalMinutes),
+    },
     schema: EntryDecisionOutputSchema,
-    temperature: resolved.config.temperature,
-    maxOutputTokens: resolved.config.maxTokens,
-    thinkingLevel: resolved.config.thinkingLevel,
     feature: "decision.entry",
     metadata: { symbol },
   });
-
-  return {
-    output,
-    promptVersion:
-      resolved.metadata.source === "langfuse" ? String(resolved.metadata.version) : null,
-    llmModel: resolved.config.model,
-  };
 }

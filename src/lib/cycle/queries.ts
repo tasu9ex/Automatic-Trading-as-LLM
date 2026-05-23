@@ -26,6 +26,7 @@ import type { AnalystOutput } from "@/lib/schemas/llm-outputs";
 import {
   type CycleIntervalMinutes,
   DEFAULT_CYCLE_INTERVAL_MINUTES,
+  SINGLETON_ID,
   isCycleIntervalMinutes,
 } from "@/lib/system-control/constants";
 import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
@@ -583,7 +584,7 @@ async function isCycleInFlightImpl(): Promise<boolean> {
     await db
       .select({ cycleIntervalMinutes: systemState.cycleIntervalMinutes })
       .from(systemState)
-      .where(eq(systemState.id, "singleton"))
+      .where(eq(systemState.id, SINGLETON_ID))
       .limit(1)
   )[0];
   const intervalMinutes = state?.cycleIntervalMinutes ?? DEFAULT_CYCLE_INTERVAL_MINUTES;

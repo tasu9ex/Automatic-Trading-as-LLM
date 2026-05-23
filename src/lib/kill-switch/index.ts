@@ -14,6 +14,7 @@ import { formatJpy } from "@/lib/format/jpy";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { getRiskParams } from "@/lib/risk/params";
+import { SINGLETON_ID } from "@/lib/system-control/constants";
 import { and, desc, eq } from "drizzle-orm";
 
 const logger = createLogger("kill-switch");
@@ -42,7 +43,7 @@ export async function checkAndTriggerKillSwitch(
     db
       .select()
       .from(systemState)
-      .where(eq(systemState.id, "singleton"))
+      .where(eq(systemState.id, SINGLETON_ID))
       .limit(1)
       .then((r) => r[0]),
     getRiskParams(),
@@ -221,7 +222,7 @@ async function triggerKillSwitch(input: {
   await db
     .insert(systemState)
     .values({
-      id: "singleton",
+      id: SINGLETON_ID,
       state: "killed",
       killReason: reason,
       killedAt: new Date(),
@@ -263,7 +264,7 @@ async function triggerAutoPauseDueToFailures(input: { strategyId: string; failur
   await db
     .insert(systemState)
     .values({
-      id: "singleton",
+      id: SINGLETON_ID,
       state: "paused",
       consecutiveFailures: 0,
       lastFailureKind: null,

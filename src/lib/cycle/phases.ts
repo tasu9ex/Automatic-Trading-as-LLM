@@ -48,6 +48,7 @@ import { runPreAnalyst } from "@/lib/tier1/pre-analyst";
 import { runAnalyst } from "@/lib/tier2/analyst";
 import { and, eq } from "drizzle-orm";
 
+import { SINGLETON_ID } from "@/lib/system-control/constants";
 const logger = createLogger("cycle.phases");
 
 export type CycleSkipReason = "exchange_closed" | "not_running" | "no_coins";
@@ -86,7 +87,7 @@ export async function preflight(input: PreflightInput): Promise<PreflightResult>
   }
 
   const state = (
-    await db.select().from(systemState).where(eq(systemState.id, "singleton")).limit(1)
+    await db.select().from(systemState).where(eq(systemState.id, SINGLETON_ID)).limit(1)
   )[0];
   if (state?.state !== "running") {
     logger.info({ state: state?.state }, "System not running, skipping cycle");

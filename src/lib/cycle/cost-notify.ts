@@ -13,6 +13,7 @@ import { systemState } from "@/db/schema";
 import { formatJpy } from "@/lib/format/jpy";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
+import { SINGLETON_ID } from "@/lib/system-control/constants";
 import { fetchCycleCost } from "@/lib/telemetry";
 import { eq } from "drizzle-orm";
 
@@ -39,14 +40,14 @@ export async function notifyCycleCost(cycleId: string): Promise<void> {
 
   // 累計加算
   const state = (
-    await db.select().from(systemState).where(eq(systemState.id, "singleton")).limit(1)
+    await db.select().from(systemState).where(eq(systemState.id, SINGLETON_ID)).limit(1)
   )[0];
   const prevCum = Number(state?.cumulativeCostUsd ?? 0);
   const newCum = prevCum + cost.totalCostUsd;
   await db
     .update(systemState)
     .set({ cumulativeCostUsd: newCum.toFixed(6), updatedAt: new Date() })
-    .where(eq(systemState.id, "singleton"));
+    .where(eq(systemState.id, SINGLETON_ID));
 
   // 累計のみ通知 (今回値 / モデル別内訳は Langfuse UI で見れば十分なので省く)
   await notify({

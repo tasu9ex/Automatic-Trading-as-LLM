@@ -9,7 +9,11 @@ import {
   setCycleIntervalMinutes,
   startSystem,
 } from "@/lib/system-control";
-import { type CycleIntervalMinutes, isCycleIntervalMinutes } from "@/lib/system-control/constants";
+import {
+  type CycleIntervalMinutes,
+  SINGLETON_ID,
+  isCycleIntervalMinutes,
+} from "@/lib/system-control/constants";
 import { eq } from "drizzle-orm";
 import { type ServerActionResult, requireUser, withResult } from "./_helpers";
 
@@ -99,6 +103,6 @@ export async function setRiskParamsAction(input: {
         autoPauseThreshold: input.autoPauseThreshold,
         updatedAt: new Date(),
       })
-      .where(eq(systemState.id, "singleton"));
+      .where(eq(systemState.id, SINGLETON_ID));
   });
 }

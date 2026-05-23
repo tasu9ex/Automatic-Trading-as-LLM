@@ -3,6 +3,9 @@
  * 30min / 1hour / 4hour / 8hour / 12hour / 1day の 6 段階。
  * Kline 取得 interval と 1:1 対応 (cycleMinutesToKlineInterval)。
  */
+/** system_state テーブルは行が 1 つだけ (id 固定)。書き込み・更新で全箇所が参照する。 */
+export const SINGLETON_ID = "singleton";
+
 export const CYCLE_INTERVAL_MINUTES = [30, 60, 240, 480, 720, 1440] as const;
 export type CycleIntervalMinutes = (typeof CYCLE_INTERVAL_MINUTES)[number];
 
