@@ -127,6 +127,20 @@
       "when": 1779700000000,
       "tag": "0017_critic_execution_plan",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1779800000000,
+      "tag": "0018_goofy_union_jack",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1779900000000,
+      "tag": "0019_lonely_blue_marvel",
+      "breakpoints": true
     }
   ]
 }

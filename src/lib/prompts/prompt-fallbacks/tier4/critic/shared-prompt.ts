@@ -59,10 +59,23 @@ approve / veto / modify を返してください。
   → **veto は Exit + Entry 両方を中止** (今サイクルの取引を全停止)
 - **modify**: Buy 額や Exit 比率を部分的に調整したい
 
+# Trader の意思 (decisions[symbol].entry)
+各銘柄の Entry 判断は以下のフィールドを持ちます:
+  - decision:    "buy" | "no"
+  - confidence:  0-1 (観測用、Allocator では未使用)
+  - size_pct:    **1-100 整数**。Trader が「max_budget の何 % 使う」と言ったか。
+                 100=フル投入、50=半分、低い値=控えめ。buy=no なら null。
+  - target_price_jpy / expected_holding_days: 仮説 (参考のみ)
+
+execution_plan.entries[symbol] の JPY 額 = (現金 × perCoinMaxRatio) × (size_pct / 100)
+が既に計算済み (Clipper 適用後)。あなたは size_pct の妥当性を見て、
+過剰と判断したら adjustments.buys で **JPY 単位の縮小値** に上書きします。
+
 # modify の adjustments 構造
 - **buys**: 銘柄ごとに新規 buy 額 (JPY) を上書き。entries の値を変更
   - 0 を指定するとその銘柄を除外
   - 新規銘柄の追加は不可 (entries / Analyst が出していない銘柄は禁止)
+  - 例: entries.BTC=¥10,000 (size_pct=80) → buys: { BTC: 6000 } で 60% 相当に絞る
 - **exits**: 銘柄ごとに close 比率 (% 整数、10-100) を上書き
   - exits に含まれない銘柄 (= 元々 hold) の close 開始は不可
   - 例: 計画が closePct=100 (全決済) → exits: { BTC: 50 } で部分決済に

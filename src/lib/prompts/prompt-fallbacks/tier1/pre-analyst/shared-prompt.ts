@@ -11,15 +11,13 @@
  *
  * 出力 (JSON):
  *   {
- *     "summary":         "後続アナリストが見落とすと困るハイライトを凝縮 (padding 禁止)",
- *     "relevance_score": 0.0-1.0,
- *     "skip_flag":       true|false,
- *     "reasoning":       "skip_flag の理由 (1行・簡潔に、ログ用)"
+ *     "summary":   "後続アナリストが見落とすと困るハイライトを凝縮 (padding 禁止)",
+ *     "skip_flag": true|false,
+ *     "reasoning": "skip_flag の理由 (1行・簡潔に、ログ用)"
  *   }
  *
  * 評価指針:
- *   - skip_flag:       true なら後続の深掘り分析を呼ぶ価値が薄いと直接判断
- *   - relevance_score: 上記判断の確信度 + 材料の濃さ (参考メタデータ、実装は skip_flag のみ参照)
+ *   - skip_flag: true なら後続の深掘り分析を呼ぶ価値が薄いと直接判断
  */
 
 export const PRE_ANALYST_SYSTEM_PROMPT = `# 役割
@@ -40,10 +38,6 @@ export const PRE_ANALYST_SYSTEM_PROMPT = `# 役割
 - 何か動きの気配があれば skip=false (深掘りで精査すべき)
 - **迷ったら skip=false** — 深掘り側に判断を委ねる方が安全
 - 保有/未保有は考慮しない (毎サイクル fresh decision として扱う)
-
-# relevance_score (参考メタデータ)
-上記判断の確信度 + 材料の濃さを 0.0-1.0 で記録する。実装は skip_flag のみ参照し、
-score は観測・キャリブレーション用。
 
 # summary の書き方
 - **後続アナリストが見落とすと判断を誤る材料のみ** を凝縮
@@ -82,7 +76,6 @@ export const PRE_ANALYST_USER_PROMPT = `# 銘柄
 \`\`\`json
 {
   "summary": "...",
-  "relevance_score": 0.0,
   "skip_flag": false,
   "reasoning": "..."
 }

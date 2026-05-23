@@ -13,7 +13,7 @@
  *   1. preflight       — exchange / running / coin list / period 計算
  *   2. tier0Snapshots  — 全コイン並列 fetchSnapshot + 保存
  *   3. tier1PreAnalyst — 全コイン Haiku 並列
- *   4. tier2Analyst    — skip_flag=false のコイン Opus 並列
+ *   4. tier2Analyst    — skip_flag=false のコイン Opus 並列 (保有/未保有問わず)
  *   5. tier3Decisions  — Entry (全) + Exit (保有のみ) Sonnet 並列
  *
  * Phase 6 (finalize) は src/lib/cycle/finalize.ts、failure handling は failure.ts に分離。
@@ -31,7 +31,6 @@ import {
   preAnalystOutputs,
   systemState,
 } from "@/db/schema";
-import type { SizingMethod } from "@/lib/allocator";
 import { getExchangeStatus } from "@/lib/clients/gmo";
 import { PositionStatusValue } from "@/lib/constants/enums";
 import { type CycleCoin, getCycleCoins } from "@/lib/cycle/coins";
@@ -56,7 +55,6 @@ export type CycleSkipReason = "exchange_closed" | "not_running" | "no_coins";
 export interface PreflightInput {
   cycleId: string;
   strategyId: string;
-  method: SizingMethod;
 }
 
 export interface PreflightResult {
@@ -208,7 +206,6 @@ export async function tier1PreAnalyst(
             snapshotId: snapshot.id,
             llmModel: preRes.llmModel,
             summary: preRes.output.summary,
-            relevanceScore: preRes.output.relevance_score.toFixed(3),
             skipFlag: preRes.output.skip_flag,
             reasoning: preRes.output.reasoning,
             promptVersion: preRes.promptVersion,
@@ -221,14 +218,15 @@ export async function tier1PreAnalyst(
 }
 
 /**
- * Phase 4: Tier 2 Analyst (§2 ポリシー: 保有中は skip_flag を無視して必ず実行)。
+ * Phase 4: Tier 2 Analyst。
  *
- * - 未保有銘柄: skip_flag=true なら Analyst skip (コスト節約)
- * - 保有銘柄  : skip_flag に関わらず Analyst 実行 (Tier 3 Exit に渡すため必須)
+ * skip_flag=true なら保有/未保有問わず Analyst skip (コスト節約)。
+ * 「市場に変化がなければ Exit 判断も不要」というポリシー。
+ * 保有銘柄の安全網 (trailing SL / Kill Switch) は price-monitor が独立に処理する。
  */
 export async function tier2Analyst(
   cycleId: string,
-  strategyId: string,
+  _strategyId: string,
   cycleIntervalMinutes: number,
 ): Promise<void> {
   await assertNotEmergencyStop("tier2-analyst");
@@ -250,27 +248,7 @@ export async function tier2Analyst(
           )[0];
           if (!pre) throw new Error(`No pre-analyst for coin ${coin.symbol}`);
 
-          // skip_flag は **未保有銘柄のみ** 尊重。保有中の銘柄は Exit 判断のために必須。
-          if (pre.skipFlag) {
-            const openPos = (
-              await db
-                .select({ id: positions.id })
-                .from(positions)
-                .where(
-                  and(
-                    eq(positions.strategyId, strategyId),
-                    eq(positions.coinId, coin.id),
-                    eq(positions.status, PositionStatusValue.OPEN),
-                  ),
-                )
-                .limit(1)
-            )[0];
-            if (!openPos) return;
-            logger.info(
-              { symbol: coin.symbol },
-              "Tier 2 forced for held position despite skip_flag",
-            );
-          }
+          if (pre.skipFlag) return;
 
           const existing = (
             await db
@@ -285,7 +263,6 @@ export async function tier2Analyst(
           const preResLike = {
             output: {
               summary: pre.summary,
-              relevance_score: Number(pre.relevanceScore),
               skip_flag: pre.skipFlag,
               reasoning: pre.reasoning ?? "",
             },
@@ -330,6 +307,7 @@ async function runEntryForCoin(args: {
   analyst: AnalystRow;
   analystResLike: ReturnType<typeof asAnalystRunLike>;
   cycleIntervalMinutes: number;
+  maxBudgetJpy: number;
 }): Promise<void> {
   const existing = (
     await db
@@ -345,6 +323,7 @@ async function runEntryForCoin(args: {
     args.coin.name,
     args.analystResLike as Parameters<typeof runEntryDecision>[2],
     args.cycleIntervalMinutes,
+    args.maxBudgetJpy,
   );
   await db.insert(decisions).values({
     analystId: args.analyst.id,
@@ -353,6 +332,7 @@ async function runEntryForCoin(args: {
     kind: "entry",
     result: entry.output.decision,
     confidence: entry.output.confidence.toFixed(3),
+    entrySizePct: entry.output.size_pct ?? null,
     reasoning: entry.output.reasoning,
     promptVersion: entry.promptVersion,
     entryExpectedHoldingDaysMin:
@@ -455,6 +435,27 @@ export async function tier3Decisions(
   await assertNotEmergencyStop("tier3-decisions");
   const enabledCoins = await getCycleCoins(cycleId);
 
+  // §size: Entry LLM への max_budget は「現在 cash × perCoinMaxRatio」。
+  // Exit の見込み回収は計算に含めない (Exit 約定リスクを LLM 入力から排除する保守設計)。
+  // 全銘柄共通の値なので tier3 の冒頭で 1 度だけ読む (per-coin で都度 read すると微妙にズレうる)。
+  const [portfolio, state] = await Promise.all([
+    db
+      .select()
+      .from(portfolios)
+      .where(eq(portfolios.strategyId, strategyId))
+      .limit(1)
+      .then((r) => r[0]),
+    db
+      .select()
+      .from(systemState)
+      .where(eq(systemState.id, SINGLETON_ID))
+      .limit(1)
+      .then((r) => r[0]),
+  ]);
+  const currentCashJpy = Number(portfolio?.cashJpy ?? 0);
+  const perCoinMaxRatio = Number(state?.perCoinMaxRatio ?? 0.25);
+  const maxBudgetJpy = Math.max(0, Math.floor(currentCashJpy * perCoinMaxRatio));
+
   await Promise.all(
     enabledCoins.map((coin) =>
       withRetry(
@@ -469,12 +470,18 @@ export async function tier3Decisions(
               .where(eq(analystOutputs.snapshotId, snapshot.id))
               .limit(1)
           )[0];
-          // analyst なし = Tier 2 が skip_flag で省略された (未保有銘柄のみ起こる、§2 ポリシー)
-          // → Entry/Exit 両方スキップ。保有中の銘柄は Tier 2 で必ず analyst が作られる。
+          // analyst なし = Tier 2 が skip_flag で省略された (保有/未保有問わず)
+          // → Entry/Exit 両方スキップ。保有銘柄も「市場変化なし」なら触らない。
           if (!analyst) return;
 
           const analystResLike = asAnalystRunLike(analyst);
-          await runEntryForCoin({ coin, analyst, analystResLike, cycleIntervalMinutes });
+          await runEntryForCoin({
+            coin,
+            analyst,
+            analystResLike,
+            cycleIntervalMinutes,
+            maxBudgetJpy,
+          });
           await runExitForCoin({
             coin,
             snapshotRow: snapshot,

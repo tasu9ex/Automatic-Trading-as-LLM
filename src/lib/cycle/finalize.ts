@@ -21,7 +21,6 @@ import {
   systemState,
   trades,
 } from "@/db/schema";
-import type { SizingMethod } from "@/lib/allocator";
 import { PositionStatusValue } from "@/lib/constants/enums";
 import { runCritic } from "@/lib/critic";
 import { type CycleCoin, getCycleCoins } from "@/lib/cycle/coins";
@@ -66,7 +65,6 @@ export interface FinalizeResult {
 export interface FinalizeInput {
   cycleId: string;
   strategyId: string;
-  method: SizingMethod;
   startedAt: number;
   cycleIntervalMinutes: number;
 }
@@ -140,9 +138,17 @@ async function buildCoinContext(
 function ctxToSignal(c: CoinCtx): ExecutionPlanSignal {
   const entry =
     c.entry?.result === "buy"
-      ? ({ decision: "buy", confidence: Number(c.entry.confidence) } as const)
+      ? ({
+          decision: "buy",
+          confidence: Number(c.entry.confidence),
+          sizePct: c.entry.entrySizePct ?? null,
+        } as const)
       : c.entry?.result === "no"
-        ? ({ decision: "no", confidence: Number(c.entry.confidence) } as const)
+        ? ({
+            decision: "no",
+            confidence: Number(c.entry.confidence),
+            sizePct: null,
+          } as const)
         : null;
   const exit =
     c.exit?.result === "close"
@@ -185,6 +191,7 @@ function criticDecisionForCtx(c: CoinCtx) {
       ? {
           decision: c.entry.result,
           confidence: Number(c.entry.confidence),
+          size_pct: c.entry.entrySizePct ?? null,
           target_price_jpy: c.entry.entryTargetPriceJpy
             ? Number(c.entry.entryTargetPriceJpy)
             : null,
@@ -646,7 +653,7 @@ async function sendCycleCompletionNotification(args: {
 /** Phase 6: Exit dry-run (Allocator + Clipper) → Critic → safety 実行 (Exit → Entry) → state 更新 → kill switch */
 export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   await assertNotEmergencyStop("finalize");
-  const { cycleId, strategyId, method, startedAt } = input;
+  const { cycleId, strategyId, startedAt } = input;
   const enabledCoins = await getCycleCoins(cycleId);
   const riskParams = await getRiskParams();
 
@@ -663,7 +670,6 @@ export async function finalize(input: FinalizeInput): Promise<FinalizeResult> {
   const plan = buildExecutionPlan({
     signals,
     currentCashJpy,
-    method,
     riskParams: {
       perCoinMaxRatio: riskParams.perCoinMaxRatio,
       perCoinTotalMaxRatio: riskParams.perCoinTotalMaxRatio,

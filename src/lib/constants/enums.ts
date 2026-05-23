@@ -98,30 +98,8 @@ export type CriticDecision = (typeof CRITIC_DECISIONS)[number];
 // LLM-only sub-enums (DB は jsonb で持つので enum 制約なし、Zod 検証のみ)
 // ============================================================
 
-export const FUNDAMENTAL_IMPACTS = ["bullish", "neutral", "bearish"] as const;
-export type FundamentalImpact = (typeof FUNDAMENTAL_IMPACTS)[number];
-
-export const SENTIMENT_TONES = ["fear", "greed", "neutral", "euphoria", "panic"] as const;
-export type SentimentTone = (typeof SENTIMENT_TONES)[number];
-
-export const SENTIMENT_TRENDS = ["improving", "stable", "degrading"] as const;
-export type SentimentTrend = (typeof SENTIMENT_TRENDS)[number];
-
-export const TECHNICAL_TRENDS = ["up", "down", "range"] as const;
-export type TechnicalTrend = (typeof TECHNICAL_TRENDS)[number];
-
-export const VOLATILITY_LEVELS = ["low", "mid", "high"] as const;
-export type VolatilityLevel = (typeof VOLATILITY_LEVELS)[number];
-
 export const MARKET_DIRECTIONS = ["long_bias", "flat", "short_bias"] as const;
 export type MarketDirection = (typeof MARKET_DIRECTIONS)[number];
-
-// ============================================================
-// Allocator (コード側、Zod なし、内部 enum)
-// ============================================================
-
-export const SIZING_METHODS = ["equal", "confidence"] as const;
-export type SizingMethod = (typeof SIZING_METHODS)[number];
 
 // ============================================================
 // Entry/Exit decision の部分集合 (DECISION_RESULTS から派生)

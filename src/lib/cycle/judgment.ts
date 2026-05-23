@@ -16,8 +16,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { SizingMethod } from "@/lib/allocator";
-import { DEFAULT_SIZING_METHOD, DEFAULT_STRATEGY_ID } from "@/lib/cycle/defaults";
+import { DEFAULT_STRATEGY_ID } from "@/lib/cycle/defaults";
 import { isEmergencyStopError, recordEmergencyStop } from "@/lib/cycle/emergency-stop";
 import { recordCycleFailure } from "@/lib/cycle/failure";
 import { type FinalizeResult, finalize } from "@/lib/cycle/finalize";
@@ -35,7 +34,6 @@ const logger = createLogger("cycle.judgment");
 
 export interface JudgmentCycleInput {
   strategyId?: string;
-  method?: SizingMethod;
 }
 
 export interface JudgmentCycleResult {
@@ -62,12 +60,11 @@ async function runJudgmentCycleInner(
   input: JudgmentCycleInput,
 ): Promise<JudgmentCycleResult> {
   const strategyId = input.strategyId ?? DEFAULT_STRATEGY_ID;
-  const method = input.method ?? DEFAULT_SIZING_METHOD;
   const startedAt = Date.now();
 
-  logger.info({ cycleId, strategyId, method }, "Cycle started");
+  logger.info({ cycleId, strategyId }, "Cycle started");
 
-  const pre = await preflight({ cycleId, strategyId, method });
+  const pre = await preflight({ cycleId, strategyId });
   if (!pre.proceed) {
     return {
       cycleId,
@@ -110,7 +107,7 @@ async function runJudgmentCycleInner(
       tier3Decisions(cycleId, strategyId, cycleIntervalMinutes),
     );
     const result: FinalizeResult = await runPhase("finalize", () =>
-      finalize({ cycleId, strategyId, method, startedAt, cycleIntervalMinutes }),
+      finalize({ cycleId, strategyId, startedAt, cycleIntervalMinutes }),
     );
     return result;
   } catch {

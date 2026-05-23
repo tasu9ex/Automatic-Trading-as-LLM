@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, index, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { marketSnapshots } from "./market-snapshots";
 
 export const preAnalystOutputs = pgTable(
@@ -11,7 +11,6 @@ export const preAnalystOutputs = pgTable(
       .references(() => marketSnapshots.id, { onDelete: "cascade" }),
     llmModel: text("llm_model").notNull(),
     summary: text("summary").notNull(),
-    relevanceScore: numeric("relevance_score", { precision: 4, scale: 3 }).notNull(),
     skipFlag: boolean("skip_flag").notNull().default(false),
     reasoning: text("reasoning"),
     promptVersion: text("prompt_version"),

@@ -1,0 +1,1 @@
+ALTER TABLE "decisions" ADD COLUMN "entry_size_pct" integer;

@@ -18,7 +18,7 @@
 
 import { randomUUID } from "node:crypto";
 import { notifyCycleCost } from "@/lib/cycle/cost-notify";
-import { DEFAULT_SIZING_METHOD, DEFAULT_STRATEGY_ID } from "@/lib/cycle/defaults";
+import { DEFAULT_STRATEGY_ID } from "@/lib/cycle/defaults";
 import { isEmergencyStopError, recordEmergencyStop } from "@/lib/cycle/emergency-stop";
 import { recordCycleFailure } from "@/lib/cycle/failure";
 import { finalize } from "@/lib/cycle/finalize";
@@ -76,7 +76,6 @@ export const judgmentCron = inngest.createFunction(
         const result = await preflight({
           cycleId,
           strategyId: DEFAULT_STRATEGY_ID,
-          method: DEFAULT_SIZING_METHOD,
         });
         if (!result.proceed) {
           return {
@@ -99,7 +98,6 @@ export const judgmentCron = inngest.createFunction(
 
       const { cycleId, periodHours, cycleIntervalMinutes, startedAt } = pre;
       const strategyId = DEFAULT_STRATEGY_ID;
-      const method = DEFAULT_SIZING_METHOD;
 
       // 2-6. 各 Tier step.run (失敗時は recordCycleFailure → throw → Inngest 側で retry/abort)
       // finalize も同じパターンで包んで、Critic / Executor 失敗時に連続失敗カウンタ / Discord 通知が
@@ -136,7 +134,7 @@ export const judgmentCron = inngest.createFunction(
       try {
         result = await step.run("finalize", () =>
           withSession(cycleId, () =>
-            finalize({ cycleId, strategyId, method, startedAt, cycleIntervalMinutes }),
+            finalize({ cycleId, strategyId, startedAt, cycleIntervalMinutes }),
           ),
         );
       } catch (err) {

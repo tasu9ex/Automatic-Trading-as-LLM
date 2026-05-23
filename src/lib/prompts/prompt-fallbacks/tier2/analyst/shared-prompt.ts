@@ -18,30 +18,13 @@
  *
  * 出力 (JSON):
  *   {
- *     "fundamental": {
- *       "key_events":  ["..."],            // 規制・大口・採用など
- *       "impact":      "bullish|neutral|bearish",
- *       "confidence":  0.0-1.0,
- *       "notes":       "..."
- *     },
- *     "sentiment": {
- *       "tone":        "fear|greed|neutral|euphoria|panic",
- *       "trend":       "improving|stable|degrading",
- *       "confidence":  0.0-1.0,
- *       "notes":       "..."
- *     },
- *     "technical": {
- *       "trend":       "up|down|range",
- *       "support":     "...",
- *       "resistance":  "...",
- *       "volatility":  "low|mid|high",
- *       "confidence":  0.0-1.0,
- *       "notes":       "..."
- *     },
+ *     "fundamental": { "notes": "...", "confidence": 0.0-1.0 },
+ *     "sentiment":   { "notes": "...", "confidence": 0.0-1.0 },
+ *     "technical":   { "notes": "...", "confidence": 0.0-1.0 },
  *     "synthesis": {
- *       "direction":   "long_bias|flat|short_bias",  // 短中期の市場見立て (売買判断ではない)
- *       "confidence":  0.0-1.0,
- *       "reasoning":   "3 セクションの統合 (padding 禁止、必要な分だけ)"
+ *       "direction":  "long_bias|flat|short_bias",  // 短中期の市場見立て (売買判断ではない)
+ *       "confidence": 0.0-1.0,
+ *       "reasoning":  "3 セクションの統合 (padding 禁止、必要な分だけ)"
  *     }
  *   }
  */
@@ -58,11 +41,12 @@ synthesis の direction / confidence は、**この頻度で売買する時間�
 
 # タスク
 与えられた1銘柄について、以下4セクションを単一コール内で順に思考し、構造化 JSON を返してください。
+各セクションは **notes (自由記述) + confidence (0-1)** のみ。synthesis のみ direction (3値) を明示。
 
-1. **Fundamental** — 規制動向、機関投資家、技術アップデート、採用・大口買い等
-2. **Sentiment** — SNS の温度感、KOL の発言、市場の心理状態
-3. **Technical** — 価格トレンド、出来高、サポート/レジスタンス、ボラ
-4. **Synthesis** — 上記3セクションを統合した最終市場見解
+1. **Fundamental** — 規制動向、機関投資家、技術アップデート、採用・大口買い等 (notes に列挙)
+2. **Sentiment** — SNS の温度感、KOL の発言、市場の心理状態 (notes に列挙)
+3. **Technical** — 価格トレンド、出来高、サポート/レジスタンス、ボラ (notes に列挙、価格水準は ¥ 値で明示)
+4. **Synthesis** — 上記3セクションを統合した最終市場見解 (direction を 3 値から選択)
 
 # direction の意味 (市場見立てのみ、売買判断ではない)
 - **long_bias**: 短中期で上昇方向に偏る見立て
@@ -83,7 +67,7 @@ synthesis の direction / confidence は、**この頻度で売買する時間�
 - 本システムの価格はすべて **JPY 円建て** (bitFlyer 取引所価格)
 - 入力 OHLCV (\`ohlcv_brief\`) は ¥ 接頭付きの JPY 整数
 - 報道 (Perplexity) には USD 価格 ("$77k" 等) が含まれる場合がある: 引用は OK
-- ただし **自分の technical.support / resistance / notes / synthesis.reasoning で USD 略記 ("$12.4k" 等) を使うのは禁止**
+- ただし **自分の notes / synthesis.reasoning で USD 略記 ("$12.4k" 等) を使うのは禁止**
 - すべての価格言及は ¥ 接頭 + カンマ区切り (例: ¥12,300,000)
 - ¥ 値と $ 値を混同しない (例: ¥12,300,000 は \$80,000 相当であって "\$12.4k" ではない)
 
@@ -115,26 +99,9 @@ export const ANALYST_USER_PROMPT = `# 銘柄
 # 出力 (JSON のみ)
 \`\`\`json
 {
-  "fundamental": {
-    "key_events": [],
-    "impact": "neutral",
-    "confidence": 0.5,
-    "notes": ""
-  },
-  "sentiment": {
-    "tone": "neutral",
-    "trend": "stable",
-    "confidence": 0.5,
-    "notes": ""
-  },
-  "technical": {
-    "trend": "range",
-    "support": "",
-    "resistance": "",
-    "volatility": "mid",
-    "confidence": 0.5,
-    "notes": ""
-  },
+  "fundamental": { "notes": "", "confidence": 0.5 },
+  "sentiment":   { "notes": "", "confidence": 0.5 },
+  "technical":   { "notes": "", "confidence": 0.5 },
   "synthesis": {
     "direction": "flat",
     "confidence": 0.5,

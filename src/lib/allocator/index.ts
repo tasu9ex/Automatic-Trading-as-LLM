@@ -1,54 +1,38 @@
-import type { SizingMethod } from "@/lib/constants/enums";
 import type { AllocationProposal } from "@/lib/schemas/llm-outputs";
-
-export type { SizingMethod };
 
 export interface BuySignal {
   symbol: string;
-  confidence: number; // 0-1
+  /**
+   * Entry LLM が出した size_pct (1-100 整数 %)。
+   * proposal[sym] = maxBudgetJpy × (sizePct / 100)
+   * maxBudgetJpy は呼び出し側で「現金 × perCoinMaxRatio」を渡す (LLM に渡したのと同じ base)。
+   */
+  sizePct: number;
 }
 
 export interface AllocatorInput {
   buySignals: BuySignal[];
-  availableCashJpy: number;
-  /** 全買い信号合計で使う上限 (0-1)。totalBudget = cash × この比率 */
-  maxAllocationRatio: number;
-  method: SizingMethod;
+  /** Entry LLM に渡した base (= currentCash × perCoinMaxRatio)。size_pct の解釈基準。 */
+  maxBudgetJpy: number;
 }
 
 /**
- * Confidence Weighted / Equal Weight で銘柄ごとの理想配分を計算 (§24)。
+ * Entry LLM が出した size_pct を JPY 額に変換するだけのシンプルな mapper。
  *
- * **責務は配分の計算のみ**。per-coin cap / per-coin min / portfolio cap などの
- * ハードガードは Risk Clipper (`src/lib/risk/clipper.ts`) が独立に適用する。
- * これにより:
- *   - Critic が見る "Allocator 提案" が weighted ideal の素直な値になる
- *   - cap 系定数が DB (system_state) 駆動で動的に変わっても Allocator の式は不変
- *   - 旧実装にあった二重 cap (Allocator + Clipper) を解消
+ * 旧版は confidence 加重で銘柄横断配分していた (sum=1 で正規化) が、
+ * 「サイズは LLM が直接 size_pct で表現する」設計に移行。
  *
- * 戻り値: { symbol: jpy } の Record。空マップは「投資対象なし」を意味する。
+ * cross-symbol の合計上限 (totalCap) や per-coin total cap は Risk Clipper
+ * (`src/lib/risk/clipper.ts`) が独立に適用するので、ここは per-symbol mapping のみ。
  */
 export function allocate(input: AllocatorInput): AllocationProposal {
   const proposal: AllocationProposal = {};
-  if (input.buySignals.length === 0) return proposal;
-
-  const totalBudget = input.availableCashJpy * input.maxAllocationRatio;
-
-  let weights: Record<string, number>;
-  if (input.method === "equal") {
-    const n = input.buySignals.length;
-    weights = Object.fromEntries(input.buySignals.map((s) => [s.symbol, 1 / n]));
-  } else {
-    const sum = input.buySignals.reduce((acc, s) => acc + s.confidence, 0);
-    if (sum <= 0) return proposal;
-    weights = Object.fromEntries(input.buySignals.map((s) => [s.symbol, s.confidence / sum]));
-  }
+  if (input.buySignals.length === 0 || input.maxBudgetJpy <= 0) return proposal;
 
   for (const sig of input.buySignals) {
-    const ideal = totalBudget * (weights[sig.symbol] ?? 0);
-    if (ideal > 0) {
-      proposal[sig.symbol] = Math.floor(ideal);
-    }
+    const pct = Math.max(0, Math.min(100, sig.sizePct));
+    const jpy = Math.floor(input.maxBudgetJpy * (pct / 100));
+    if (jpy > 0) proposal[sig.symbol] = jpy;
   }
   return proposal;
 }

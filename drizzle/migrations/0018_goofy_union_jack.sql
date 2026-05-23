@@ -1,0 +1,1 @@
+ALTER TABLE "pre_analyst_outputs" DROP COLUMN "relevance_score";

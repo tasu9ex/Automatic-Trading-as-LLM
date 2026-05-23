@@ -244,32 +244,42 @@ function CoinCard({ c }: { c: CoinDetail }) {
               </summary>
               <div className="space-y-2 border-border border-t p-3">
                 <div className="rounded border border-foreground/40 bg-muted/40 p-3 text-xs">
-                  <div className="mb-1 font-semibold">統合見解</div>
+                  <div className="mb-1 flex items-center justify-between font-semibold">
+                    <span>統合見解</span>
+                    <span className="text-muted-foreground">
+                      方向 {c.analyst.synthesis.direction} ・ 信頼度{" "}
+                      {c.analyst.synthesis.confidence.toFixed(2)}
+                    </span>
+                  </div>
                   <p className="whitespace-pre-wrap">{c.analyst.synthesis.reasoning}</p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
                   <div className="rounded border border-border p-3 text-xs">
-                    <div className="mb-1 font-semibold">ファンダメンタル</div>
+                    <div className="mb-1 flex items-center justify-between font-semibold">
+                      <span>ファンダメンタル</span>
+                      <span className="text-muted-foreground">
+                        信頼度 {c.analyst.fundamental.confidence.toFixed(2)}
+                      </span>
+                    </div>
                     <p className="whitespace-pre-wrap">{c.analyst.fundamental.notes}</p>
-                    {c.analyst.fundamental.key_events.length > 0 && (
-                      <ul className="mt-1 ml-4 list-disc text-muted-foreground">
-                        {c.analyst.fundamental.key_events.map((e: string) => (
-                          <li key={e}>{e}</li>
-                        ))}
-                      </ul>
-                    )}
                   </div>
                   <div className="rounded border border-border p-3 text-xs">
-                    <div className="mb-1 font-semibold">センチメント</div>
+                    <div className="mb-1 flex items-center justify-between font-semibold">
+                      <span>センチメント</span>
+                      <span className="text-muted-foreground">
+                        信頼度 {c.analyst.sentiment.confidence.toFixed(2)}
+                      </span>
+                    </div>
                     <p className="whitespace-pre-wrap">{c.analyst.sentiment.notes}</p>
                   </div>
                   <div className="rounded border border-border p-3 text-xs">
-                    <div className="mb-1 font-semibold">テクニカル</div>
-                    <div className="text-muted-foreground">
-                      サポート: {c.analyst.technical.support} ・ レジスタンス:{" "}
-                      {c.analyst.technical.resistance}
+                    <div className="mb-1 flex items-center justify-between font-semibold">
+                      <span>テクニカル</span>
+                      <span className="text-muted-foreground">
+                        信頼度 {c.analyst.technical.confidence.toFixed(2)}
+                      </span>
                     </div>
-                    <p className="mt-1 whitespace-pre-wrap">{c.analyst.technical.notes}</p>
+                    <p className="whitespace-pre-wrap">{c.analyst.technical.notes}</p>
                   </div>
                 </div>
               </div>
@@ -301,6 +311,11 @@ function CoinCard({ c }: { c: CoinDetail }) {
                     <span className="text-muted-foreground text-xs">
                       確信度 {c.entryDecision.confidence.toFixed(2)}
                     </span>
+                    {c.entryDecision.sizePct !== null && (
+                      <span className="text-muted-foreground text-xs">
+                        size {c.entryDecision.sizePct}%
+                      </span>
+                    )}
                   </div>
                   {c.entryDecision.reasoning && (
                     <p className="whitespace-pre-wrap text-xs">{c.entryDecision.reasoning}</p>

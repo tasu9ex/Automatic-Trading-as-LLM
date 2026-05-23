@@ -348,7 +348,6 @@ export interface CycleDetail {
     } | null;
     preAnalyst: {
       summary: string;
-      relevanceScore: number;
       skipFlag: boolean;
       reasoning: string | null;
     } | null;
@@ -356,6 +355,7 @@ export interface CycleDetail {
     entryDecision: {
       result: string;
       confidence: number;
+      sizePct: number | null;
       reasoning: string | null;
     } | null;
     exitDecision: {
@@ -492,7 +492,6 @@ async function getCycleDetailImpl(cycleId: string): Promise<CycleDetail | null> 
       preAnalyst: preAnalyst
         ? {
             summary: preAnalyst.summary,
-            relevanceScore: Number(preAnalyst.relevanceScore),
             skipFlag: preAnalyst.skipFlag,
             reasoning: preAnalyst.reasoning,
           }
@@ -509,6 +508,7 @@ async function getCycleDetailImpl(cycleId: string): Promise<CycleDetail | null> 
         ? {
             result: entryDecision.result,
             confidence: Number(entryDecision.confidence),
+            sizePct: entryDecision.entrySizePct ?? null,
             reasoning: entryDecision.reasoning,
           }
         : null,

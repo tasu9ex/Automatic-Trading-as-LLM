@@ -1,5 +1,4 @@
 import { allocate } from "@/lib/allocator";
-import type { SizingMethod } from "@/lib/constants/enums";
 import { PER_COIN_MIN_JPY, TOTAL_MAX_RATIO } from "@/lib/constants/risk";
 import { applyRiskClipper } from "@/lib/risk/clipper";
 
@@ -22,7 +21,15 @@ export interface ExecutionPlanSignal {
   symbol: string;
   lastPriceJpy: number;
   takerFeeRate: number;
-  entry: { decision: "buy" | "no"; confidence: number } | null;
+  /**
+   * Entry LLM 出力。buy 時は sizePct (1-100 整数) が必須。
+   * confidence は観測専用 (Allocator では使わない)。
+   */
+  entry: {
+    decision: "buy" | "no";
+    confidence: number;
+    sizePct: number | null;
+  } | null;
   exit: { decision: "close" | "hold"; confidence: number; closePct: number } | null;
   openPosition: { quantity: number; avgEntryPrice: number } | null;
 }
@@ -30,7 +37,6 @@ export interface ExecutionPlanSignal {
 export interface ExecutionPlanInput {
   signals: ExecutionPlanSignal[];
   currentCashJpy: number;
-  method: SizingMethod;
   riskParams: {
     perCoinMaxRatio: number;
     perCoinTotalMaxRatio: number;
@@ -98,16 +104,18 @@ export function buildExecutionPlan(input: ExecutionPlanInput): ExecutionPlan {
 
   const projectedCashJpy = input.currentCashJpy + expectedCloseCash;
 
-  const buySignals = input.signals
-    .filter((s) => s.entry?.decision === "buy")
-    .map((s) => ({ symbol: s.symbol, confidence: s.entry?.confidence ?? 0 }));
+  // §size: Entry LLM が見た max_budget と同じ base で size_pct を JPY 化する。
+  // (Exit の見込み回収を含めない currentCashJpy ベースに統一。実約定リスクを排除する保守設計。)
+  const maxBudgetJpy = Math.max(
+    0,
+    Math.floor(input.currentCashJpy * input.riskParams.perCoinMaxRatio),
+  );
 
-  const proposal = allocate({
-    buySignals,
-    availableCashJpy: projectedCashJpy,
-    maxAllocationRatio: TOTAL_MAX_RATIO,
-    method: input.method,
-  });
+  const buySignals = input.signals
+    .filter((s) => s.entry?.decision === "buy" && (s.entry.sizePct ?? 0) > 0)
+    .map((s) => ({ symbol: s.symbol, sizePct: s.entry?.sizePct ?? 0 }));
+
+  const proposal = allocate({ buySignals, maxBudgetJpy });
 
   const equity = projectedCashJpy + postExitInvested;
   const clipped = applyRiskClipper({

@@ -2,19 +2,13 @@ import {
   CRITIC_DECISIONS,
   ENTRY_DECISIONS,
   EXIT_DECISIONS,
-  FUNDAMENTAL_IMPACTS,
   MARKET_DIRECTIONS,
-  SENTIMENT_TONES,
-  SENTIMENT_TRENDS,
-  TECHNICAL_TRENDS,
-  VOLATILITY_LEVELS,
 } from "@/lib/constants/enums";
 import { z } from "zod";
 
 /** Tier 1 Pre-Analyst の出力 */
 export const PreAnalystOutputSchema = z.object({
   summary: z.string(),
-  relevance_score: z.number().min(0).max(1),
   skip_flag: z.boolean(),
   reasoning: z.string(),
 });
@@ -23,24 +17,16 @@ export type PreAnalystOutput = z.infer<typeof PreAnalystOutputSchema>;
 /** Tier 2 Analyst の出力 (セクション別) */
 export const AnalystOutputSchema = z.object({
   fundamental: z.object({
-    key_events: z.array(z.string()),
-    impact: z.enum(FUNDAMENTAL_IMPACTS),
-    confidence: z.number().min(0).max(1),
     notes: z.string(),
+    confidence: z.number().min(0).max(1),
   }),
   sentiment: z.object({
-    tone: z.enum(SENTIMENT_TONES),
-    trend: z.enum(SENTIMENT_TRENDS),
-    confidence: z.number().min(0).max(1),
     notes: z.string(),
+    confidence: z.number().min(0).max(1),
   }),
   technical: z.object({
-    trend: z.enum(TECHNICAL_TRENDS),
-    support: z.string(),
-    resistance: z.string(),
-    volatility: z.enum(VOLATILITY_LEVELS),
-    confidence: z.number().min(0).max(1),
     notes: z.string(),
+    confidence: z.number().min(0).max(1),
   }),
   synthesis: z.object({
     direction: z.enum(MARKET_DIRECTIONS),
@@ -62,6 +48,13 @@ export type AnalystOutput = z.infer<typeof AnalystOutputSchema>;
 export const EntryDecisionOutputSchema = z.object({
   decision: z.enum(ENTRY_DECISIONS),
   confidence: z.number().min(0).max(1),
+  /**
+   * Buy 時のサイズ指定 (1-100 整数 %)。
+   *   actual_buy_jpy = max_budget_jpy × (size_pct / 100)
+   * max_budget_jpy はコード側 (現金 × perCoinMaxRatio) で計算して prompt に渡す。
+   * decision === "no" のときは null。
+   */
+  size_pct: z.number().int().min(1).max(100).nullable(),
   reasoning: z.string(),
   expected_holding_days: z
     .object({

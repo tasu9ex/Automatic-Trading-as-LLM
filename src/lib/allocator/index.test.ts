@@ -1,140 +1,75 @@
 import { describe, expect, it } from "vitest";
 import { allocate } from "./index";
 
-describe("allocate", () => {
-  describe("空入力", () => {
-    it("buySignals 空 → 空 proposal", () => {
-      const r = allocate({
-        buySignals: [],
-        availableCashJpy: 1_000_000,
-        maxAllocationRatio: 1.0,
-        method: "equal",
-      });
-      expect(r).toEqual({});
-    });
-
-    it("confidence 合計が 0 (全銘柄 confidence=0) → 空 proposal", () => {
-      const r = allocate({
-        buySignals: [
-          { symbol: "BTC", confidence: 0 },
-          { symbol: "XRP", confidence: 0 },
-        ],
-        availableCashJpy: 1_000_000,
-        maxAllocationRatio: 1.0,
-        method: "confidence",
-      });
-      expect(r).toEqual({});
-    });
+describe("allocate (size_pct base)", () => {
+  it("buySignals 空 → 空 proposal", () => {
+    expect(allocate({ buySignals: [], maxBudgetJpy: 1_000_000 })).toEqual({});
   });
 
-  describe("equal weight", () => {
-    it("2 銘柄に半分ずつ", () => {
-      const r = allocate({
-        buySignals: [
-          { symbol: "BTC", confidence: 0.5 },
-          { symbol: "XRP", confidence: 0.9 },
-        ],
-        availableCashJpy: 1_000_000,
-        maxAllocationRatio: 1.0,
-        method: "equal",
-      });
-      expect(r.BTC).toBe(500_000);
-      expect(r.XRP).toBe(500_000);
-    });
-
-    it("3 銘柄に三等分 (floor)", () => {
-      const r = allocate({
-        buySignals: [
-          { symbol: "BTC", confidence: 0.5 },
-          { symbol: "XRP", confidence: 0.5 },
-          { symbol: "ETH", confidence: 0.5 },
-        ],
-        availableCashJpy: 1_000_000,
-        maxAllocationRatio: 1.0,
-        method: "equal",
-      });
-      // 1_000_000 / 3 = 333_333.33... → floor 333_333
-      expect(r.BTC).toBe(333_333);
-      expect(r.XRP).toBe(333_333);
-      expect(r.ETH).toBe(333_333);
-    });
-
-    it("equal モードは confidence を無視 (全銘柄同額)", () => {
-      const r = allocate({
-        buySignals: [
-          { symbol: "BTC", confidence: 0.1 },
-          { symbol: "XRP", confidence: 0.99 },
-        ],
-        availableCashJpy: 100_000,
-        maxAllocationRatio: 1.0,
-        method: "equal",
-      });
-      expect(r.BTC).toBe(r.XRP);
-    });
+  it("maxBudgetJpy 0 → 空 proposal", () => {
+    expect(allocate({ buySignals: [{ symbol: "BTC", sizePct: 100 }], maxBudgetJpy: 0 })).toEqual(
+      {},
+    );
   });
 
-  describe("confidence weighted", () => {
-    it("confidence 比に応じて配分", () => {
-      // 0.6 vs 0.4 → 60:40
-      const r = allocate({
-        buySignals: [
-          { symbol: "BTC", confidence: 0.6 },
-          { symbol: "XRP", confidence: 0.4 },
-        ],
-        availableCashJpy: 1_000_000,
-        maxAllocationRatio: 1.0,
-        method: "confidence",
-      });
-      expect(r.BTC).toBe(600_000);
-      expect(r.XRP).toBe(400_000);
+  it("size_pct=100 → maxBudgetJpy 全額", () => {
+    const r = allocate({
+      buySignals: [{ symbol: "BTC", sizePct: 100 }],
+      maxBudgetJpy: 30_000,
     });
-
-    it("confidence が等しいなら equal と同じ結果", () => {
-      const r = allocate({
-        buySignals: [
-          { symbol: "BTC", confidence: 0.7 },
-          { symbol: "XRP", confidence: 0.7 },
-        ],
-        availableCashJpy: 1_000_000,
-        maxAllocationRatio: 1.0,
-        method: "confidence",
-      });
-      expect(r.BTC).toBe(500_000);
-      expect(r.XRP).toBe(500_000);
-    });
+    expect(r.BTC).toBe(30_000);
   });
 
-  describe("maxAllocationRatio", () => {
-    it("ratio 0.5 → cash の半分を配分", () => {
-      const r = allocate({
-        buySignals: [{ symbol: "BTC", confidence: 1.0 }],
-        availableCashJpy: 1_000_000,
-        maxAllocationRatio: 0.5,
-        method: "equal",
-      });
-      expect(r.BTC).toBe(500_000);
+  it("size_pct=50 → 半分", () => {
+    const r = allocate({
+      buySignals: [{ symbol: "BTC", sizePct: 50 }],
+      maxBudgetJpy: 30_000,
     });
-
-    it("ratio 0 → 全銘柄 0 (proposal から除外)", () => {
-      const r = allocate({
-        buySignals: [{ symbol: "BTC", confidence: 1.0 }],
-        availableCashJpy: 1_000_000,
-        maxAllocationRatio: 0,
-        method: "equal",
-      });
-      expect(r.BTC).toBeUndefined();
-    });
+    expect(r.BTC).toBe(15_000);
   });
 
-  describe("cash 0", () => {
-    it("availableCashJpy = 0 → 空", () => {
-      const r = allocate({
-        buySignals: [{ symbol: "BTC", confidence: 0.5 }],
-        availableCashJpy: 0,
-        maxAllocationRatio: 1.0,
-        method: "equal",
-      });
-      expect(r.BTC).toBeUndefined();
+  it("複数銘柄、各 size_pct を独立に適用 (合計が cash 超えうるが Clipper が処理)", () => {
+    const r = allocate({
+      buySignals: [
+        { symbol: "BTC", sizePct: 80 },
+        { symbol: "XRP", sizePct: 40 },
+      ],
+      maxBudgetJpy: 30_000,
     });
+    expect(r.BTC).toBe(24_000);
+    expect(r.XRP).toBe(12_000);
+  });
+
+  it("size_pct=0 → 提案から除外", () => {
+    const r = allocate({
+      buySignals: [{ symbol: "BTC", sizePct: 0 }],
+      maxBudgetJpy: 30_000,
+    });
+    expect(r.BTC).toBeUndefined();
+  });
+
+  it("size_pct が 100 超過 → 100 にクランプ", () => {
+    const r = allocate({
+      buySignals: [{ symbol: "BTC", sizePct: 200 }],
+      maxBudgetJpy: 30_000,
+    });
+    expect(r.BTC).toBe(30_000);
+  });
+
+  it("size_pct が負値 → 0 にクランプして除外", () => {
+    const r = allocate({
+      buySignals: [{ symbol: "BTC", sizePct: -10 }],
+      maxBudgetJpy: 30_000,
+    });
+    expect(r.BTC).toBeUndefined();
+  });
+
+  it("floor で切り捨て", () => {
+    // 33_333 × 33 / 100 = 10999.89 → floor 10999
+    const r = allocate({
+      buySignals: [{ symbol: "BTC", sizePct: 33 }],
+      maxBudgetJpy: 33_333,
+    });
+    expect(r.BTC).toBe(10_999);
   });
 });

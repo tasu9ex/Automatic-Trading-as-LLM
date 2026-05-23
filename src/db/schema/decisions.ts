@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, integer, numeric, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { analystOutputs } from "./analyst-outputs";
 import { coins } from "./coins";
 import { decisionKindEnum, decisionResultEnum } from "./enums";
@@ -20,6 +20,8 @@ export const decisions = pgTable(
     confidence: numeric("confidence", { precision: 4, scale: 3 }).notNull(),
     /** Exit のみ: 決済比率 % (整数 10-100)。entry は null。100=全決済、<100=部分決済 */
     closePct: numeric("close_pct", { precision: 5, scale: 2 }),
+    /** Entry のみ: max_budget の何% を使うか (整数 1-100)。result=buy のとき必須、no/exit は null。 */
+    entrySizePct: integer("entry_size_pct"),
     /** Entry のみ: 保有想定日数 (LLM 仮説、参考値)。 */
     entryExpectedHoldingDaysMin: numeric("entry_expected_holding_days_min", {
       precision: 6,

@@ -12,12 +12,15 @@
  *   {{name}}              プロジェクト正式名称
  *   {{analyst_synthesis}} Analyst の synthesis セクション (direction, confidence, reasoning)
  *   {{analyst_full}}      Analyst の全 JSON (参照したい場合)
+ *   {{max_budget_jpy}}    この銘柄に対する最大予算 (JPY、現金 × perCoinMaxRatio)。
+ *                         size_pct の base value。size_pct=100 → max_budget_jpy 全額。
  *   {{cycle_interval}}    本システムの判定サイクル間隔 (例: "30 分", "12 時間", "1 日")
  *
  * 出力 (JSON):
  *   {
  *     "decision":              "buy" | "no",
- *     "confidence":            0.0-1.0,
+ *     "confidence":            0.0-1.0,         // 観測用 (Allocator では未使用)
+ *     "size_pct":              int 1-100 | null,// buy 時必須、max_budget の何 %使うか
  *     "reasoning":             "判断根拠 (padding 禁止、必要な分だけ)",
  *     "expected_holding_days": { "min": int, "max": int } | null,
  *     "target_price_jpy":      number | null,  // ★ 次サイクル後の緩い目標 (現在価格 ±数% 想定)
@@ -38,10 +41,20 @@ Entry (買い) するかを直接判断します。サイズは決めません (
 # タスク
 Analyst 見解を根拠に Buy / No の二択で判定してください。
 
-Buy の場合は **Entry 仮説** も合わせて返してください:
+Buy の場合は **サイズ (size_pct, 1-100 整数 %)** と **Entry 仮説** も返してください:
+  - size_pct:              max_budget_jpy の何 % を使うか (1-100 整数、buy 時必須)
   - expected_holding_days: 想定保有期間 {min, max} (日)
   - target_price_jpy:      **次サイクル ({{cycle_interval}} 後) の緩い目標価格 (JPY)**
   - exit_condition:        どんな条件で Exit する想定か
+
+## size_pct の意味 (重要)
+- **max_budget_jpy = ¥{{max_budget_jpy}}** が、この銘柄に対する**最大予算** (現金 × perCoinMaxRatio)
+- size_pct = この上限の何 % を実際に投入するか (1-100 の整数)
+  - 100 → max_budget_jpy 全額投入 (最も強気)
+  - 50  → 半分 (中庸)
+  - 1-30 → 試し玉、確信弱め
+- **decision="no" のときは size_pct = null**
+- 確信度 (confidence) は別途 0-1 で出すが、これは観測用。サイズ判断は size_pct で表現する
 
 ## target_price_jpy の意味 (重要)
 - これは「保有期間内ピーク」ではなく、**次サイクル ({{cycle_interval}} 後) に到達していそうな価格**
@@ -57,10 +70,10 @@ Buy の場合は **Entry 仮説** も合わせて返してください:
 - **no**: 見立てが不明確 / 下方バイアス / 材料が薄いとき
 - **迷ったら no** (機会損失は許容、誤エントリーの方がコスト高い)
 
-# confidence について
-- 「buy 判断の確からしさ」を 0-1 で。後段の配分が参照
+# confidence について (観測用)
+- 「buy 判断の確からしさ」を 0-1 で。**観測 / キャリブレーション用** で Allocator には使われない
 - no の場合は「no 判断の確からしさ」
-- 同モデル内の相対値として扱う
+- サイズ判断は size_pct で表現すること (confidence ではない)
 
 # reasoning / exit_condition の書き方
 - 判断根拠 / Exit 仮説を凝縮 (padding 禁止、必要な分だけ)
@@ -77,11 +90,14 @@ Buy の場合は **Entry 仮説** も合わせて返してください:
 
 # その他制約
 - 自由テキスト (reasoning / exit_condition) は **日本語**
-- "no" の時は expected_holding_days / target_price_jpy / exit_condition は null
+- "no" の時は size_pct / expected_holding_days / target_price_jpy / exit_condition は null
 - JSON のみ返す`;
 
 export const ENTRY_DECISION_USER_PROMPT = `# 銘柄
 {{name}} ({{symbol}})
+
+# 最大予算 (この銘柄に投入できる上限、現金 × perCoinMaxRatio)
+¥{{max_budget_jpy}}
 
 # Analyst Synthesis
 {{analyst_synthesis}}
@@ -97,6 +113,7 @@ export const ENTRY_DECISION_USER_PROMPT = `# 銘柄
 {
   "decision": "no",
   "confidence": 0.5,
+  "size_pct": null,
   "reasoning": "",
   "expected_holding_days": null,
   "target_price_jpy": null,

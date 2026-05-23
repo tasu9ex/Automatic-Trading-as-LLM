@@ -15,25 +15,29 @@ function signal(overrides: Partial<ExecutionPlanSignal> & { symbol: string }): E
 }
 
 describe("buildExecutionPlan", () => {
-  it("既存ポジションなし・Entry 2 件 → cap で clip される", () => {
+  it("Entry 2 件、size_pct=100 / 50 → max_budget の % で配分", () => {
+    // max_budget = currentCash 500k × 0.25 = 125k
     const plan = buildExecutionPlan({
       signals: [
-        signal({ symbol: "BTC", entry: { decision: "buy", confidence: 0.5 } }),
-        signal({ symbol: "XRP", entry: { decision: "buy", confidence: 0.5 } }),
+        signal({
+          symbol: "BTC",
+          entry: { decision: "buy", confidence: 0.5, sizePct: 100 },
+        }),
+        signal({
+          symbol: "XRP",
+          entry: { decision: "buy", confidence: 0.5, sizePct: 50 },
+        }),
       ],
       currentCashJpy: 500_000,
-      method: "confidence",
       riskParams: baseRiskParams,
     });
 
-    // 各 ¥250,000 ideal だが cash × 0.25 = ¥125,000 で頭打ち
     expect(plan.entries.BTC).toBe(125_000);
-    expect(plan.entries.XRP).toBe(125_000);
+    expect(plan.entries.XRP).toBe(62_500);
     expect(plan.projectedCashJpy).toBe(500_000);
     expect(plan.exits).toEqual({});
     expect(plan.currentPositions).toEqual({});
-    expect(plan.plannedPositions).toEqual({ BTC: 125_000, XRP: 125_000 });
-    expect(plan.clipperChanges.length).toBeGreaterThan(0);
+    expect(plan.plannedPositions).toEqual({ BTC: 125_000, XRP: 62_500 });
   });
 
   it("Exit 100% → projectedCash に手取りが乗り、postExit exposure はゼロ", () => {
@@ -48,17 +52,14 @@ describe("buildExecutionPlan", () => {
         }),
       ],
       currentCashJpy: 100_000,
-      method: "confidence",
       riskParams: baseRiskParams,
     });
 
     expect(plan.exits.SOL.closePct).toBe(100);
     expect(plan.exits.SOL.qtyToClose).toBe(1);
-    // 30_000 × 1 × (1 - 0.005) = 29_850
     expect(plan.exits.SOL.expectedCashJpy).toBeCloseTo(29_850);
     expect(plan.projectedCashJpy).toBeCloseTo(129_850);
     expect(plan.currentPositions.SOL).toBe(30_000);
-    // 全部閉じたので planned からは消える
     expect(plan.plannedPositions.SOL).toBeUndefined();
     expect(plan.entries).toEqual({});
   });
@@ -75,20 +76,18 @@ describe("buildExecutionPlan", () => {
         }),
       ],
       currentCashJpy: 0,
-      method: "confidence",
       riskParams: baseRiskParams,
     });
 
     expect(plan.exits.ETH.closePct).toBe(50);
     expect(plan.exits.ETH.qtyToClose).toBeCloseTo(0.25);
-    // 500_000 × 0.25 × (1 - 0.005) = 124_375
     expect(plan.exits.ETH.expectedCashJpy).toBeCloseTo(124_375);
     expect(plan.currentPositions.ETH).toBeCloseTo(250_000);
-    // 残量 0.25 × 500_000 = 125_000
     expect(plan.plannedPositions.ETH).toBeCloseTo(125_000);
   });
 
-  it("Exit + Entry の合成: Exit で増えた cash が Entry の base になる", () => {
+  it("Exit + Entry の合成: Entry size_pct 100% は currentCash ベース、Exit 見込みは含めない", () => {
+    // max_budget = currentCash 100k × 0.25 = 25k (Exit の +300k は無視)
     const plan = buildExecutionPlan({
       signals: [
         signal({
@@ -101,19 +100,16 @@ describe("buildExecutionPlan", () => {
         signal({
           symbol: "BTC",
           lastPriceJpy: 15_000_000,
-          entry: { decision: "buy", confidence: 1.0 },
+          entry: { decision: "buy", confidence: 1.0, sizePct: 100 },
         }),
       ],
       currentCashJpy: 100_000,
-      method: "confidence",
       riskParams: baseRiskParams,
     });
 
-    // SOL exit: 10 × 30_000 = 300_000
     expect(plan.projectedCashJpy).toBe(400_000);
-    // BTC 単独 buy: ideal = 400_000、cap = 400_000 × 0.25 = 100_000
-    expect(plan.entries.BTC).toBe(100_000);
-    expect(plan.plannedPositions.BTC).toBe(100_000);
+    expect(plan.entries.BTC).toBe(25_000);
+    expect(plan.plannedPositions.BTC).toBe(25_000);
     expect(plan.plannedPositions.SOL).toBeUndefined();
   });
 
@@ -128,7 +124,6 @@ describe("buildExecutionPlan", () => {
         }),
       ],
       currentCashJpy: 100_000,
-      method: "confidence",
       riskParams: baseRiskParams,
     });
 
@@ -147,7 +142,6 @@ describe("buildExecutionPlan", () => {
         }),
       ],
       currentCashJpy: 0,
-      method: "confidence",
       riskParams: baseRiskParams,
     });
 
@@ -157,9 +151,13 @@ describe("buildExecutionPlan", () => {
 
   it("Entry 0 件 / Exit 0 件 → 全部空", () => {
     const plan = buildExecutionPlan({
-      signals: [signal({ symbol: "BTC", entry: { decision: "no", confidence: 0.3 } })],
+      signals: [
+        signal({
+          symbol: "BTC",
+          entry: { decision: "no", confidence: 0.3, sizePct: null },
+        }),
+      ],
       currentCashJpy: 100_000,
-      method: "confidence",
       riskParams: baseRiskParams,
     });
     expect(plan.exits).toEqual({});
@@ -170,21 +168,17 @@ describe("buildExecutionPlan", () => {
   });
 
   it("perCoinTotalMaxRatio 有効時: 既存込みで Clipper が更に削る", () => {
-    // ETH 既存 200k、Entry ETH 100k 追加 → total cap = equity × 0.3
-    // projectedCash = 100k, postExitInvested = 200k, equity = 300k
-    // cap = 300k × 0.3 = 90k → 既存 200k で既に超え → headroom 0 → drop
     const plan = buildExecutionPlan({
       signals: [
         signal({
           symbol: "ETH",
           lastPriceJpy: 400_000,
           openPosition: { quantity: 0.5, avgEntryPrice: 400_000 },
-          entry: { decision: "buy", confidence: 1.0 },
+          entry: { decision: "buy", confidence: 1.0, sizePct: 100 },
           exit: { decision: "hold", confidence: 0.5, closePct: 100 },
         }),
       ],
       currentCashJpy: 100_000,
-      method: "confidence",
       riskParams: { perCoinMaxRatio: 0.5, perCoinTotalMaxRatio: 0.3 },
     });
 
