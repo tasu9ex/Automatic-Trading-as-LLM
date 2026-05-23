@@ -165,6 +165,9 @@ export const judgmentCron = inngest.createFunction(
 
       await step.run("advance-schedule", () => advanceNextScheduledAt(new Date(startedAt)));
 
+      // 別 step で Langfuse cost 取得 + 累計加算 + Discord 通知 (15s ingestion 待ち含む)
+      await step.run("cost-summary", () => notifyCycleCost(cycleId));
+
       await step.run("notify-cycle-end", () =>
         notify({
           level: "info",
@@ -175,9 +178,6 @@ export const judgmentCron = inngest.createFunction(
           },
         }),
       );
-
-      // 別 step で Langfuse cost 取得 + 累計加算 + Discord 通知 (15s ingestion 待ち含む)
-      await step.run("cost-summary", () => notifyCycleCost(cycleId));
 
       return { outcome: "ran", result };
     } catch (err) {
