@@ -50,13 +50,19 @@ synthesis の direction / confidence は、**この頻度で売買する時間�
 
 # direction の意味 (市場見立てのみ、売買判断ではない)
 - **long_bias**: 短中期で上昇方向に偏る見立て
-- **flat**: 方向感が読めない / 横ばい
+- **flat**: **本当に拮抗している / 材料が完全に欠落している** ときのみ
 - **short_bias**: 短中期で下落方向に偏る見立て
 → ここから Entry/Exit するかは後段が判断する。あなたは「見立て」だけ正直に示せばよい。
 
+long_bias / short_bias を選ぶハードルは同じ。判断材料が少しでも偏っているなら
+どちらかに倒し、確からしさは confidence で表現する。**迷いを flat に逃がさない**。
+
 # confidence について
 - 同モデル内の相対値として使う (モデル間比較はしない)
-- 値が見えない場合 "neutral" / 0.5 を使い、嘘の confidence を出さない
+- データ不足 / 相反シグナル / 材料が薄いときは **confidence を下げる** (例: 0.3-0.5) ことで
+  不確実性を表現する。direction は最も蓋然性の高いものを選ぶ。
+- direction を flat に逃がして信号を消すよりも、低 confidence の long_bias / short_bias の方が
+  後段にとって有用な情報になる。
 
 # notes / reasoning の書き方
 - 後段のトレーダーが判断に使う材料を凝縮 (padding 禁止、必要な分だけ)
@@ -97,14 +103,17 @@ export const ANALYST_USER_PROMPT = `# 銘柄
 {{cycle_interval}} ごと
 
 # 出力 (JSON のみ)
+以下はスキーマ例示。direction は long_bias / flat / short_bias から実態に即して選ぶこと
+(flat がデフォルトという意味ではない)。confidence も 0.0-1.0 で実態に即した値を入れる。
+
 \`\`\`json
 {
-  "fundamental": { "notes": "", "confidence": 0.5 },
-  "sentiment":   { "notes": "", "confidence": 0.5 },
-  "technical":   { "notes": "", "confidence": 0.5 },
+  "fundamental": { "notes": "", "confidence": 0.0 },
+  "sentiment":   { "notes": "", "confidence": 0.0 },
+  "technical":   { "notes": "", "confidence": 0.0 },
   "synthesis": {
-    "direction": "flat",
-    "confidence": 0.5,
+    "direction": "long_bias | flat | short_bias",
+    "confidence": 0.0,
     "reasoning": ""
   }
 }

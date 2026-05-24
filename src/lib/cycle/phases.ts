@@ -29,6 +29,7 @@ import {
   portfolios,
   positions,
   preAnalystOutputs,
+  systemEvents,
   systemState,
 } from "@/db/schema";
 import { getExchangeStatus } from "@/lib/clients/gmo";
@@ -210,6 +211,15 @@ export async function tier1PreAnalyst(
             reasoning: preRes.output.reasoning,
             promptVersion: preRes.promptVersion,
           });
+          if (preRes.output.skip_flag) {
+            await db.insert(systemEvents).values({
+              kind: "tier1_skipped",
+              severity: "info",
+              cycleId,
+              message: `Tier1 skipped: ${coin.symbol}`,
+              payload: { symbol: coin.symbol, reasoning: preRes.output.reasoning ?? null },
+            });
+          }
         },
         { label: `tier1:${coin.symbol}` },
       ),

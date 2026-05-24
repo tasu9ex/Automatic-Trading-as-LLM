@@ -82,6 +82,7 @@ export const SYSTEM_EVENT_KINDS = [
   "human_intervention",
   "price_monitor_triggered",
   "data_fetch_failed",
+  "tier1_skipped",
 ] as const;
 export type SystemEventKind = (typeof SYSTEM_EVENT_KINDS)[number];
 

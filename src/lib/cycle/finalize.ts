@@ -249,25 +249,23 @@ async function processCriticDecision(args: {
   const symbolToName = Object.fromEntries(ctxs.map((c) => [c.coin.symbol, c.coin.name]));
   const systemHealth = await buildSystemHealth({ strategyId: args.strategyId, ctxs });
 
-  // Critic skip: 計画に何も無ければ Opus 呼び出しを節約
-  const hasNothingToDo =
-    Object.keys(plan.entries).length === 0 &&
-    Object.keys(plan.exits).length === 0 &&
-    buyCandidates.size === 0;
+  // Critic skip: 全銘柄が Tier1 で skip された場合のみ Opus 呼び出しを節約。
+  // Analyst が 1 件でも走っていれば、たとえ計画が空でも Critic に判断を委ねる
+  // (将来の long_bias / 微調整余地を Critic に見てもらうため + Critic 経路の定常稼働確認)。
+  const hasAnyAnalyst = ctxs.some((c) => c.analyst != null);
   let critic: Awaited<ReturnType<typeof runCritic>>;
-  if (hasNothingToDo) {
+  if (!hasAnyAnalyst) {
     critic = {
       output: {
         decision: "approve",
         confidence: 1,
         adjustments: null,
-        reasoning:
-          "No buy signals and no exits to evaluate — Critic auto-approved (skipped LLM call)",
+        reasoning: "All coins skipped at Tier1 — Critic auto-approved (skipped LLM call)",
       },
       promptVersion: null,
       llmModel: "auto-skip",
     };
-    logger.info("Critic skipped (no buy / no exit) — Opus call saved");
+    logger.info("Critic skipped (all coins Tier1-skipped) — Opus call saved");
   } else {
     // Critic 必須化 (ALL-or-NOTHING)。失敗は通常 failure path 経由で consecutiveFailures++。
     critic = await runCritic({
