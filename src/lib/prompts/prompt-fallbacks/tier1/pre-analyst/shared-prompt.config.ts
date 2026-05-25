@@ -3,7 +3,7 @@ import type { PromptConfig } from "@/lib/prompts/prompt-types";
 
 export const LANGFUSE_PROMPT_CONFIG: PromptConfig = {
   ...MODEL_CATALOG["claude-haiku-4-5"],
-  temperature: 0.2,
+  temperature: 0,
   maxTokens: 1200,
   responseFormat: "json",
 };
