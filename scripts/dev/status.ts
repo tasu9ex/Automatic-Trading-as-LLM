@@ -33,11 +33,13 @@ function pnlColor(n: number): string {
 function rel(d: Date | null): string {
   if (!d) return "—";
   const diffMs = Date.now() - d.getTime();
-  const mins = Math.floor(diffMs / 60_000);
-  if (mins < 60) return `${mins}m ago`;
+  const future = diffMs < 0;
+  const mins = Math.floor(Math.abs(diffMs) / 60_000);
+  const fmt = (s: string) => (future ? `in ${s}` : `${s} ago`);
+  if (mins < 60) return fmt(`${mins}m`);
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  if (hours < 24) return fmt(`${hours}h`);
+  return fmt(`${Math.floor(hours / 24)}d`);
 }
 
 async function main() {
