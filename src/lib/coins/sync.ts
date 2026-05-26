@@ -24,6 +24,25 @@ function parseSpotSymbol(raw: string): string | null {
   return raw.toUpperCase();
 }
 
+/**
+ * GMO 取引所現物 手数料 (2 ティア): https://coin.z.com/jp/corp/guide/fees/
+ *   Tier A (BTC/ETH/XRP/DAI): Maker -0.01% / Taker 0.05%
+ *   Tier B (上記以外):        Maker -0.03% / Taker 0.09%
+ * API では取れないので公式の対照表を手動で持つ。料率改定があったらここを更新。
+ * 銘柄分類が変わった場合は drizzle migration でも既存行を合わせる必要あり。
+ */
+const TIER_A_SYMBOLS = new Set(["BTC", "ETH", "XRP", "DAI"]);
+const TIER_A_MAKER = "-0.0001";
+const TIER_A_TAKER = "0.0005";
+const TIER_B_MAKER = "-0.0003";
+const TIER_B_TAKER = "0.0009";
+
+function feeRates(symbol: string): { maker: string; taker: string } {
+  return TIER_A_SYMBOLS.has(symbol)
+    ? { maker: TIER_A_MAKER, taker: TIER_A_TAKER }
+    : { maker: TIER_B_MAKER, taker: TIER_B_TAKER };
+}
+
 const COIN_NAMES: Record<string, string> = {
   BTC: "Bitcoin",
   ETH: "Ethereum",
@@ -95,13 +114,18 @@ export async function syncCoinsFromGmo(): Promise<SyncCoinsResult> {
     const name = COIN_NAMES[symbol] ?? symbol;
     const existing = (await db.select().from(coins).where(eq(coins.symbol, symbol)).limit(1))[0];
 
+    const { maker, taker } = feeRates(symbol);
+
     if (existing) {
       // 既存銘柄: enabled は触らない (UI からユーザーが設定済の状態を保つ)
+      // 手数料は GMO 公式料率に合わせて常時上書きする (改定追従)
       await db
         .update(coins)
         .set({
           name,
           minOrderSize: s.minOrderSize,
+          makerFeeRate: maker,
+          takerFeeRate: taker,
           updatedAt: new Date(),
         })
         .where(eq(coins.id, existing.id));
@@ -112,9 +136,8 @@ export async function syncCoinsFromGmo(): Promise<SyncCoinsResult> {
         symbol,
         name,
         minOrderSize: s.minOrderSize,
-        // GMO 公開 API では手数料は取れない、現物の典型値で仮置き
-        makerFeeRate: "-0.0001",
-        takerFeeRate: "0.0005",
+        makerFeeRate: maker,
+        takerFeeRate: taker,
         enabled: false,
       });
       inserted++;
