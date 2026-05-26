@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { calculateFill } from "./fees";
+import { describe, expect, it, vi } from "vitest";
+import { calculateFill, estimateSpreadSlippage } from "./fees";
+
+vi.mock("@/lib/clients/gmo", () => ({
+  getTicker: vi.fn(),
+}));
+import { getTicker } from "@/lib/clients/gmo";
+const mockedGetTicker = vi.mocked(getTicker);
 
 describe("calculateFill", () => {
   describe("buy", () => {
@@ -111,5 +117,49 @@ describe("calculateFill", () => {
       expect(r.feeJpy).toBe(0);
       expect(r.netCashJpy).toBe(10_000);
     });
+  });
+});
+
+describe("estimateSpreadSlippage", () => {
+  const baseTicker = (over: Partial<{ ask: string; bid: string }> = {}) => [
+    {
+      symbol: "BTC",
+      ask: over.ask ?? "100.2",
+      bid: over.bid ?? "99.8",
+      last: "100",
+      high: "101",
+      low: "99",
+      volume: "1",
+      timestamp: "2026-05-26T00:00:00Z",
+    },
+  ];
+
+  it("buy: (ask - marketPrice) / marketPrice", async () => {
+    mockedGetTicker.mockResolvedValueOnce(baseTicker());
+    const slip = await estimateSpreadSlippage({ side: "buy", symbol: "BTC", marketPrice: 100 });
+    expect(slip).toBeCloseTo(0.002);
+  });
+
+  it("sell: (marketPrice - bid) / marketPrice", async () => {
+    mockedGetTicker.mockResolvedValueOnce(baseTicker());
+    const slip = await estimateSpreadSlippage({ side: "sell", symbol: "BTC", marketPrice: 100 });
+    expect(slip).toBeCloseTo(0.002);
+  });
+
+  it("ask <= marketPrice なら 0 にクリップ (buy)", async () => {
+    mockedGetTicker.mockResolvedValueOnce(baseTicker({ ask: "99.5" }));
+    const slip = await estimateSpreadSlippage({ side: "buy", symbol: "BTC", marketPrice: 100 });
+    expect(slip).toBe(0);
+  });
+
+  it("ticker 取得失敗で 0 fallback", async () => {
+    mockedGetTicker.mockRejectedValueOnce(new Error("network"));
+    const slip = await estimateSpreadSlippage({ side: "buy", symbol: "BTC", marketPrice: 100 });
+    expect(slip).toBe(0);
+  });
+
+  it("marketPrice <= 0 で 0 (ゼロ除算回避)", async () => {
+    const slip = await estimateSpreadSlippage({ side: "buy", symbol: "BTC", marketPrice: 0 });
+    expect(slip).toBe(0);
   });
 });

@@ -29,7 +29,7 @@ import { formatJpy, formatJpySigned } from "@/lib/format/jpy";
 import { createLogger } from "@/lib/logging";
 import { notify } from "@/lib/notifications";
 import { and, eq } from "drizzle-orm";
-import { type FillResult, calculateFill } from "./fees";
+import { type FillResult, calculateFill, estimateSpreadSlippage } from "./fees";
 import { isPaperMode } from "./mode";
 
 const logger = createLogger("executor");
@@ -107,11 +107,17 @@ export interface ExecuteEntryInput {
 export async function executeEntry(input: ExecuteEntryInput): Promise<void> {
   const { orderId } = await placeEntryOrder(input);
   if (isPaperMode()) {
+    const slippageRate = await estimateSpreadSlippage({
+      side: "buy",
+      symbol: input.symbol,
+      marketPrice: input.marketPrice,
+    });
     const fill = calculateFill({
       side: "buy",
       marketPrice: input.marketPrice,
       quoteAmountJpy: input.budgetJpy,
       takerFeeRate: input.takerFeeRate,
+      slippageRate,
     });
     // PP: paper mode の place+fill atomicity。placeEntryOrder で orders 行が status=placed で
     // 作られた後、fillEntryOrder が落ちると "placed" のまま orphan order が残る。
@@ -374,12 +380,20 @@ export async function executeExit(input: ExecuteExitInput): Promise<void> {
     const rawRatio = input.quantityRatio ?? 1.0;
     const ratio = Math.min(1.0, Math.max(0, rawRatio));
     const sellQty = placed.positionQty * ratio;
+    // forced (逆指値タッチ) は急変時の最悪値 0.3% を据置、それ以外は ticker spread から推定
+    const slippageRate = input.forced
+      ? 0.003
+      : await estimateSpreadSlippage({
+          side: "sell",
+          symbol: input.symbol,
+          marketPrice: input.marketPrice,
+        });
     const fill = calculateFill({
       side: "sell",
       marketPrice: input.marketPrice,
       quoteAmountJpy: sellQty * input.marketPrice,
       takerFeeRate: input.takerFeeRate,
-      slippageRate: input.forced ? 0.003 : 0,
+      slippageRate,
     });
     // PP: paper mode の place+fill atomicity (Exit 側)。fill 失敗時に order を canceled に
     // ロールバックして orphan を残さない。

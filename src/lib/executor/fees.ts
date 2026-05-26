@@ -1,5 +1,40 @@
 /** 約定価格 + 手数料 + (任意で) スリッページ計算 */
 
+import { getTicker } from "@/lib/clients/gmo";
+import { createLogger } from "@/lib/logging";
+
+const logger = createLogger("executor.fees");
+
+/**
+ * Ticker の ask/bid と参照価格 (last) の乖離から市場成行のスリッページ率を推定。
+ * Buy は ask で約定 → `(ask - marketPrice) / marketPrice`
+ * Sell は bid で約定 → `(marketPrice - bid) / marketPrice`
+ * 負値 (参照価格が ask より上 / bid より下) は 0 にクリップ (slippage の概念上)。
+ * Ticker 取得失敗 / 値が不正なら 0 を返す (silent degrade)。
+ */
+export async function estimateSpreadSlippage(args: {
+  side: "buy" | "sell";
+  symbol: string;
+  marketPrice: number;
+}): Promise<number> {
+  if (args.marketPrice <= 0) return 0;
+  try {
+    const t = (await getTicker(args.symbol))[0];
+    if (!t) return 0;
+    const ask = Number(t.ask);
+    const bid = Number(t.bid);
+    if (!Number.isFinite(ask) || !Number.isFinite(bid) || ask <= 0 || bid <= 0) return 0;
+    const slip =
+      args.side === "buy"
+        ? (ask - args.marketPrice) / args.marketPrice
+        : (args.marketPrice - bid) / args.marketPrice;
+    return Math.max(0, slip);
+  } catch (err) {
+    logger.warn({ err, symbol: args.symbol }, "spread slippage estimate failed, fallback 0");
+    return 0;
+  }
+}
+
 export interface FillCalcInput {
   side: "buy" | "sell";
   /** マーケット価格 */
