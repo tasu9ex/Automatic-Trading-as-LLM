@@ -131,7 +131,7 @@ async function resolvePrice(
 ): Promise<{ price: number; source: "ticker" | "snapshot" | "peak" | "avg" }> {
   let price = 0;
   try {
-    const ticker = await getTicker(`${coin.symbol}_JPY`);
+    const ticker = await getTicker(coin.symbol);
     price = Number(ticker[0]?.last ?? 0);
   } catch (err) {
     logger.warn(

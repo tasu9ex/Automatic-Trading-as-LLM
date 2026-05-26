@@ -29,6 +29,7 @@
     "cycle:local:judgment": "tsx --env-file=.env.local scripts/cycle/judgment.ts",
     "smoke:local:sentry": "tsx --env-file=.env.local scripts/smoke/sentry.ts",
     "smoke:local:gmo": "tsx --env-file=.env.local scripts/smoke/gmo.ts",
+    "smoke:local:gmo:catalog": "tsx --env-file=.env.local scripts/smoke/gmo-catalog.ts",
     "smoke:local:discord": "tsx --env-file=.env.local scripts/smoke/discord.ts",
     "smoke:local:notifications": "tsx --env-file=.env.local scripts/smoke/notifications.ts",
     "smoke:local:gemini": "tsx --env-file=.env.local scripts/smoke/gemini.ts",

@@ -38,16 +38,16 @@ function yyyymmdd(d: Date): string {
 /**
  * since から now までの 1分足バーを取得 (JST 日跨ぎ対応)。
  */
-async function fetchBarsSince(symbolJpy: string, since: Date): Promise<Bar[]> {
+async function fetchBarsSince(symbol: string, since: Date): Promise<Bar[]> {
   const now = new Date();
   const dates = new Set<string>([yyyymmdd(since), yyyymmdd(now)]);
   const all: Bar[] = [];
   for (const date of dates) {
     try {
-      const klines = await getKlines(symbolJpy, "1min", date);
+      const klines = await getKlines(symbol, "1min", date);
       for (const k of klines) all.push(toBar(k));
     } catch (err) {
-      logger.warn({ err, symbol: symbolJpy, date }, "kline fetch failed");
+      logger.warn({ err, symbol: symbol, date }, "kline fetch failed");
     }
   }
   return all
@@ -94,8 +94,7 @@ export async function runPriceMonitor(input: PriceMonitorInput = {}): Promise<vo
   }
 
   for (const { position, coin } of openPositions) {
-    const symbolJpy = `${coin.symbol}_JPY`;
-    const bars = await fetchBarsSince(symbolJpy, since);
+    const bars = await fetchBarsSince(coin.symbol, since);
     if (bars.length === 0) continue;
 
     const recentHigh = Math.max(...bars.map((b) => b.high));

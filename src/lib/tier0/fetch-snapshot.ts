@@ -159,7 +159,6 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
   const { symbol } = input;
   const name = input.name ?? symbol;
   const periodHours = input.periodHours ?? 24;
-  const symbolJpy = `${symbol}_JPY`;
   const klineInterval = resolveKlineInterval(input.cycleIntervalMinutes);
 
   const [newsPrompt, sentimentPrompt] = await Promise.all([
@@ -169,10 +168,10 @@ export async function fetchSnapshot(input: FetchSnapshotInput): Promise<Snapshot
 
   const [tickerRes, klineRes, orderbookRes, tradesRes, perplexityRes, grokRes] =
     await Promise.allSettled([
-      getTicker(symbolJpy),
-      fetchEnoughBars(symbolJpy, klineInterval),
-      getOrderbook(symbolJpy),
-      getRecentTrades(symbolJpy, 1, 100),
+      getTicker(symbol),
+      fetchEnoughBars(symbol, klineInterval),
+      getOrderbook(symbol),
+      getRecentTrades(symbol, 1, 100),
       withGenerationSpan(
         { modelId: newsPrompt.config.model, feature: "tier0.news", extraMetadata: { symbol } },
         async () => {
