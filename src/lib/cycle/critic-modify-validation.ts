@@ -82,6 +82,35 @@ export function applyModify(
 }
 
 /**
+ * applyModify の結果が元の計画と実質同一か (= no-op modify) を判定。
+ * entries (symbol→jpy) と exits (symbol→closePct/qtyToClose/expectedCashJpy) を
+ * 構造比較する。key 順に依存しないよう sort して突き合わせる。
+ */
+export function isSamePlan(
+  plan: ExecutionPlan,
+  final: { entries: Record<string, number>; exits: ExecutionPlan["exits"] },
+): boolean {
+  const entryKeys = (e: Record<string, number>) => Object.keys(e).sort();
+  const a = entryKeys(plan.entries);
+  const b = entryKeys(final.entries);
+  if (a.length !== b.length || a.some((k, i) => k !== b[i])) return false;
+  if (a.some((k) => plan.entries[k] !== final.entries[k])) return false;
+
+  const x = Object.keys(plan.exits).sort();
+  const y = Object.keys(final.exits).sort();
+  if (x.length !== y.length || x.some((k, i) => k !== y[i])) return false;
+  return x.every((k) => {
+    const p = plan.exits[k];
+    const f = final.exits[k];
+    return (
+      p.closePct === f.closePct &&
+      p.qtyToClose === f.qtyToClose &&
+      p.expectedCashJpy === f.expectedCashJpy
+    );
+  });
+}
+
+/**
  * Critic 通過後の modified positions を計算。
  * UI で 'modify' 時に「修正後はどんなポジションになるか」表示するために使う。
  */

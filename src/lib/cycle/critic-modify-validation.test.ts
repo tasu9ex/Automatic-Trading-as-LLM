@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyModify,
   computeModifiedPositions,
+  isSamePlan,
   validateCriticModify,
 } from "./critic-modify-validation";
 import type { ExecutionPlan } from "./execution-plan";
@@ -108,6 +109,34 @@ describe("applyModify (pct → JPY 変換)", () => {
   it("exits = 0 → 個別 Exit キャンセル (plan から削除)", () => {
     const r = applyModify(basePlan, { exits: { SOL: 0 } }, MAX_BUDGET);
     expect(r.exits.SOL).toBeUndefined();
+  });
+});
+
+describe("isSamePlan (no-op modify 判定)", () => {
+  it("空 adjustments → applyModify 結果は計画と同一 (no-op)", () => {
+    const final = applyModify(basePlan, { buys: {}, exits: {} }, MAX_BUDGET);
+    expect(isSamePlan(basePlan, final)).toBe(true);
+  });
+
+  it("identity adjustments (既存と同じ closePct) → no-op", () => {
+    // SOL は元々 closePct=100。100 を再指定しても比例縮小 ratio=1 で同一。
+    const final = applyModify(basePlan, { exits: { SOL: 100 } }, MAX_BUDGET);
+    expect(isSamePlan(basePlan, final)).toBe(true);
+  });
+
+  it("entries を変える adjustments → 同一でない", () => {
+    const final = applyModify(basePlan, { buys: { BTC: 50 } }, MAX_BUDGET);
+    expect(isSamePlan(basePlan, final)).toBe(false);
+  });
+
+  it("exits を部分決済に変える → 同一でない", () => {
+    const final = applyModify(basePlan, { exits: { SOL: 50 } }, MAX_BUDGET);
+    expect(isSamePlan(basePlan, final)).toBe(false);
+  });
+
+  it("Exit キャンセル (exits=0) → 同一でない", () => {
+    const final = applyModify(basePlan, { exits: { SOL: 0 } }, MAX_BUDGET);
+    expect(isSamePlan(basePlan, final)).toBe(false);
   });
 });
 

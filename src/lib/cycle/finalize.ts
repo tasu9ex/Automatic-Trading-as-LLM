@@ -27,6 +27,7 @@ import { type CycleCoin, getCycleCoins } from "@/lib/cycle/coins";
 import {
   applyModify,
   computeModifiedPositions,
+  isSamePlan,
   validateCriticModify,
 } from "@/lib/cycle/critic-modify-validation";
 import { assertNotEmergencyStop } from "@/lib/cycle/emergency-stop";
@@ -299,6 +300,22 @@ async function processCriticDecision(args: {
       : critic.output.decision === "modify" && critic.output.adjustments
         ? applyModify(plan, critic.output.adjustments, maxBudgetJpy)
         : { entries: plan.entries, exits: plan.exits };
+
+  // no-op modify ガード (ALL-or-NOTHING)。
+  // Critic が modify を返したのに adjustments が空 / 計画と同一 (= 実質 approve) なら、
+  // 意思のない modify。haiku が modify を「承認の確認」動詞に誤用した実例があった
+  // (空振り modify + reasoning と adjustments の食い違い)。
+  // approve に黙って降格させず throw してサイクルを失敗させ、検知可能にする。
+  if (critic.output.decision === "modify" && isSamePlan(plan, final)) {
+    logger.error(
+      { adjustments: critic.output.adjustments },
+      "Critic no-op modify (adjustments 空 / 計画と同一)",
+    );
+    throw new Error(
+      "critic_modify_noop: modify なのに計画が変化していない (実質 approve)。" +
+        " 変更が無いなら approve を返すべき",
+    );
+  }
 
   const modifiedPositions =
     critic.output.decision === "modify" ? computeModifiedPositions(plan, final) : null;
