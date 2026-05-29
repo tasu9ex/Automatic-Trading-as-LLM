@@ -7,6 +7,7 @@
  */
 
 import { formatJpy } from "@/lib/format/jpy";
+import { pnlColorClass } from "@/lib/format/pnl";
 import { AlertTriangle } from "lucide-react";
 
 type ExecutionPlan = {
@@ -37,7 +38,7 @@ function fmtDelta(delta: number): { text: string; cls: string } {
   const sign = delta > 0 ? "+" : "-";
   return {
     text: `(${sign}${formatJpy(Math.abs(delta))})`,
-    cls: delta > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
+    cls: pnlColorClass(delta),
   };
 }
 

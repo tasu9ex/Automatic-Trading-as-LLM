@@ -1,6 +1,7 @@
 import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
 import type { CapitalEventRow } from "@/lib/cycle/queries";
 import { formatJstDateTime } from "@/lib/format/datetime";
+import { pnlColorClass } from "@/lib/format/pnl";
 
 function jpy(n: number) {
   return `¥${n.toLocaleString("ja-JP", { maximumFractionDigits: 0 })}`;
@@ -29,11 +30,7 @@ export function CapitalEvents({ events }: { events: CapitalEventRow[] }) {
                   <span className="font-mono text-muted-foreground text-xs">
                     {formatJstDateTime(e.occurredAt)}
                   </span>
-                  <span
-                    className={`font-medium ${
-                      e.kind === "deposit" ? "text-emerald-500" : "text-red-500"
-                    }`}
-                  >
+                  <span className={`font-medium ${pnlColorClass(e.kind === "deposit" ? 1 : -1)}`}>
                     {e.kind === "deposit" ? "↑ 入金" : "↓ 出金"} {jpy(e.amountJpy)}
                   </span>
                   {e.note && (

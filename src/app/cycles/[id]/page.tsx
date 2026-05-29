@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { getCycleDetail } from "@/lib/cycle/queries";
 import { criticStatusLabel, criticStatusVariant } from "@/lib/format/critic-decision";
 import { formatJstDateTime } from "@/lib/format/datetime";
+import { pnlColorClass } from "@/lib/format/pnl";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CriticPlanView } from "./critic-plan-view";
@@ -342,15 +343,7 @@ function CoinCard({ c }: { c: CoinDetail }) {
                   <span>現在価格 ¥{c.lastPriceJpy.toLocaleString()}</span>
                 )}
                 {c.unrealizedPnlPct !== null && (
-                  <span
-                    className={
-                      c.unrealizedPnlPct > 0
-                        ? "text-emerald-500"
-                        : c.unrealizedPnlPct < 0
-                          ? "text-red-500"
-                          : ""
-                    }
-                  >
+                  <span className={pnlColorClass(c.unrealizedPnlPct)}>
                     含み損益 {c.unrealizedPnlPct >= 0 ? "+" : ""}
                     {c.unrealizedPnlPct.toFixed(2)}%
                   </span>

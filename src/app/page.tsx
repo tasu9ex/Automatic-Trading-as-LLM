@@ -25,6 +25,7 @@ import {
 import { criticStatusLabel, criticStatusVariant } from "@/lib/format/critic-decision";
 import { formatJstDate, formatJstDateTime } from "@/lib/format/datetime";
 import { formatJpy } from "@/lib/format/jpy";
+import { pnlColorClass, pnlSign } from "@/lib/format/pnl";
 import { AlertTriangle } from "lucide-react";
 import Link from "next/link";
 
@@ -58,8 +59,8 @@ function PositionRow({ p, detail }: { p: OpenPositionRow; detail: PositionDetail
   const hasMtm = p.currentPrice !== p.avgEntryPrice;
   const pnlPct =
     p.avgEntryPrice > 0 ? (p.unrealizedPnlJpy / (p.avgEntryPrice * p.quantity)) * 100 : 0;
-  const pnlColor = p.unrealizedPnlJpy >= 0 ? "text-emerald-500" : "text-red-500";
-  const sign = p.unrealizedPnlJpy >= 0 ? "+" : "";
+  const pnlColor = pnlColorClass(p.unrealizedPnlJpy);
+  const sign = pnlSign(p.unrealizedPnlJpy);
   return (
     <li className="rounded-md hover:bg-muted/30">
       <details>
@@ -85,12 +86,7 @@ function PositionRow({ p, detail }: { p: OpenPositionRow; detail: PositionDetail
 }
 
 function PositionDetailPanel({ detail }: { detail: PositionDetail }) {
-  const pnlClass =
-    detail.realizedPnlJpy > 0
-      ? "text-emerald-500"
-      : detail.realizedPnlJpy < 0
-        ? "text-red-500"
-        : "";
+  const pnlClass = pnlColorClass(detail.realizedPnlJpy);
   return (
     <div className="border-border border-t px-3 py-2 text-xs">
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono">
@@ -238,11 +234,7 @@ export default async function Home({
             <Card>
               <CardHeader className="pb-2">
                 <CardDescription>実現損益</CardDescription>
-                <CardTitle
-                  className={`font-mono text-lg ${
-                    stats.realizedPnlJpy >= 0 ? "text-emerald-500" : "text-red-500"
-                  }`}
-                >
+                <CardTitle className={`font-mono text-lg ${pnlColorClass(stats.realizedPnlJpy)}`}>
                   {formatJpy(stats.realizedPnlJpy)}
                 </CardTitle>
               </CardHeader>
@@ -253,14 +245,12 @@ export default async function Home({
                 <CardTitle className="font-mono text-lg">{formatJpy(equity)}</CardTitle>
                 <CardDescription className="pt-1 text-xs">
                   累計:{" "}
-                  <span className={totalPnl >= 0 ? "text-emerald-500" : "text-red-500"}>
+                  <span className={pnlColorClass(totalPnl)}>
                     {formatJpy(totalPnl)} ({totalPnlPct.toFixed(2)}%)
                   </span>
                   {" / "}
                   含み:{" "}
-                  <span className={unrealizedPnl >= 0 ? "text-emerald-500" : "text-red-500"}>
-                    {formatJpy(unrealizedPnl)}
-                  </span>
+                  <span className={pnlColorClass(unrealizedPnl)}>{formatJpy(unrealizedPnl)}</span>
                 </CardDescription>
               </CardHeader>
             </Card>
