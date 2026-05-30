@@ -58,6 +58,31 @@ interface GmoPublicResponse<T> {
   responsetime: string;
 }
 
+/**
+ * GMO 取引所メンテナンス中 (JSON status:5 / ERR-5201 / "MAINTENANCE" 文言)。
+ *
+ * 時間が経てば回復する transient。classifyError がメッセージ中の "maintenance" を拾って
+ * transient 扱いにできるよう、message に必ず "maintenance" を含める。Tier 0 必須ソース失敗で
+ * 他ソースの reason 文字列と連結されても、構造化分類 (classifyAggregate) で個別に拾われる。
+ */
+export class GmoMaintenanceError extends Error {
+  readonly isMaintenance = true;
+  constructor(
+    readonly path: string,
+    readonly gmoStatus: number,
+    readonly detail: string,
+  ) {
+    super(`GMO maintenance (status=${gmoStatus}, path=${path}): ${detail}`);
+    this.name = "GmoMaintenanceError";
+  }
+}
+
+/** GMO のメンテナンスレスポンス判定 (JSON status:5 / ERR-5201 / "MAINTENANCE" 文言)。 */
+function isMaintenanceResponse(status: number, body: string): boolean {
+  if (status === 5) return true;
+  return /ERR-5201|MAINTENANCE/i.test(body);
+}
+
 async function gmoGet<T>(path: string): Promise<T> {
   return runWith("gmo", async () => {
     const res = await fetch(`${PUBLIC_BASE}${path}`);
@@ -81,6 +106,11 @@ async function gmoGet<T>(path: string): Promise<T> {
         { path, gmoStatus: json.status, body: text.slice(0, 500) },
         "GMO non-zero status",
       );
+      // メンテは transient。permanent 誤分類で 🐛 通知 + kill-switch が進むのを防ぐため、
+      // 専用エラーで明示的にマークする (status:5 / ERR-5201)。
+      if (isMaintenanceResponse(json.status, text)) {
+        throw new GmoMaintenanceError(path, json.status, text.slice(0, 200));
+      }
       throw new Error(
         `GMO non-zero status: ${json.status} (path=${path}, body=${text.slice(0, 200)})`,
       );

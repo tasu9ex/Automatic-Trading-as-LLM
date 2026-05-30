@@ -76,4 +76,62 @@ describe("classifyError", () => {
       expect(classifyError(new Error("Grok 400: invalid_request_error"))).toBe("permanent");
     });
   });
+
+  // 取引所メンテ (GMO status:5 / ERR-5201) は transient
+  describe("GMO maintenance", () => {
+    it("maintenance / ERR-5201 文言は transient", () => {
+      expect(
+        classifyError(new Error("GMO maintenance (status=5, path=/v1/ticker): MAINTENANCE")),
+      ).toBe("transient");
+      expect(
+        classifyError(
+          new Error(
+            'GMO non-zero status: 5 (path=/v1/ticker, body={"status":5,"messages":[{"message_code":"ERR-5201"}]})',
+          ),
+        ),
+      ).toBe("transient");
+    });
+  });
+
+  // RequiredSourcesFailedError (Tier 0 必須ソース失敗) の構造的分類
+  describe("aggregate (RequiredSourcesFailedError)", () => {
+    const makeAggregate = (failures: Array<{ label: string; reasonMessage: string }>) =>
+      Object.assign(new Error("Tier 0 required sources failed"), {
+        name: "RequiredSourcesFailedError",
+        failures,
+      });
+
+    it("GMO メンテ + 他ソースの 4xx が同居しても transient (false permanent 回避)", () => {
+      const err = makeAggregate([
+        { label: "Ticker", reasonMessage: "GMO non-zero status: 5 (path=/v1/ticker) MAINTENANCE" },
+        { label: "1day kline", reasonMessage: "GMO maintenance (status=5, path=/v1/klines)" },
+        { label: "Grok", reasonMessage: "Grok 404: model not found" },
+      ]);
+      expect(classifyError(err)).toBe("transient");
+    });
+
+    it("全ソース permanent のときのみ permanent", () => {
+      const err = makeAggregate([
+        { label: "Ticker", reasonMessage: "Grok 400: invalid_request_error" },
+        { label: "Grok", reasonMessage: "PERPLEXITY_API_KEY is not set" },
+      ]);
+      expect(classifyError(err)).toBe("permanent");
+    });
+
+    it("quota が混じれば quota が最優先 (pause)", () => {
+      const err = makeAggregate([
+        { label: "Ticker", reasonMessage: "GMO maintenance (status=5)" },
+        { label: "Grok", reasonMessage: "insufficient_quota" },
+      ]);
+      expect(classifyError(err)).toBe("quota");
+    });
+
+    it("failures が無い / 空ならフォールバック分類", () => {
+      // name は一致するが failures 欠落 → 通常の文字列分類へ
+      const err = Object.assign(new Error("Grok 400: bad"), {
+        name: "RequiredSourcesFailedError",
+      });
+      expect(classifyError(err)).toBe("permanent");
+    });
+  });
 });
