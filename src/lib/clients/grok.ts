@@ -13,7 +13,7 @@ export interface GrokRequest {
   systemPrompt?: string;
   userPrompt: string;
   maxTokens?: number;
-  /** true: Responses API + web_search + x_search ツール (Tier 0 sentiment 向け) */
+  /** true: Responses API + x_search ツール (Tier 0 sentiment 向け、X 投稿のみ検索) */
   useTools?: boolean;
   /**
    * useTools=true 時に検索期間を tool 側で絞る (時間)。
@@ -26,7 +26,22 @@ export interface GrokResponse {
   content: string;
   /** Responses API 経由の場合、引用元 URL 配列 */
   citations?: string[];
-  usage: { inputTokens: number; outputTokens: number };
+  /**
+   * costUsd は xAI が返す実課金額 (トークン + server-side tool 全部込み)。
+   * Langfuse の単価推定ではなくこの実額を cost として計上する。
+   */
+  usage: { inputTokens: number; outputTokens: number; costUsd?: number };
+}
+
+/** 1 USD = 10^10 ticks (xAI usage.cost_in_usd_ticks の単位) */
+const USD_TICKS = 10_000_000_000;
+
+/** xAI usage オブジェクト共通の cost / tool フィールド */
+interface XaiUsageExtras {
+  /** トークン + tool invocation 全部込みの実課金額 (ticks)。1 USD = 10^10 ticks */
+  cost_in_usd_ticks?: number;
+  /** 課金対象として成功した server-side tool の呼び出し回数マップ */
+  server_side_tool_usage?: Record<string, number>;
 }
 
 interface ResponsesApiOutputItem {
@@ -38,14 +53,19 @@ interface ResponsesApiOutputItem {
 
 interface ResponsesApiResponse {
   output?: ResponsesApiOutputItem[];
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: { input_tokens?: number; output_tokens?: number } & XaiUsageExtras;
   /** Agent Tools API は top-level に citations URL 配列を返す */
   citations?: string[];
 }
 
 interface ChatApiResponse {
   choices: Array<{ message: { content: string } }>;
-  usage: { prompt_tokens: number; completion_tokens: number };
+  usage: { prompt_tokens: number; completion_tokens: number } & XaiUsageExtras;
+}
+
+/** ticks → USD 変換 (未定義なら undefined: Langfuse 側の単価推定にフォールバック) */
+function ticksToUsd(ticks: number | undefined): number | undefined {
+  return typeof ticks === "number" ? ticks / USD_TICKS : undefined;
 }
 
 /**
@@ -53,8 +73,8 @@ interface ChatApiResponse {
  *
  * 2 モード:
  *   - useTools=false (デフォルト): /v1/chat/completions、純粋な chat 完了
- *   - useTools=true: /v1/responses + Agent Tools (web_search + x_search)
- *     → リアルタイム X 投稿 + Web 記事を Grok が自律的に取得・要約
+ *   - useTools=true: /v1/responses + Agent Tools (x_search のみ)
+ *     → リアルタイム X 投稿を Grok が自律的に取得・要約 (Web/ニュースは Perplexity 担当)
  *
  * NOTE: 旧 search_parameters API は 410 で deprecated。tools 側に from_date を渡す。
  */
@@ -100,6 +120,7 @@ async function callGrokChat(req: GrokRequest, apiKey: string): Promise<GrokRespo
     usage: {
       inputTokens: json.usage.prompt_tokens,
       outputTokens: json.usage.completion_tokens,
+      costUsd: ticksToUsd(json.usage.cost_in_usd_ticks),
     },
   };
 }
@@ -109,20 +130,18 @@ async function callGrokWithTools(req: GrokRequest, apiKey: string): Promise<Grok
   if (req.systemPrompt) input.push({ role: "system", content: req.systemPrompt });
   input.push({ role: "user", content: req.userPrompt });
 
+  // Grok は x_search (X 投稿) のみ。Web/ニュースは Perplexity (tier0/news) が担当する
+  // ため web_search は外す (重複 + ツール呼び出し代の削減)。棲み分け: Grok=X センチメント。
   // 検索期間は tool config 側で渡す (旧 search_parameters は 410 deprecated)。
-  // web_search / x_search いずれも from_date (ISO YYYY-MM-DD) を受ける。
-  const webTool: Record<string, unknown> = { type: "web_search" };
   const xTool: Record<string, unknown> = { type: "x_search" };
   if (req.periodHours != null && req.periodHours > 0) {
-    const fromDate = periodAsIsoDate(req.periodHours);
-    webTool.from_date = fromDate;
-    xTool.from_date = fromDate;
+    xTool.from_date = periodAsIsoDate(req.periodHours);
   }
 
   const body: Record<string, unknown> = {
     model: req.model ?? "grok-4.3",
     input,
-    tools: [webTool, xTool],
+    tools: [xTool],
     max_output_tokens: req.maxTokens ?? 800,
   };
 
@@ -152,16 +171,26 @@ async function callGrokWithTools(req: GrokRequest, apiKey: string): Promise<Grok
     .map((c) => c.text as string);
   const content = textParts.join("\n").trim();
 
-  // citations: 1) top-level の citations (Agent Tools API 標準) 2) web_search_call の sources
-  // 3) 本文中 [[N]](url) インライン
+  // citations: 1) top-level の citations (Agent Tools API 標準) 2) *_search_call の sources
+  // (x_search_call 等) 3) 本文中 [[N]](url) インライン
   const fromTop = json.citations ?? [];
   const fromSearchCalls = (json.output ?? [])
-    .filter((o) => o.type === "web_search_call")
+    .filter((o) => o.type.endsWith("_search_call"))
     .flatMap((o) => o.action?.sources ?? [])
     .map((s) => s.url)
     .filter((u): u is string => typeof u === "string");
   const inline = [...content.matchAll(/\[\[\d+\]\]\(([^)]+)\)/g)].map((m) => m[1] as string);
   const citations = [...new Set([...fromTop, ...fromSearchCalls, ...inline])];
+
+  const costUsd = ticksToUsd(json.usage?.cost_in_usd_ticks);
+  // server-side tool (web_search / x_search) の実呼び出し回数をログに残す。
+  // costUsd にこのツール代も含まれているので、内訳の可視化用。
+  if (json.usage?.server_side_tool_usage) {
+    logger.info(
+      { model: req.model ?? "grok-4.3", costUsd, tools: json.usage.server_side_tool_usage },
+      "Grok tool usage",
+    );
+  }
 
   return {
     content,
@@ -169,6 +198,7 @@ async function callGrokWithTools(req: GrokRequest, apiKey: string): Promise<Grok
     usage: {
       inputTokens: json.usage?.input_tokens ?? 0,
       outputTokens: json.usage?.output_tokens ?? 0,
+      costUsd,
     },
   };
 }

@@ -1,9 +1,11 @@
 /**
- * Tier 0 Sentiment — X (Twitter) + 暗号メディアのセンチメント収集クエリ。
+ * Tier 0 Sentiment — X (Twitter) のセンチメント収集クエリ。
  *
- * 呼び出し先: xAI Grok Responses API + x_search/web_search ツール
+ * 呼び出し先: xAI Grok Responses API + x_search ツール
  *           (callGrok with useTools=true)。Grok は X リアルタイムデータの
  *           ネイティブアクセスを持つ唯一の LLM。
+ *           Web/ニュース/報道は Perplexity (tier0/news) が担当するため、ここでは扱わない
+ *           (棲み分け: Grok=X センチメント、Perplexity=ニュース・ファンダ)。
  *
  * 入力:
  *   {{symbol}} 銘柄シンボル (例: BTC) — cashtag $BTC や #BTC で検索
@@ -15,17 +17,17 @@
 
 export const TIER0_SENTIMENT_SYSTEM_PROMPT = `# 役割
 あなたは仮想通貨の SNS センチメントアナリストです。
-X (Twitter) のリアルタイム投稿と暗号メディアの記事から、過去 {{period_hours}} 時間の感情・話題・KOL の発言を抽出します。
+X (Twitter) のリアルタイム投稿から、過去 {{period_hours}} 時間の感情・話題・KOL の発言を抽出します。
 
-# ツール (能動的に使用すること)
-- **x_search**: X 投稿をリアルタイム検索。SNS センチメントの一次ソース
-- **web_search**: 暗号メディア・ブログの記事を検索 (補助的)
+# ツール
+- **x_search**: X 投稿をリアルタイム検索。SNS センチメントの一次ソース (これのみ使用)
 - 学習知識からの推測は禁止。検索結果のみを根拠に書く
+- **役割分担**: ニュース・報道・規制・マクロ等の事実情報は別系統 (Perplexity) が担当する。
+  ここでは **X 上の生のセンチメント** に集中し、報道記事の要約に逸れないこと
 
 # 検索範囲 (世界基準)
 - X 投稿は**言語問わず**: 英語が主流、必要に応じて韓国語・中国語・日本語も
 - 影響力のある KOL は英語圏に集中: @APompliano, @DocumentingBTC, @WatcherGuru, プロジェクト公式アカウント等
-- 暗号メディアも**英語の一次ソース優先** (CoinDesk, The Block 等)、現地特殊事情のみ現地メディア
 - 日本語 X は**補助的** (英語圏で取れない国内固有材料のみ)
 
 # 収集姿勢 (スカウト)

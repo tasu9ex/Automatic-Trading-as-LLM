@@ -22,7 +22,12 @@ export interface PerplexityRequest {
 export interface PerplexityResponse {
   content: string;
   citations: string[];
-  usage: { inputTokens: number; outputTokens: number };
+  /**
+   * costUsd は Perplexity が返す実課金額 (トークン + 検索 request fee 込み)。
+   * request fee (search_context_size 依存) はトークン単価では捕捉できないため、
+   * この実額を cost として計上する。
+   */
+  usage: { inputTokens: number; outputTokens: number; costUsd?: number };
 }
 
 /**
@@ -76,7 +81,12 @@ async function callPerplexityOnce(
   const json = (await res.json()) as {
     choices: Array<{ message: { content: string } }>;
     citations?: string[];
-    usage: { prompt_tokens: number; completion_tokens: number };
+    usage: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      /** Sonar API は usage.cost に実課金内訳を返す (request_cost = 検索 fee) */
+      cost?: { total_cost?: number };
+    };
   };
 
   return {
@@ -85,6 +95,7 @@ async function callPerplexityOnce(
     usage: {
       inputTokens: json.usage.prompt_tokens,
       outputTokens: json.usage.completion_tokens,
+      costUsd: json.usage.cost?.total_cost,
     },
   };
 }

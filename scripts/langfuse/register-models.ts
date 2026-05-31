@@ -61,6 +61,16 @@ const MODELS: ModelDef[] = [
     unit: "TOKENS",
     isLangfuseManaged: false,
   },
+  // grok-4.20 (reasoning / non-reasoning)。通常は xAI 返却の実額 (gen_ai.usage.cost) を
+  // 計上するため不要だが、cost フィールド欠落時に $0 計上になるのを防ぐフォールバック。
+  {
+    modelName: "grok-4.20",
+    matchPattern: "(?i)^grok-4\\.20(-\\d{4})?(-(non-)?reasoning)?$",
+    inputPrice: 2 / 1_000_000,
+    outputPrice: 6 / 1_000_000,
+    unit: "TOKENS",
+    isLangfuseManaged: false,
+  },
   {
     modelName: "sonar",
     matchPattern: "(?i)^sonar$",

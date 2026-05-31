@@ -23,6 +23,12 @@ export interface AISdkUsage {
   inputTokens?: number | undefined;
   outputTokens?: number | undefined;
   totalTokens?: number | undefined;
+  /**
+   * プロバイダが返す実課金額 (USD)。Tier 0 の Grok / Perplexity はトークン代に加え
+   * server-side tool / 検索 request fee が乗るため、API 返却の実額をそのまま計上する。
+   * 指定時は Langfuse の単価推定を上書き (gen_ai.usage.cost として export)。
+   */
+  costUsd?: number | undefined;
 }
 
 export interface AttachOptions {
@@ -110,12 +116,19 @@ export async function withGenerationSpan<T>(
         "langfuse.observation.usage_details.output": outputTokens,
         "langfuse.observation.usage_details.total": inputTokens + outputTokens,
       });
+      // プロバイダ返却の実課金額があれば cost として明示 (トークン + 検索/ツール代込み)。
+      // gen_ai.usage.cost が Langfuse の単価推定を上書きする (cost_details は OTel 経由で
+      // 効かない既知バグ #11030 のため gen_ai.usage.cost を使う)。
+      if (usage?.costUsd != null) {
+        span.setAttribute("gen_ai.usage.cost", usage.costUsd);
+      }
       logger.info(
         {
           feature: opts.feature,
           modelId: opts.modelId,
           inputTokens,
           outputTokens,
+          costUsd: usage?.costUsd,
           ...opts.extraMetadata,
         },
         "LLM call",
