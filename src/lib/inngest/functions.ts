@@ -9,9 +9,9 @@
  * フロー:
  *   step "preflight"     — schedule due 判定 + exchange / running / coin 確認
  *   step "tier0"         — 全コイン snapshot
- *   step "tier1"         — Haiku pre-analyst
- *   step "tier2"         — Opus analyst (skip_flag respect)
- *   step "tier3"         — Sonnet entry/exit decision
+ *   step "tier1"         — Haiku pre-analyst (skip_flag は観測用のみ)
+ *   step "tier2"         — analyst (skip 廃止: 全コイン)
+ *   step "tier3"         — entry/exit decision
  *   step "finalize"      — Exit 約定 → Critic → Risk → Entry → state 更新
  *   step "advance-sched" — next_scheduled_at 更新
  */

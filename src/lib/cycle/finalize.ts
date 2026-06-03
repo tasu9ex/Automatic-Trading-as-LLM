@@ -250,9 +250,8 @@ async function processCriticDecision(args: {
   const symbolToName = Object.fromEntries(ctxs.map((c) => [c.coin.symbol, c.coin.name]));
   const systemHealth = await buildSystemHealth({ strategyId: args.strategyId, ctxs });
 
-  // Critic skip: 全銘柄が Tier1 で skip された場合のみ Opus 呼び出しを節約。
-  // Analyst が 1 件でも走っていれば、たとえ計画が空でも Critic に判断を委ねる
-  // (将来の long_bias / 微調整余地を Critic に見てもらうため + Critic 経路の定常稼働確認)。
+  // skip 廃止後は全コインに analyst が存在するため通常この分岐は通らない。
+  // analyst が 1 件も無い異常時のみ Critic を auto-approve (Opus 呼び出し節約 + 防御)。
   const hasAnyAnalyst = ctxs.some((c) => c.analyst != null);
   let critic: Awaited<ReturnType<typeof runCritic>>;
   if (!hasAnyAnalyst) {

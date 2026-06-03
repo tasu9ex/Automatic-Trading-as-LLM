@@ -12,9 +12,9 @@
  * Phase 構成:
  *   1. preflight       — exchange / running / coin list / period 計算
  *   2. tier0Snapshots  — 全コイン並列 fetchSnapshot + 保存
- *   3. tier1PreAnalyst — 全コイン Haiku 並列
- *   4. tier2Analyst    — skip_flag=false のコイン Opus 並列 (保有/未保有問わず)
- *   5. tier3Decisions  — Entry (全) + Exit (保有のみ) Sonnet 並列
+ *   3. tier1PreAnalyst — 全コイン並列 (skip_flag は観測用に記録するだけ)
+ *   4. tier2Analyst    — 全コイン並列 (skip 廃止: 保有/未保有問わず必ず走る)
+ *   5. tier3Decisions  — Entry (全) + Exit (保有のみ) 並列
  *
  * Phase 6 (finalize) は src/lib/cycle/finalize.ts、failure handling は failure.ts に分離。
  */
@@ -29,7 +29,6 @@ import {
   portfolios,
   positions,
   preAnalystOutputs,
-  systemEvents,
   systemState,
 } from "@/db/schema";
 import { getExchangeStatus } from "@/lib/clients/gmo";
@@ -211,15 +210,8 @@ export async function tier1PreAnalyst(
             reasoning: preRes.output.reasoning,
             promptVersion: preRes.promptVersion,
           });
-          if (preRes.output.skip_flag) {
-            await db.insert(systemEvents).values({
-              kind: "tier1_skipped",
-              severity: "info",
-              cycleId,
-              message: `Tier1 skipped: ${coin.symbol}`,
-              payload: { symbol: coin.symbol, reasoning: preRes.output.reasoning ?? null },
-            });
-          }
+          // skip 機能は廃止 (Tier2 で skip_flag を見ない)。skip_flag は観測用に
+          // pre_analyst_outputs へ残すのみで、tier1_skipped イベントは発行しない。
         },
         { label: `tier1:${coin.symbol}` },
       ),
@@ -230,9 +222,12 @@ export async function tier1PreAnalyst(
 /**
  * Phase 4: Tier 2 Analyst。
  *
- * skip_flag=true なら保有/未保有問わず Analyst skip (コスト節約)。
- * 「市場に変化がなければ Exit 判断も不要」というポリシー。
- * 保有銘柄の安全網 (trailing SL / Kill Switch) は price-monitor が独立に処理する。
+ * skip 機能は廃止。全 enabled コインで毎サイクル Analyst を走らせる。
+ * 旧設計では skip_flag=true で Analyst 以降を省いていたが、
+ *   (1) 保有玉の Exit 判断まで取りこぼす (price-monitor の SL しか残らない)
+ *   (2) 評価対象が減りデータ蓄積が遅い
+ * の弊害が大きく、Tier2/3 は Haiku で安価なため常時稼働に変更した。
+ * skip_flag は pre_analyst_outputs に観測用として残すが、制御には使わない。
  */
 export async function tier2Analyst(
   cycleId: string,
@@ -258,8 +253,8 @@ export async function tier2Analyst(
           )[0];
           if (!pre) throw new Error(`No pre-analyst for coin ${coin.symbol}`);
 
-          if (pre.skipFlag) return;
-
+          // skip 機能は廃止。skip_flag は観測用に記録するだけで、Tier2 以降は
+          // 全 enabled コインで必ず走る (保有玉の exit 取りこぼし防止 + データ最大化)。
           const existing = (
             await db
               .select({ id: analystOutputs.id })
@@ -438,8 +433,8 @@ export async function tier3Decisions(
               .where(eq(analystOutputs.snapshotId, snapshot.id))
               .limit(1)
           )[0];
-          // analyst なし = Tier 2 が skip_flag で省略された (保有/未保有問わず)
-          // → Entry/Exit 両方スキップ。保有銘柄も「市場変化なし」なら触らない。
+          // skip 廃止後は全コインに analyst が存在するはず。無い場合は Tier2 が
+          // 異常終了したケースの防御 (ALL-or-NOTHING なので通常は throw 済み)。
           if (!analyst) return;
 
           const analystResLike = asAnalystRunLike(analyst);

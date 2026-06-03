@@ -20,8 +20,9 @@ export function buildPriceSnapshotText(s: Snapshot): string {
 }
 
 /**
- * Tier 1 Pre-Analyst: Haiku で銘柄スクリーニング。
- * skip_flag=true なら Tier 2 以降スキップ (保有/未保有問わず)。
+ * Tier 1 Pre-Analyst: Haiku で銘柄スクリーニング + 要約 (Tier2 への context)。
+ * skip 機能は廃止したため skip_flag は観測用フィールドとして記録するのみで、
+ * Tier2 以降の制御には使わない (全 enabled コインが毎サイクル Tier2/3 を通る)。
  */
 export async function runPreAnalyst(
   snapshot: Snapshot,

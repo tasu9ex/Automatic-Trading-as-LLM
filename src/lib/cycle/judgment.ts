@@ -7,9 +7,9 @@
  * 流れ:
  *   1. preflight       — exchange / running 確認、period 計算
  *   2. tier0Snapshots  — 全コイン並列 fetchSnapshot
- *   3. tier1PreAnalyst — 全コイン Haiku
- *   4. tier2Analyst    — skip_flag=false のコイン Opus
- *   5. tier3Decisions  — Entry/Exit Sonnet
+ *   3. tier1PreAnalyst — 全コイン Haiku (skip_flag は観測用のみ)
+ *   4. tier2Analyst    — 全コイン (skip 廃止)
+ *   5. tier3Decisions  — Entry/Exit
  *   6. finalize        — Exit 約定 → Critic → Risk Clipper → Entry 約定 → state 更新 → kill switch
  *
  * 各 phase は ALL-or-NOTHING (1 コインでも retry 後失敗で throw → サイクル全体 abort)
