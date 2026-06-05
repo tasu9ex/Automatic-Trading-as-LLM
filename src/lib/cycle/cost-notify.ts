@@ -49,13 +49,18 @@ export async function notifyCycleCost(cycleId: string): Promise<void> {
     .set({ cumulativeCostUsd: newCum.toFixed(6), updatedAt: new Date() })
     .where(eq(systemState.id, SINGLETON_ID));
 
-  // 累計のみ通知 (今回値 / モデル別内訳は Langfuse UI で見れば十分なので省く)
+  // 累計のみ通知 (今回値 / モデル別内訳は Langfuse UI で見れば十分なので省く)。
+  // 一部トレースが取得できなかった場合は過少計上の可能性を明示する。
+  const partial = cost.failedTraceCount > 0;
   await notify({
-    level: "info",
-    title: "💰 サイクルコスト集計",
+    level: partial ? "warning" : "info",
+    title: partial ? "💰 サイクルコスト集計 (一部欠落)" : "💰 サイクルコスト集計",
     fields: {
       "累計 (USD)": `$${newCum.toFixed(4)}`,
       "累計 (JPY)": formatJpy(newCum * USD_TO_JPY),
+      ...(partial
+        ? { 欠落トレース: `${cost.failedTraceCount}/${cost.traceCount} (過少計上の可能性)` }
+        : {}),
     },
   });
 }
