@@ -43,7 +43,8 @@
     "status:local": "tsx --env-file=.env.local scripts/dev/status.ts",
     "status:prod": "tsx --env-file=.env.prod scripts/dev/status.ts",
     "capital:local": "tsx --env-file=.env.local scripts/dev/capital.ts",
-    "capital:prod": "tsx --env-file=.env.prod scripts/dev/capital.ts"
+    "capital:prod": "tsx --env-file=.env.prod scripts/dev/capital.ts",
+    "sentry:prod": "tsx --env-file=.env.prod scripts/dev/sentry.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",
