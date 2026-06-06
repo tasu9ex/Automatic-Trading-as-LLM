@@ -43,6 +43,12 @@ function CycleRow({ c }: { c: RecentCycleRow }) {
           <span className="text-muted-foreground text-xs">{formatJstDateTime(c.createdAt)}</span>
         </div>
         <div className="flex items-center gap-2">
+          {c.cyclePnlJpy != null && (
+            <span className={`font-mono text-xs ${pnlColorClass(c.cyclePnlJpy)}`}>
+              {pnlSign(c.cyclePnlJpy)}
+              {formatJpy(c.cyclePnlJpy)}
+            </span>
+          )}
           <span className="text-muted-foreground text-xs">{c.symbolCount} 銘柄</span>
           <Badge variant={criticStatusVariant(c.criticDecision)}>
             {criticStatusLabel(c.criticDecision)}

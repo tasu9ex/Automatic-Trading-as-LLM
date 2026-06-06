@@ -20,6 +20,7 @@ import {
 } from "@/db/schema";
 import { getTicker } from "@/lib/clients/gmo";
 import { PositionStatusValue } from "@/lib/constants/enums";
+import { computeCyclePnls } from "@/lib/cycle/cycle-pnl";
 import { DEFAULT_STRATEGY_ID } from "@/lib/cycle/defaults";
 import { createLogger } from "@/lib/logging";
 import type { AnalystOutput } from "@/lib/schemas/llm-outputs";
@@ -274,6 +275,11 @@ export interface RecentCycleRow {
   criticReasoning: string | null;
   createdAt: Date;
   symbolCount: number;
+  /**
+   * そのサイクルの評価損益 (mark-to-market): 当該サイクル時点の総資産 − 直前サイクル時点の総資産。
+   * 含み損益込み・取引所手数料込み。LLM API コストは含まない。直前サイクルが無い最古行は null。
+   */
+  cyclePnlJpy: number | null;
 }
 
 const _cachedRecentCycles = cachedDashboardQuery("dashboard.recent-cycles", getRecentCyclesImpl);
@@ -304,6 +310,9 @@ export async function getRecentCyclesImpl(limit = 15): Promise<RecentCycleRow[]>
     .orderBy(desc(cycles.startedAt))
     .limit(limit);
 
+  // サイクルごとの評価損益 (mark-to-market) を再構築。
+  const pnls = await computeCyclePnls(rows.map((r) => ({ id: r.id, startedAt: r.startedAt })));
+
   return rows.map((r) => {
     // HH: auto-skip (Critic 呼び出し節約) は approve と擬制されているが UI では別表示
     let decision: string;
@@ -318,6 +327,7 @@ export async function getRecentCyclesImpl(limit = 15): Promise<RecentCycleRow[]>
       criticReasoning: r.criticReasoning,
       createdAt: r.startedAt,
       symbolCount: Array.isArray(r.coinIds) ? r.coinIds.length : 0,
+      cyclePnlJpy: pnls.get(r.id) ?? null,
     };
   });
 }

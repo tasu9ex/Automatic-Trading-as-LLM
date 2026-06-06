@@ -90,8 +90,12 @@ async function main() {
     for (const c of recentCycles) {
       const color =
         c.criticDecision === "approve" ? GREEN : c.criticDecision === "modify" ? YELLOW : RED;
+      const pnlText =
+        c.cyclePnlJpy == null ? "—" : `${c.cyclePnlJpy >= 0 ? "+" : ""}${jpy(c.cyclePnlJpy)}`;
+      const pnlCol = c.cyclePnlJpy == null ? DIM : pnlColor(c.cyclePnlJpy);
+      const pnl = `${pnlCol}${pnlText.padStart(10)}${RESET}`;
       console.log(
-        `  ${DIM}${c.cycleId.slice(0, 8)}${RESET}  ${color}${c.criticDecision.padEnd(7)}${RESET}  ${c.symbolCount}銘柄  ${DIM}${rel(c.createdAt)}${RESET}`,
+        `  ${DIM}${c.cycleId.slice(0, 8)}${RESET}  ${color}${c.criticDecision.padEnd(7)}${RESET}  ${c.symbolCount}銘柄  ${pnl}  ${DIM}${rel(c.createdAt)}${RESET}`,
       );
     }
   }
