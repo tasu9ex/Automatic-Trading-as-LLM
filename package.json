@@ -44,7 +44,10 @@
     "status:prod": "tsx --env-file=.env.prod scripts/dev/status.ts",
     "capital:local": "tsx --env-file=.env.local scripts/dev/capital.ts",
     "capital:prod": "tsx --env-file=.env.prod scripts/dev/capital.ts",
-    "sentry:prod": "tsx --env-file=.env.prod scripts/dev/sentry.ts"
+    "sentry:prod": "tsx --env-file=.env.prod scripts/dev/sentry.ts",
+    "backtest:prod": "tsx --env-file=.env.prod scripts/dev/backtest.ts",
+    "backtest:local": "tsx --env-file=.env.local scripts/dev/backtest.ts",
+    "backtest:history": "tsx scripts/dev/backtest-history.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",
